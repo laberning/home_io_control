@@ -19,6 +19,11 @@ void feed(ChannelQuietLevel &tally, uint32_t freq, int16_t level_dbm, int count)
 
 }  // namespace
 
+TEST(BusyLimit, AnUnknownQuietLevelTakesTheBandsLimit) {
+  EXPECT_EQ(decisions::busy_limit_dbm(std::nullopt, -70), -70);
+  EXPECT_EQ(decisions::busy_limit_dbm(-100, -70), -81) << "a known quiet level ignores the band's fallback";
+}
+
 TEST(ChannelQuietLevel, IsUnknownUntilAChannelHasEnoughReadings) {
   ChannelQuietLevel tally;
   feed(tally, FREQ_CH2, -100, QUIET_LEVEL_MIN_READINGS - 1);
@@ -82,24 +87,24 @@ TEST(ChannelQuietLevel, KeepsAKnownLevelAcrossTheHalving) {
 }
 
 TEST(DecisionsChannel, BusyLimitIsMinusEightyFiveUntilTheQuietLevelIsKnown) {
-  EXPECT_EQ(decisions::busy_limit_dbm(std::nullopt), -85);
+  EXPECT_EQ(decisions::busy_limit_dbm(std::nullopt, IO_868_BAND.busy_limit_until_quiet_level_dbm), -85);
 }
 
 TEST(DecisionsChannel, BusyLimitIsTheQuietLevelPlusTheMarginInsideTheBounds) {
-  EXPECT_EQ(decisions::busy_limit_dbm(-100), -81);
-  EXPECT_EQ(decisions::busy_limit_dbm(-95), -76);
-  EXPECT_EQ(decisions::busy_limit_dbm(-108), -89) << "bench V4.3, the noisiest of the four";
+  EXPECT_EQ(decisions::busy_limit_from_quiet_level_dbm(-100), -81);
+  EXPECT_EQ(decisions::busy_limit_from_quiet_level_dbm(-95), -76);
+  EXPECT_EQ(decisions::busy_limit_from_quiet_level_dbm(-108), -89) << "bench V4.3, the noisiest of the four";
 }
 
 TEST(DecisionsChannel, BusyLimitNeverGoesBelowMinusNinety) {
-  EXPECT_EQ(decisions::busy_limit_dbm(-113), -90) << "bench V2";
-  EXPECT_EQ(decisions::busy_limit_dbm(-109), -90) << "-109 + 19 is exactly the bound";
-  EXPECT_EQ(decisions::busy_limit_dbm(-130), -90);
+  EXPECT_EQ(decisions::busy_limit_from_quiet_level_dbm(-113), -90) << "bench V2";
+  EXPECT_EQ(decisions::busy_limit_from_quiet_level_dbm(-109), -90) << "-109 + 19 is exactly the bound";
+  EXPECT_EQ(decisions::busy_limit_from_quiet_level_dbm(-130), -90);
 }
 
 TEST(DecisionsChannel, BusyLimitNeverGoesAboveMinusSeventyFive) {
-  EXPECT_EQ(decisions::busy_limit_dbm(-89), -75) << "a board that idles at -89 dBm";
-  EXPECT_EQ(decisions::busy_limit_dbm(-60), -75);
+  EXPECT_EQ(decisions::busy_limit_from_quiet_level_dbm(-89), -75) << "a board that idles at -89 dBm";
+  EXPECT_EQ(decisions::busy_limit_from_quiet_level_dbm(-60), -75);
 }
 
 TEST(DecisionsChannel, OnlyANoisyBoardLeavesLittleMargin) {

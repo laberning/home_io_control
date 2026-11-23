@@ -101,6 +101,10 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     std::optional<TimedRelease> timed;             ///< Set: `packet` arrives at a replayed time (timed_release.h).
   };
 
+  /// Put the mock on another band (the default is the 868 MHz band).
+  void set_band(const esphome::home_io_control::IoBand &band) { band_ = band; }
+  [[nodiscard]] const esphome::home_io_control::IoBand &band() const override { return band_; }
+
   // RadioDriver interface
   bool init() override { return true; }
   esphome::home_io_control::TxResult send_packet(const uint8_t *data, uint8_t len,
@@ -418,6 +422,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::vector<CallKind> call_log_;
   int16_t rssi_default_{-120};
   int send_count_;
+  esphome::home_io_control::IoBand band_;
   std::vector<uint32_t> wait_timeouts_;
   std::vector<uint32_t> freq_history_;
   std::vector<uint32_t> rssi_read_freqs_;

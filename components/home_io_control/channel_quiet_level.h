@@ -70,7 +70,7 @@ class ChannelQuietLevel {
 
   /// The board's quiet level and the channel it was measured on, once every channel has enough
   /// readings; nothing before, so a board that has heard only part of its channels judges with the
-  /// fixed limit of CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM.
+  /// band's limit for that time (IoBand::busy_limit_until_quiet_level_dbm).
   [[nodiscard]] std::optional<ChannelLevel> board_quiet_level() const {
     std::optional<ChannelLevel> lowest;
     for (const uint32_t freq_hz : decisions::REQUEST_CHANNELS) {
@@ -131,7 +131,7 @@ class BusyLimitLog {
     BusyLimitReport report;
     if (!quiet.has_value())
       return report;
-    const int16_t limit = decisions::busy_limit_dbm(quiet->level_dbm);
+    const int16_t limit = decisions::busy_limit_from_quiet_level_dbm(quiet->level_dbm);
     if (!this->logged_limit_dbm_.has_value() ||
         decisions::abs_difference(limit, *this->logged_limit_dbm_) >= BUSY_LIMIT_LOG_STEP_DB) {
       this->logged_limit_dbm_ = limit;

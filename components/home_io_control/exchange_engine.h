@@ -481,6 +481,17 @@ class ExchangeEngine {
     this->wake_evidence_spent_handler_ = std::move(handler);
   }
 
+  /// @brief Source of the air frequency the hub keeps its requests away from (its Wi-Fi channel).
+  using AvoidFrequencyProvider = std::function<uint32_t()>;
+
+  /// Install the provider of the frequency in Hz that requests keep away from; it returns 0 when
+  /// there is none. Channels of the band within decisions::WIFI_CHANNEL_GUARD_HZ of it are left out
+  /// of the channels of a request (ADR 0132). With none installed nothing is avoided.
+  /// @param provider The frequency source, or an empty function to detach.
+  void set_avoid_frequency_provider(AvoidFrequencyProvider provider) {
+    this->avoid_frequency_provider_ = std::move(provider);
+  }
+
   /// @brief Source of the random numbers channel access draws its channels and back-offs from.
   using RandomSource = std::function<uint32_t()>;
 
@@ -691,8 +702,8 @@ class ExchangeEngine {
   /// result after a random, growing back-off, and send only where the check found it free, until the
   /// access time (decisions::channel_access_budget_ms()) is spent. Ends as CHANNEL_BUSY then, unless
   /// `lbt_force_when_busy` sends on the quietest channel.
-  /// @param frame         The request; its low-power flag decides the channel rule and the access time.
-  /// @param own_freq      The channel a low-power request stays on.
+  /// @param frame         The request; its low-power flag decides the channels it may use and the access time.
+  /// @param own_freq      The caller's channel; reported when the frame cannot be serialized.
   /// @param preamble      Start preamble in bytes.
   /// @param previous_freq Channel to avoid on the first check (the previous attempt's), 0 for none.
   [[nodiscard]] RequestTransmit transmit_with_channel_access_(const IoFrame &frame, uint32_t own_freq,
@@ -724,6 +735,15 @@ class ExchangeEngine {
   /// @param result    The radio's answer to the send (never CHANNEL_BUSY here).
   /// @return Whether the frame went out.
   bool conclude_send_(const IoFrame &frame, const RadioTxConfig &tx_config, uint8_t len, const TxResult &result);
+
+  /// The channels a request may use now (decisions::request_channels()), from the radio's band and the
+  /// frequency to keep away from.
+  /// @param low_power The request carries the low-power flag.
+  [[nodiscard]] ChannelSet request_channels_(bool low_power) const;
+
+  /// A channel of @p channels other than @p avoid_freq; draws a random number only when there is a
+  /// choice.
+  [[nodiscard]] uint32_t draw_request_channel_(const ChannelSet &channels, uint32_t avoid_freq) const;
 
   /// The next random number for channel access: from the installed source, 0 without one.
   [[nodiscard]] uint32_t draw_random_() const { return this->random_source_ ? this->random_source_() : 0; }
@@ -855,6 +875,7 @@ class ExchangeEngine {
   TargetEvidenceProvider target_evidence_provider_;            ///< See set_target_evidence_provider().
   DeviceKeyProvider device_key_provider_;                      ///< See set_device_key_provider().
   WakeEvidenceSpentHandler wake_evidence_spent_handler_;       ///< See set_wake_evidence_spent_handler().
+  AvoidFrequencyProvider avoid_frequency_provider_;            ///< See set_avoid_frequency_provider().
   RandomSource random_source_;                                 ///< See set_random_source().
 
   // --- Engine state --------------------------------------------------------

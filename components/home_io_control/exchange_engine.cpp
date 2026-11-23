@@ -193,7 +193,8 @@ int16_t ExchangeEngine::busy_limit_dbm() const {
   if (this->tuning_->lbt_rssi_threshold_dbm.has_value())
     return *this->tuning_->lbt_rssi_threshold_dbm;
   const std::optional<ChannelLevel> quiet = this->quiet_level_.board_quiet_level();
-  return decisions::busy_limit_dbm(quiet.has_value() ? std::optional<int16_t>(quiet->level_dbm) : std::nullopt);
+  return decisions::busy_limit_dbm(quiet.has_value() ? std::optional<int16_t>(quiet->level_dbm) : std::nullopt,
+                                   (*this->radio_ptr_)->band().busy_limit_until_quiet_level_dbm);
 }
 
 // ============================================================================
@@ -325,10 +326,11 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
   const uint8_t len = serialize_for_tx(frame, buf);
   if (len == 0)
     return {decisions::ChannelAccessStatus::FAILED, own_freq};
-  // A low-power receiver is woken on channel 2 and stays there; any other request leaves the
+  // The request draws from the channels its band and the hub's Wi-Fi leave it (ADR 0132), leaving the
   // previous attempt's channel and, on a busy result, the one it just measured.
   const bool low_power = (frame.ctrl1 & CTRL1_LOW_POWER) != 0;
-  uint32_t freq = low_power ? own_freq : decisions::request_channel(previous_freq, this->draw_random_());
+  const ChannelSet channels = this->request_channels_(low_power);
+  uint32_t freq = this->draw_request_channel_(channels, previous_freq);
   const uint32_t begin_ms = millis();
   for (uint8_t busy_checks = 0;; busy_checks++) {
     RadioTxConfig tx_config = tx_config_for(*radio, frame, freq, preamble);
@@ -347,25 +349,36 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
     // The back-off is spent listening on the busy channel: that is where the traffic the hub backs
     // off from is, and it keeps the loop alive (listen() feeds the watchdog while it blocks).
     this->hear_channel_for_(*backoff_ms);
-    if (!low_power)
-      freq = decisions::request_channel(freq, this->draw_random_());
+    freq = this->draw_request_channel_(channels, freq);
   }
   if (!this->tuning_->lbt_force_when_busy)
     return {decisions::ChannelAccessStatus::CHANNEL_BUSY, freq};
 
-  // Opted in: every channel the request may use stayed busy, so send on the quietest of the three. A
-  // low-power request may use only its own channel, so there is nothing to compare.
+  // Opted in: every channel the request may use stayed busy, so send on the quietest of them. A set
+  // of one channel leaves nothing to compare.
   std::array<int16_t, decisions::REQUEST_CHANNELS.size()> levels{};
-  if (!low_power) {
-    for (size_t i = 0; i < levels.size(); i++)
-      levels[i] = radio->measure_channel_level(decisions::REQUEST_CHANNELS[i]);
+  if (channels.count() > 1) {
+    for (size_t i = 0; i < levels.size(); i++) {
+      if (channels.contains(decisions::REQUEST_CHANNELS[i]))
+        levels[i] = radio->measure_channel_level(decisions::REQUEST_CHANNELS[i]);
+    }
   }
-  const uint32_t forced_freq = decisions::forced_send_channel(low_power, own_freq, levels);
+  const uint32_t forced_freq = decisions::forced_send_channel(channels, levels);
   const RadioTxConfig tx_config = tx_config_for(*radio, frame, forced_freq, preamble);
   ESP_LOGW(TAG, "Channel busy for %" PRIu32 " ms: sending cmd=0x%02X on %" PRIu32 " Hz anyway (lbt_force_when_busy)",
            millis() - begin_ms, frame.cmd, forced_freq);
   const bool sent = this->conclude_send_(frame, tx_config, len, radio->send_packet(buf, len, tx_config));
   return {sent ? decisions::ChannelAccessStatus::SENT_FORCED : decisions::ChannelAccessStatus::FAILED, forced_freq};
+}
+
+ChannelSet ExchangeEngine::request_channels_(bool low_power) const {
+  const uint32_t avoid_hz = this->avoid_frequency_provider_ ? this->avoid_frequency_provider_() : 0;
+  return decisions::request_channels(low_power, (*this->radio_ptr_)->band(), avoid_hz);
+}
+
+uint32_t ExchangeEngine::draw_request_channel_(const ChannelSet &channels, uint32_t avoid_freq) const {
+  const bool choice = channels.count() > 1;
+  return decisions::request_channel(channels, avoid_freq, choice ? this->draw_random_() : 0);
 }
 
 uint32_t ExchangeEngine::final_reply_tail_ms_(const IoFrame &request, uint32_t freq) const {

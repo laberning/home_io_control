@@ -12,22 +12,89 @@ using namespace esphome::home_io_control;
 // decisions_channel.h, tested without radio or clock; the random number is an argument.
 // ============================================================================
 
-TEST(DecisionsChannel, TheFirstCheckCanTakeAnyOfTheThreeChannels) {
+namespace {
+
+/// A band that is not 868 MHz, with invented air frequencies (a test fixture, not a real band): every
+/// channel may wake a low-power receiver, and its fallback busy limit differs from the 868 MHz one.
+IoBand test_band_2g4() {
+  IoBand band;
+  band.air_hz = {2450000000U, 2410000000U, 2475000000U};  // CH2, CH1, CH3
+  band.wake_up_channels = ChannelSet::all();
+  band.busy_limit_until_quiet_level_dbm = -70;
+  return band;
+}
+
+}  // namespace
+
+TEST(DecisionsChannel, The868BandHoldsTodaysConstants) {
+  EXPECT_EQ(IO_868_BAND.air_hz, (std::array<uint32_t, 3>{FREQ_CH2, FREQ_CH1, FREQ_CH3}));
+  EXPECT_EQ(IO_868_BAND.wake_up_channels, ChannelSet::only(FREQ_CH2));
+  EXPECT_EQ(IO_868_BAND.busy_limit_until_quiet_level_dbm, CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM);
+  EXPECT_EQ(IO_868_BAND.busy_limit_until_quiet_level_dbm, -85);
+}
+
+TEST(DecisionsChannel, AChannelSetKnowsItsMembersInChannelOrder) {
+  const ChannelSet all = ChannelSet::all();
+  EXPECT_EQ(all.count(), 3u);
+  EXPECT_EQ(all.nth(0), FREQ_CH2);
+  EXPECT_EQ(all.nth(1), FREQ_CH1);
+  EXPECT_EQ(all.nth(2), FREQ_CH3);
+  const ChannelSet one = ChannelSet::only(FREQ_CH3);
+  EXPECT_EQ(one.count(), 1u);
+  EXPECT_TRUE(one.contains(FREQ_CH3));
+  EXPECT_FALSE(one.contains(FREQ_CH2));
+  EXPECT_EQ(ChannelSet::only(123456).count(), 0u) << "a frequency that is no channel makes an empty set";
+}
+
+TEST(DecisionsChannel, OnThe868BandALowPowerRequestMayUseChannel2Only) {
+  EXPECT_EQ(decisions::request_channels(true, IO_868_BAND, 0), ChannelSet::only(FREQ_CH2));
+  EXPECT_EQ(decisions::request_channels(false, IO_868_BAND, 0), ChannelSet::all());
+}
+
+TEST(DecisionsChannel, ABandCanLetALowPowerRequestUseEveryChannel) {
+  EXPECT_EQ(decisions::request_channels(true, test_band_2g4(), 0), ChannelSet::all());
+}
+
+TEST(DecisionsChannel, AChannelInsideTheGuardOfTheFrequencyToAvoidIsLeftOut) {
+  const IoBand band = test_band_2g4();
+  const ChannelSet near_ch2 = decisions::request_channels(false, band, 2450000000U);
+  EXPECT_FALSE(near_ch2.contains(FREQ_CH2));
+  EXPECT_EQ(near_ch2.count(), 2u);
+  EXPECT_FALSE(
+      decisions::request_channels(false, band, 2410000000U + decisions::WIFI_CHANNEL_GUARD_HZ).contains(FREQ_CH1))
+      << "the guard's edge is inside";
+  EXPECT_TRUE(
+      decisions::request_channels(false, band, 2410000000U + decisions::WIFI_CHANNEL_GUARD_HZ + 1).contains(FREQ_CH1))
+      << "one hertz beyond the guard is outside";
+  EXPECT_FALSE(decisions::request_channels(true, band, 2475000000U).contains(FREQ_CH3)) << "low power too";
+}
+
+TEST(DecisionsChannel, AnExclusionThatWouldLeaveNoChannelIsDropped) {
+  // The only wake-up channel of the 868 MHz layout, with a frequency to avoid that sits on it.
+  EXPECT_EQ(decisions::request_channels(true, IO_868_BAND, FREQ_CH2), ChannelSet::only(FREQ_CH2));
+}
+
+TEST(DecisionsChannel, A2g4FrequencyExcludesNoChannelOfThe868Band) {
+  EXPECT_EQ(decisions::request_channels(false, IO_868_BAND, 2437000000U), ChannelSet::all());
+  EXPECT_EQ(decisions::request_channels(true, IO_868_BAND, 2437000000U), ChannelSet::only(FREQ_CH2));
+}
+
+TEST(DecisionsChannel, TheFirstCheckCanTakeAnyChannelOfTheSet) {
   std::set<uint32_t> seen;
   for (uint32_t random = 0; random < 3; random++)
-    seen.insert(decisions::request_channel(/*avoid_freq=*/0, random));
+    seen.insert(decisions::request_channel(ChannelSet::all(), /*avoid_freq=*/0, random));
   EXPECT_EQ(seen, (std::set<uint32_t>{FREQ_CH1, FREQ_CH2, FREQ_CH3}));
 }
 
 TEST(DecisionsChannel, ADrawOfZeroIsChannel2AsBeforeChannelAccess) {
-  EXPECT_EQ(decisions::request_channel(0, 0), FREQ_CH2);
+  EXPECT_EQ(decisions::request_channel(ChannelSet::all(), 0, 0), FREQ_CH2);
 }
 
 TEST(DecisionsChannel, TheChannelToLeaveIsNeverChosenWhateverTheRandomNumber) {
   for (const uint32_t avoid : {FREQ_CH1, FREQ_CH2, FREQ_CH3}) {
     std::set<uint32_t> seen;
     for (uint32_t random = 0; random < 1000; random++) {
-      const uint32_t freq = decisions::request_channel(avoid, random);
+      const uint32_t freq = decisions::request_channel(ChannelSet::all(), avoid, random);
       EXPECT_NE(freq, avoid) << "random=" << random;
       seen.insert(freq);
     }
@@ -36,7 +103,19 @@ TEST(DecisionsChannel, TheChannelToLeaveIsNeverChosenWhateverTheRandomNumber) {
 }
 
 TEST(DecisionsChannel, AFrequencyThatIsNoChannelExcludesNothing) {
-  EXPECT_EQ(decisions::request_channel(123456, 1), FREQ_CH1);
+  EXPECT_EQ(decisions::request_channel(ChannelSet::all(), 123456, 1), FREQ_CH1);
+}
+
+TEST(DecisionsChannel, ADrawStaysInsideTheSet) {
+  const ChannelSet two = decisions::request_channels(false, test_band_2g4(), 2475000000U);  // CH3 out
+  for (uint32_t random = 0; random < 100; random++)
+    EXPECT_NE(decisions::request_channel(two, 0, random), FREQ_CH3) << "random=" << random;
+}
+
+TEST(DecisionsChannel, ASetOfOneChannelReturnsItEvenWhenItIsTheOneToLeave) {
+  const ChannelSet one = ChannelSet::only(FREQ_CH2);
+  EXPECT_EQ(decisions::request_channel(one, 0, 7), FREQ_CH2);
+  EXPECT_EQ(decisions::request_channel(one, FREQ_CH2, 7), FREQ_CH2);
 }
 
 TEST(DecisionsChannel, ALowPowerRequestHasALongerAccessTime) {
@@ -101,14 +180,18 @@ TEST(DecisionsChannel, AReadingAtTheThresholdIsBusy) {
 
 TEST(DecisionsChannel, AForcedSendTakesTheQuietestChannel) {
   // Levels in REQUEST_CHANNELS order: CH2, CH1, CH3.
-  EXPECT_EQ(decisions::forced_send_channel(false, FREQ_CH2, {-50, -70, -60}), FREQ_CH1);
-  EXPECT_EQ(decisions::forced_send_channel(false, FREQ_CH2, {-80, -70, -60}), FREQ_CH2);
-  EXPECT_EQ(decisions::forced_send_channel(false, FREQ_CH2, {-50, -70, -95}), FREQ_CH3);
-  EXPECT_EQ(decisions::forced_send_channel(false, FREQ_CH2, {-60, -60, -60}), FREQ_CH2) << "a tie keeps channel 2";
+  const ChannelSet all = ChannelSet::all();
+  EXPECT_EQ(decisions::forced_send_channel(all, {-50, -70, -60}), FREQ_CH1);
+  EXPECT_EQ(decisions::forced_send_channel(all, {-80, -70, -60}), FREQ_CH2);
+  EXPECT_EQ(decisions::forced_send_channel(all, {-50, -70, -95}), FREQ_CH3);
+  EXPECT_EQ(decisions::forced_send_channel(all, {-60, -60, -60}), FREQ_CH2) << "a tie keeps channel 2";
 }
 
-TEST(DecisionsChannel, AForcedLowPowerSendStaysOnItsChannel) {
-  EXPECT_EQ(decisions::forced_send_channel(true, FREQ_CH2, {-50, -95, -95}), FREQ_CH2);
+TEST(DecisionsChannel, AForcedSendStaysInsideTheSet) {
+  EXPECT_EQ(decisions::forced_send_channel(ChannelSet::only(FREQ_CH2), {-50, -95, -95}), FREQ_CH2);
+  const ChannelSet without_ch1 = decisions::request_channels(false, test_band_2g4(), 2410000000U);
+  EXPECT_EQ(decisions::forced_send_channel(without_ch1, {-50, -120, -60}), FREQ_CH3)
+      << "CH1 is the quietest but outside the set";
 }
 
 TEST(DecisionsChannel, OnlyASendOntoAFreeChannelOrAFailedTransmitIsEvidenceWhenTheAnswerIsMissing) {

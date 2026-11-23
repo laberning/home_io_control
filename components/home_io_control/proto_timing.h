@@ -376,7 +376,8 @@ static constexpr uint32_t RAIN_EVIDENCE_HOLD_MS = 2UL * 60UL * 60UL * 1000UL;
 /// receiver reads: one board reads -88 to -90 dBm on every channel (issue #228), so a fixed -90 dBm
 /// finds no free channel on it, while four bench boards idle between -123 and -108 dBm (ADR 0096).
 ///
-/// CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM is the limit before every channel has enough readings: above
+/// CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM is the 868 MHz band's limit before every channel has enough
+/// readings (IO_868_BAND; a radio on another band gives its own through RadioDriver::band()): above
 /// the noisiest board reported so far, so a board that has not learned yet still finds a free channel.
 static constexpr int16_t CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM = -85;
 /// The learned limit never goes below this: a quiet board judges a channel busy from -90 dBm on.

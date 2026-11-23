@@ -9,6 +9,7 @@
 /// Inline, stateless helpers, testable without radio hardware or timing. Randomness is an argument:
 /// the engine draws it from its injected source, a test passes a number.
 
+#include "proto_band.h"
 #include "proto_timing.h"
 
 #include <algorithm>
@@ -29,27 +30,55 @@ enum class ChannelAccessStatus : uint8_t {
   FAILED,        ///< The radio could not send (serialization or TX failure).
 };
 
-/// The channels of the protocol in the order a channel draw indexes them: channel 2 first, so a draw
-/// of 0 reproduces the channel every request used before ADR 0096.
-static constexpr std::array<uint32_t, 3> REQUEST_CHANNELS = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
+/// The channels of the protocol in the order a channel draw indexes them (IO_CHANNELS).
+static constexpr std::array<uint32_t, 3> REQUEST_CHANNELS = IO_CHANNELS;
+
+/// A channel whose air frequency lies within this distance of the frequency the hub asks to keep away
+/// from (its Wi-Fi channel) is left out of the channels of a request (ADR 0132): half a 20 MHz Wi-Fi
+/// channel (11 MHz with the transmit mask's skirt) plus a margin. This project's choice, not a
+/// measured value.
+static constexpr uint32_t WIFI_CHANNEL_GUARD_HZ = 15000000;
 
 /// Back-off ceilings in milliseconds, one per busy check of an attempt; a later check than the table
 /// holds uses the last one. A back-off is drawn uniformly from 1 to its ceiling, so the wait is
 /// random and grows with every busy check. This project's design choice, not a measured value.
 static constexpr std::array<uint8_t, 5> BACKOFF_CEILINGS_MS = {4, 8, 16, 32, 40};
 
-/// The channel for a check: a random one of the channels other than @p avoid_freq.
+/// The channels a request may use (ADR 0132): all three; for a request to a low-power receiver the
+/// band's wake-up channels; less every channel whose air frequency lies within WIFI_CHANNEL_GUARD_HZ of
+/// @p avoid_hz. When that leaves no channel the exclusion is dropped.
+/// @param low_power The request carries the low-power flag.
+/// @param band The band the radio is on.
+/// @param avoid_hz Air frequency to keep away from; 0 for none.
+[[nodiscard]] inline ChannelSet request_channels(bool low_power, const IoBand &band, uint32_t avoid_hz) {
+  const ChannelSet base = low_power ? band.wake_up_channels : ChannelSet::all();
+  if (avoid_hz == 0)
+    return base;
+  ChannelSet narrowed = base;
+  for (size_t i = 0; i < IO_CHANNELS.size(); i++) {
+    const uint32_t air_hz = band.air_hz[i];
+    const uint32_t distance_hz = air_hz > avoid_hz ? air_hz - avoid_hz : avoid_hz - air_hz;
+    if (distance_hz <= WIFI_CHANNEL_GUARD_HZ)
+      narrowed = narrowed.without_index(i);
+  }
+  return narrowed.count() == 0 ? base : narrowed;
+}
+
+/// The channel for a check: a random one of @p channels other than @p avoid_freq.
+/// @param channels The channels the request may use (request_channels()); must not be empty.
 /// @param avoid_freq Channel to leave (the previous attempt's, or the one just measured busy); 0 or
-///        any value that is not a channel excludes nothing, so the draw covers all three.
+///        any value that is not in the set excludes nothing. A set whose only channel is @p avoid_freq
+///        returns that channel.
 /// @param random Any random number; only its value modulo the number of candidates is used.
-[[nodiscard]] inline uint32_t request_channel(uint32_t avoid_freq, uint32_t random) {
+[[nodiscard]] inline uint32_t request_channel(const ChannelSet &channels, uint32_t avoid_freq, uint32_t random) {
   std::array<uint32_t, 3> candidates{};
   size_t count = 0;
-  for (const uint32_t freq : REQUEST_CHANNELS) {
+  for (size_t i = 0; i < channels.count(); i++) {
+    const uint32_t freq = channels.nth(i);
     if (freq != avoid_freq)
       candidates[count++] = freq;
   }
-  return candidates[random % count];
+  return count == 0 ? channels.nth(0) : candidates[random % count];
 }
 
 /// The access time of one attempt: how long its checks may last before it ends as "channel busy".
@@ -87,16 +116,23 @@ static constexpr std::array<uint8_t, 5> BACKOFF_CEILINGS_MS = {4, 8, 16, 32, 40}
   return level_dbm >= threshold_dbm;
 }
 
+/// The limit a known quiet level gives: the quiet level plus QUIET_LEVEL_MARGIN_DB, held between
+/// BUSY_LIMIT_FLOOR_DBM and BUSY_LIMIT_CEILING_DBM.
+[[nodiscard]] inline int16_t busy_limit_from_quiet_level_dbm(int16_t quiet_level_dbm) {
+  const auto limit = static_cast<int16_t>(quiet_level_dbm + QUIET_LEVEL_MARGIN_DB);
+  return std::clamp(limit, BUSY_LIMIT_FLOOR_DBM, BUSY_LIMIT_CEILING_DBM);
+}
+
 /// The limit at or above which a reading makes a channel busy, judged against the board's own quiet
 /// level (ADR 0096).
 /// @param quiet_level_dbm The board's quiet level, or nothing while it is not known yet.
-/// @return CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM without a quiet level; else the quiet level plus
-///         QUIET_LEVEL_MARGIN_DB, held between BUSY_LIMIT_FLOOR_DBM and BUSY_LIMIT_CEILING_DBM.
-[[nodiscard]] inline int16_t busy_limit_dbm(std::optional<int16_t> quiet_level_dbm) {
+/// @param fallback_dbm The band's limit for the time without a quiet level
+///        (IoBand::busy_limit_until_quiet_level_dbm).
+/// @return @p fallback_dbm without a quiet level; else busy_limit_from_quiet_level_dbm().
+[[nodiscard]] inline int16_t busy_limit_dbm(std::optional<int16_t> quiet_level_dbm, int16_t fallback_dbm) {
   if (!quiet_level_dbm.has_value())
-    return CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM;
-  const auto limit = static_cast<int16_t>(*quiet_level_dbm + QUIET_LEVEL_MARGIN_DB);
-  return std::clamp(limit, BUSY_LIMIT_FLOOR_DBM, BUSY_LIMIT_CEILING_DBM);
+    return fallback_dbm;
+  return busy_limit_from_quiet_level_dbm(*quiet_level_dbm);
 }
 
 /// Whether a board's quiet level is so high that its limit has less than QUIET_LEVEL_WARN_HEADROOM_DB
@@ -112,21 +148,20 @@ static constexpr std::array<uint8_t, 5> BACKOFF_CEILINGS_MS = {4, 8, 16, 32, 40}
 }
 
 /// The channel a forced send takes once the access time is spent (`lbt_force_when_busy`).
-/// @param low_power The request carries the low-power flag: it stays on its channel, the only one it
-///        was ever allowed to use.
-/// @param own_freq The channel a low-power request stays on.
-/// @param levels_dbm The level measured on each of REQUEST_CHANNELS, in that order.
-/// @return The quietest channel (the first of equals in REQUEST_CHANNELS order), or @p own_freq.
-[[nodiscard]] inline uint32_t forced_send_channel(bool low_power, uint32_t own_freq,
+/// @param channels The channels the request may use (request_channels()); must not be empty.
+/// @param levels_dbm The level measured on each of REQUEST_CHANNELS, in that order; only the entries
+///        of channels in the set are read.
+/// @return The quietest channel of the set (the first of equals in REQUEST_CHANNELS order).
+[[nodiscard]] inline uint32_t forced_send_channel(const ChannelSet &channels,
                                                   const std::array<int16_t, 3> &levels_dbm) {
-  if (low_power)
-    return own_freq;
-  size_t quietest = 0;
-  for (size_t i = 1; i < levels_dbm.size(); i++) {
-    if (levels_dbm[i] < levels_dbm[quietest])
+  std::optional<size_t> quietest;
+  for (size_t i = 0; i < levels_dbm.size(); i++) {
+    if (!channels.contains(REQUEST_CHANNELS[i]))
+      continue;
+    if (!quietest.has_value() || levels_dbm[i] < levels_dbm[*quietest])
       quietest = i;
   }
-  return REQUEST_CHANNELS[quietest];
+  return quietest.has_value() ? REQUEST_CHANNELS[*quietest] : channels.nth(0);
 }
 
 /// Whether the request of a try went out on the air (on a free channel or forced); a try that did not

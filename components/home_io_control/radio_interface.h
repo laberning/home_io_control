@@ -9,6 +9,7 @@
 /// protocol layer to work with different radio chips (SX1276, SX1262, etc.)
 /// without knowing the hardware details.
 
+#include "proto_band.h"
 #include "proto_frame.h"
 #include "proto_rssi.h"
 #include "proto_timing.h"
@@ -267,6 +268,14 @@ class RadioDriver {
   ///
   /// @return Preamble length in bytes.
   [[nodiscard]] virtual uint16_t response_preamble() const { return SHORT_PREAMBLE; }
+
+  /// @brief The band this radio is on.
+  ///
+  /// Describes where the protocol's three channels lie on air, which of them may wake a low-power
+  /// receiver and the busy limit before the board's quiet level is known. The hub reads it and
+  /// tests no band itself. The default is the 868 MHz band.
+  /// @return The band; the reference stays valid for the driver's lifetime.
+  [[nodiscard]] virtual const IoBand &band() const { return IO_868_BAND; }
 
   /// @brief Bit periods one programmed preamble byte occupies on air.
   ///
