@@ -94,6 +94,17 @@ inline std::vector<IoFrame> sent_frames_of(const MockRadio &radio, uint8_t cmd) 
   return frames;
 }
 
+/// The channel of every frame of `cmd` the radio was asked to send, in order.
+inline std::vector<uint32_t> tx_channels_of(const MockRadio &radio, uint8_t cmd) {
+  std::vector<uint32_t> channels;
+  const auto &sent = radio.get_sent_data();
+  for (size_t i = 0; i < sent.size(); i++) {
+    if (sent[i].size() > WIRE_CMD_OFFSET && sent[i][WIRE_CMD_OFFSET] == cmd)
+      channels.push_back(radio.get_tx_configs()[i].freq_hz);
+  }
+  return channels;
+}
+
 inline std::vector<uint8_t> sent_commands(const MockRadio &radio) {
   std::vector<uint8_t> cmds;
   for (const auto &frame : radio.get_sent_data())

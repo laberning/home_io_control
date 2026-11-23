@@ -325,14 +325,39 @@ class ExchangeEngine {
   /// checks it inside send_packet(); see RadioTxConfig::cca_threshold_dbm): LBT_MAX_RETRIES checks
   /// LBT_RETRY_DELAY_MS apart, then one send without a check. A frame without START answers within
   /// a session and goes out at once, unchecked (ADR 0045). This is the access of the senders that
-  /// keep a fixed channel; the requests of send_and_receive() take a free channel instead
-  /// (ChannelAccess::FREE_CHANNEL, ADR 0096).
+  /// keep a fixed channel (discovery broadcasts, the roll-call) and of the frames inside a session; a
+  /// frame that opens a session takes a free channel instead (open_session(), send_and_receive(); ADR 0096,
+  /// ADR 0133).
   /// @param frame    Frame to transmit.
   /// @param freq     RF frequency in Hz.
   /// @param preamble Preamble length in programmed bytes (e.g. `SHORT_PREAMBLE`, or a
   ///        tuning-configured duration converted with preamble_bytes_for_ms()).
   /// @return true if the radio accepted the packet; false otherwise.
   bool transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble);
+
+  /// How a transmit that took a free channel ended, and where.
+  struct ChannelTransmit {
+    decisions::ChannelAccessStatus status{decisions::ChannelAccessStatus::FAILED};  ///< How it ended.
+    uint32_t freq_hz{0};  ///< The channel it went out on, or was last checked on.
+  };
+
+  /// Open a session with @p frame through the channel access of ADR 0096 on the band's wake-up channels
+  /// (ADR 0133), for the callers that run their own wait loops (pairing, the key pull): the frame is
+  /// never sent onto a channel measured busy (unless `lbt_force_when_busy` says so), and where the set
+  /// has more than one channel a busy result moves it to another. The caller keeps the returned channel
+  /// for the rest of the session: every later frame goes out on it and every wait listens on it. Logs
+  /// and counts a busy end like an attempt of send_and_receive().
+  /// @param frame         The frame that opens the session.
+  /// @param preamble      Start preamble in programmed bytes.
+  /// @param previous_freq Channel to avoid on the first check (the previous try's), 0 for none.
+  /// @return How the transmit ended and the channel; only SENT and SENT_FORCED mean the frame is on the air.
+  [[nodiscard]] ChannelTransmit open_session(const IoFrame &frame, uint16_t preamble, uint32_t previous_freq);
+
+  /// The channels a frame that opens a session may use now (decisions::request_channels()), from the
+  /// radio's band and the frequency to keep away from (the hub's Wi-Fi).
+  /// @param wake_up_channels True for the band's wake-up channels (a low-power target, or a step that
+  ///        cannot know whether its target sleeps); false for all channels.
+  [[nodiscard]] ChannelSet request_channels(bool wake_up_channels) const;
 
   /// Programmed preamble bytes that last @p ms milliseconds on the active radio. The one door every
   /// preamble duration of the tuning passes through on its way to a transmit (ADR 0097); it forwards
@@ -593,9 +618,9 @@ class ExchangeEngine {
   /// the RSSI/Exchange-Failures per-device sensors for that) and not per-attempt (see DebugInfo for
   /// that). Persist until explicitly reset, so a caller can diff two snapshots across an arbitrary
   /// window. Coverage differs per field, see each field's own comment below: `lbt_retries` is the
-  /// one that covers all pairing traffic (pairing calls transmit_frame() the same way normal
-  /// exchanges do); `retransmits` also covers pairing's retry loops (run_attempts()); the other two
-  /// only observe ExchangeEngine's own send_and_receive() path.
+  /// one that covers all pairing traffic (pairing's session openers take the same channel access as
+  /// requests, its other sends go through transmit_frame()); `retransmits` also covers pairing's retry loops
+  /// (run_attempts()); the other two only observe ExchangeEngine's own send_and_receive() path.
   ///
   /// Internal-only, deliberately: nothing outside the unit tests reads counters() today — no HA
   /// sensor, no log line, no periodic dump. Built to back a scripted continuous-operation
@@ -606,10 +631,11 @@ class ExchangeEngine {
   /// self-contained addition, not a redesign.
   struct Counters {
     uint32_t lbt_retries{0};            ///< Busy channel checks (fixed-channel back-offs and the checks of
-                                        ///< a request's channel access); covers pairing traffic too, via
-                                        ///< pairing_engine.cpp's own transmit_frame() calls.
-    uint32_t channel_busy_attempts{0};  ///< Attempts of send_and_receive() that ended as "channel busy":
-                                        ///< the access time ran out and nothing was sent (ADR 0096).
+                                        ///< a request's or a session opener's channel access); covers
+                                        ///< pairing traffic too.
+    uint32_t channel_busy_attempts{0};  ///< Attempts of send_and_receive() and openings by open_session() that
+                                        ///< ended as "channel busy": the access time ran out and nothing was
+                                        ///< sent (ADR 0096, ADR 0133).
     uint32_t retransmits{0};            ///< TX attempts beyond the first of send_and_receive() and of
                                         ///< run_attempts() (pairing's retry loops).
     uint32_t challenge_round_trips{0};  ///< Completed 0x3C/0x3D challenge-response cycles, either
@@ -688,16 +714,10 @@ class ExchangeEngine {
   /// The wait has just received @p packet, so the radio's last capture is its own: its RSSI goes along.
   void report_overheard_(const IoFrame &frame, const RadioRxPacket &packet);
 
-  /// How a request's transmit ended and where: the channel it went out on, or was last checked on.
-  struct RequestTransmit {
-    decisions::ChannelAccessStatus status{decisions::ChannelAccessStatus::FAILED};  ///< How it ended.
-    uint32_t freq_hz{0};                                                            ///< Channel (Hz).
-  };
-
   /// Put one request attempt on the air as the exchange's channel access says, record the outcome in
   /// the debug snapshot and the counters, and keep the channel it used in `ctx.request_freq`.
   /// @param request       The request (only a frame that opens a session takes the free-channel access).
-  /// @param freq          The caller's channel: where a fixed-channel or low-power request goes.
+  /// @param freq          The caller's channel: where a frame inside a session goes.
   /// @param preamble      Start preamble in bytes.
   /// @param access        The exchange's channel access (ExchangeOptions::channel_access).
   /// @param previous_freq Channel of the previous attempt (0 for the first); a free-channel request avoids it.
@@ -711,12 +731,15 @@ class ExchangeEngine {
   /// result after a random, growing back-off, and send only where the check found it free, until the
   /// access time (decisions::channel_access_budget_ms()) is spent. Ends as CHANNEL_BUSY then, unless
   /// `lbt_force_when_busy` sends on the quietest channel.
-  /// @param frame         The request; its low-power flag decides the channels it may use and the access time.
+  /// @param frame         The frame that opens the session.
   /// @param own_freq      The caller's channel; reported when the frame cannot be serialized.
   /// @param preamble      Start preamble in bytes.
   /// @param previous_freq Channel to avoid on the first check (the previous attempt's), 0 for none.
-  [[nodiscard]] RequestTransmit transmit_with_channel_access_(const IoFrame &frame, uint32_t own_freq,
-                                                              uint16_t preamble, uint32_t previous_freq);
+  /// @param wake_up_channels The frame draws from the band's wake-up channels and has the longer access time
+  ///                      (a low-power request, or a step of ChannelAccess::WAKE_UP_CHANNELS).
+  [[nodiscard]] ChannelTransmit transmit_with_channel_access_(const IoFrame &frame, uint32_t own_freq,
+                                                              uint16_t preamble, uint32_t previous_freq,
+                                                              bool wake_up_channels);
 
   /// One channel check on `tx_config.freq_hz` and, when it finds the channel free, the send: up to
   /// CHANNEL_CHECK_READINGS readings CHANNEL_CHECK_READING_GAP_MS apart, the last of them the radio's
@@ -744,11 +767,6 @@ class ExchangeEngine {
   /// @param result    The radio's answer to the send (never CHANNEL_BUSY here).
   /// @return Whether the frame went out.
   bool conclude_send_(const IoFrame &frame, const RadioTxConfig &tx_config, uint8_t len, const TxResult &result);
-
-  /// The channels a request may use now (decisions::request_channels()), from the radio's band and the
-  /// frequency to keep away from.
-  /// @param low_power The request carries the low-power flag.
-  [[nodiscard]] ChannelSet request_channels_(bool low_power) const;
 
   /// A channel of @p channels other than @p avoid_freq; draws a random number only when there is a
   /// choice.

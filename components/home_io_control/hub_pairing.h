@@ -79,11 +79,13 @@ struct PairingContext {
   bool discovery_metadata_complete{false};  ///< True when discovery carried type/subtype bytes.
   bool discovery_low_power{false};          ///< True when discovery reported POWER_SAVE_LOW_POWER.
   uint8_t discovery_manufacturer{0};        ///< Manufacturer byte of the discovery reply; 0 when it carried none.
-  bool saw_key_challenge{false};            ///< True once the device challenged our key-init this attempt.
-  bool key_refused{false};                  ///< True once the device answered the key step with CMD_ERROR_RESP.
-  uint8_t key_refusal_code{0};              ///< That CMD_ERROR_RESP byte; only meaningful if key_refused.
-  bool has_pulled_key{false};               ///< True once a pull produced a different key (proven or not).
-  uint8_t pulled_key[AES_KEY_SIZE]{};       ///< That key. Key material: never logged outside the pull report.
+  /// Channel the last session-opening frame went out on (open_pairing_session()); 0 before one.
+  uint32_t session_freq{0};
+  bool saw_key_challenge{false};       ///< True once the device challenged our key-init this attempt.
+  bool key_refused{false};             ///< True once the device answered the key step with CMD_ERROR_RESP.
+  uint8_t key_refusal_code{0};         ///< That CMD_ERROR_RESP byte; only meaningful if key_refused.
+  bool has_pulled_key{false};          ///< True once a pull produced a different key (proven or not).
+  uint8_t pulled_key[AES_KEY_SIZE]{};  ///< That key. Key material: never logged outside the pull report.
 };
 
 /// @brief What PairingEngine::run_discover_confirm_step_() actually observed.

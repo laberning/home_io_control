@@ -96,7 +96,7 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
 /// NO_RESPONSE (no packets at all) and INVALID (packets seen but none valid).
 ///
 /// Frequency hopping: hops between the 2 non-request IO-homecontrol channels after each slice —
-/// the request channel (FREQ_CH2 unless pairing_discovery_send_channels rotates it, see
+/// the request channel (CH2 unless pairing_discovery_send_channels rotates it, see
 /// run_discovery_phase_()), and a discovery reply essentially never lands back on that channel
 /// (see ListenPolicy's own doc comment for why), so dwelling there is wasted listening time. Same policy as
 /// collect_broadcast_responses()'s default. The slice length comes from RadioDriver::hop_dwell_ms() (spec.dwell_ms left
@@ -306,7 +306,8 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
     // challenges, on across the 0x3D and the second wait. Nothing is printed between the challenge and the answer
     // (a late answer is dropped by some receivers, issue #163) nor while a reply is awaited.
     FrameLogHoldScope quiet_window;
-    if (!engine_.transmit_frame(context.req, FREQ_CH2, radio_()->response_preamble()))
+    // The 0x32 continues the key-init's session: it goes out at once on that session's channel.
+    if (!engine_.transmit_frame(context.req, context.session_freq, radio_()->response_preamble()))
       return AttemptVerdict::AGAIN;
 
     decisions::PairingKeyConfirmDisposition disposition = listen_for_key_confirm_(context, try_number, false);
@@ -318,7 +319,7 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
       // after handle_authentication_(). A failed 0x3D build/TX leaves `disposition` at CHALLENGE,
       // which the checks below treat the same as a second challenge: this try ends without
       // confirming, and the next try re-sends 0x32.
-      answered = engine_.answer_challenge(context.req, context.resp, FREQ_CH2);
+      answered = engine_.answer_challenge(context.req, context.resp, context.session_freq);
       if (answered)
         disposition = listen_for_key_confirm_(context, try_number, true);
     }
@@ -355,8 +356,9 @@ bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &cont
   if (radio_()->has_fast_tx_rx_turnaround()) {
     // Key exchange is the one caller that genuinely needs the payload: without the 0x33 there is
     // no confirmation the device took the key, so an unconfirmed acceptance is not good enough.
-    if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2, ExchangeOptions{}.on_fixed_channel()) !=
-        ExchangeOutcome::SUCCESS_WITH_RESPONSE)
+    // The 0x32 continues the key-init's session, so it goes out on that session's channel (no START).
+    if (engine_.send_and_receive(context.req, context.resp, context.session_freq,
+                                 ExchangeOptions{}.on_wake_up_channels()) != ExchangeOutcome::SUCCESS_WITH_RESPONSE)
       return false;
     if (context.resp.cmd == CMD_ERROR_RESP)
       note_key_refusal(this->telemetry_, context, context.resp, "Key transfer");
@@ -434,7 +436,8 @@ static void log_discovered_device(const pairing::PairingContext &context) {
 /// `pairing_discovery_wait_ms` for a valid response after each TX.
 /// Retries up to PAIRING_DISCOVERY_MAX_ATTEMPTS times per command. Each attempt goes out on the
 /// channel decisions::discovery_request_freq() names (CH2, or CH2/CH1/CH3 in turn with
-/// `pairing_discovery_send_channels: all`) and its reply wait skips that channel.
+/// `pairing_discovery_send_channels: all`, in both cases without the channels the band and the hub's
+/// Wi-Fi exclude) and its reply wait skips that channel.
 decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairing::PairingContext &context) {
   if (tuning_->pairing_discovery_initial_dwell_ms > 0) {
     ESP_LOGD(TAG, "Discovery: initial dwell %u ms", tuning_->pairing_discovery_initial_dwell_ms);
@@ -457,8 +460,9 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
     for (uint8_t attempt = 1; attempt <= PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {
       this->telemetry_.increment_discovery_attempt();
       enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_DISCOVER, attempt, false);
-      const uint32_t request_freq = decisions::discovery_request_freq(
-          tuning_->pairing_discovery_send_channels == DiscoverySendChannels::ALL, attempt);
+      const uint32_t request_freq =
+          decisions::discovery_request_freq(tuning_->pairing_discovery_send_channels == DiscoverySendChannels::ALL,
+                                            attempt, engine_.request_channels(/*wake_up_channels=*/false));
       // Every transmit-then-wait step of pairing holds the frame log from before the transmit to the end of the
       // wait, so nothing printed delays noticing the reply (ADR 0111).
       FrameLogHoldScope quiet_window;
@@ -532,8 +536,9 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
     engine_.record_debug(pairing_stage_name(pairing::PairingState::TX_DISCOVER_CONFIRM), try_index, false);
     FrameLogHoldScope quiet_window;  // From before the 0x2C to the end of the wait for its answer (ADR 0111).
     if (!create_discover_confirm(context.req, node_id_, context.device.node_id, context.discovery_low_power, ack) ||
-        !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble(engine_, *tuning_, context.req))) {
-      // A failed build/TX counts as a silent try, like wait_for_key_confirm_() does for 0x32.
+        !open_pairing_session(engine_, context, context.req, pairing_start_preamble(engine_, *tuning_, context.req))) {
+      // A failed build/TX or a channel that stayed busy counts as a silent try, like wait_for_key_confirm_() does
+      // for 0x32.
       return AttemptVerdict::AGAIN;
     }
 
@@ -587,7 +592,8 @@ bool PairingEngine::resend_key_init_(pairing::PairingContext &context, uint8_t r
   // From before the 0x31 across the 0x32 that answers its challenge to the end of the wait for the confirm
   // (ADR 0111): nothing is printed between the challenge and the 0x32 (issue #163).
   const FrameLogHoldScope quiet_window;
-  if (!engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble(engine_, *tuning_, context.key_init)))
+  if (!open_pairing_session(engine_, context, context.key_init,
+                            pairing_start_preamble(engine_, *tuning_, context.key_init)))
     return false;
   const bool challenged =
       wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id);
@@ -642,8 +648,8 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   // (issue #163), so the challenge line below follows that wait.
   FrameLogHoldScope quiet_window;
   if (!create_key_init(context.key_init, node_id_, context.device.node_id) ||
-      !engine_.transmit_frame(context.key_init, FREQ_CH2,
-                              pairing_start_preamble(engine_, *tuning_, context.key_init))) {
+      !open_pairing_session(engine_, context, context.key_init,
+                            pairing_start_preamble(engine_, *tuning_, context.key_init))) {
     return false;
   }
 
@@ -702,10 +708,10 @@ void PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
   if (!create_set_config1(context.req, node_id_, context.device.node_id))
     return;
   // Its reply is never read: an explicit refusal and silence are equally harmless here.
-  if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2,
+  if (engine_.send_and_receive(context.req, context.resp, nominal_pairing_freq(engine_),
                                ExchangeOptions{PAIRING_SET_CONFIG1_MAX_TRIES}
                                    .with_preamble(pairing_start_preamble(engine_, *tuning_, context.req))
-                                   .on_fixed_channel()) == ExchangeOutcome::FAILED) {
+                                   .on_wake_up_channels()) == ExchangeOutcome::FAILED) {
     ESP_LOGI(TAG, "Pairing: no reply from %s to the optional SetConfig1 (0x6F); the pairing is complete",
              context.device_id.c_str());
   }
@@ -987,10 +993,10 @@ bool PairingEngine::verify_device_holds_key_(pairing::PairingContext &context) {
   if (!create_get_name(context.req, node_id_, context.device.node_id, context.discovery_low_power))
     return false;
   const ExchangeOutcome outcome =
-      engine_.send_and_receive(context.req, context.resp, FREQ_CH2,
+      engine_.send_and_receive(context.req, context.resp, nominal_pairing_freq(engine_),
                                ExchangeOptions{PAIRING_KEY_VERIFY_MAX_TRIES}
                                    .with_preamble(pairing_start_preamble(engine_, *tuning_, context.req))
-                                   .on_fixed_channel());
+                                   .on_wake_up_channels());
   const auto verdict = decisions::classify_key_verify_reply(outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE,
                                                             engine_.get_debug().saw_challenge, context.resp);
   const bool held = verdict == decisions::PairingKeyVerifyDisposition::HELD;

@@ -13,6 +13,7 @@
 #include "proto_frame.h"
 
 #include "esp_random.h"
+#include "test_bands.h"
 #include "pairing_test_support.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -1292,4 +1293,151 @@ TEST(PullKeyFromEngine, TheHubsOwnNodeIdIsRefusedBeforeAnythingIsSent) {
   ASSERT_NE(result.refusal, nullptr);
   EXPECT_TRUE(rig.radio.get_sent_data().empty());
   EXPECT_EQ(rig.comp.pairing_telemetry().outcome(), PairingOutcome::NONE) << "no attempt was recorded";
+}
+
+// ============================================================================
+// Channel access of the session-opening steps (ADR 0133)
+// ============================================================================
+
+namespace {
+
+/// The test radio on the invented second band, with the hub's Wi-Fi on its CH2: the set of a step is {CH1, CH3}.
+void use_second_band_with_wifi_on_ch2(TestableComponent &comp, MockRadio &radio) {
+  radio.set_band(test_bands::second_band());
+  comp.exchange_engine_.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH2_HZ; });
+}
+
+}  // namespace
+
+TEST(PairingChannelAccess, TheKeyTransferFollowsTheKeyInitsChannelOnAFastTurnaroundRadio) {
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  use_second_band_with_wifi_on_ch2(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  EXPECT_FALSE(comp.pairing_engine_.run_key_exchange_phase_(context));
+
+  const std::vector<uint32_t> opener = tx_channels_of(radio, CMD_KEY_INIT);
+  ASSERT_EQ(opener.size(), 1u);
+  EXPECT_NE(opener[0], FREQ_CH2) << "the Wi-Fi channel is excluded";
+  EXPECT_EQ(tx_channels_of(radio, CMD_KEY_TRANSFER), opener) << "the 0x32 stays on the session's channel";
+  EXPECT_EQ(context.session_freq, opener[0]);
+}
+
+TEST(PairingChannelAccess, TheKeyTransferAndItsChallengeAnswerFollowTheKeyInitsChannelOnASlowTurnaroundRadio) {
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  MockRadioSX1262 radio;
+  setup(comp, radio);
+  use_second_band_with_wifi_on_ch2(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));  // to the 0x31
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));  // to the 0x32, answered by a 0x3D
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  EXPECT_FALSE(comp.pairing_engine_.run_key_exchange_phase_(context));
+
+  const std::vector<uint32_t> opener = tx_channels_of(radio, CMD_KEY_INIT);
+  ASSERT_EQ(opener.size(), 1u);
+  EXPECT_EQ(tx_channels_of(radio, CMD_KEY_TRANSFER), (std::vector<uint32_t>{opener[0]}));
+  EXPECT_EQ(tx_channels_of(radio, CMD_CHALLENGE_RESP), (std::vector<uint32_t>{opener[0]}));
+}
+
+TEST(PairingChannelAccess, AResentKeyInitTakesAChannelOfTheSetAndItsTransferFollowsIt) {
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  MockRadioSX1262 radio;
+  setup(comp, radio);
+  use_second_band_with_wifi_on_ch2(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  ASSERT_TRUE(create_key_init(context.key_init, comp.node_id_, context.device.node_id));
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  EXPECT_FALSE(comp.pairing_engine_.resend_key_init_(context, 1));
+
+  const std::vector<uint32_t> opener = tx_channels_of(radio, CMD_KEY_INIT);
+  ASSERT_EQ(opener.size(), 1u);
+  EXPECT_NE(opener[0], FREQ_CH2);
+  EXPECT_EQ(tx_channels_of(radio, CMD_KEY_TRANSFER), opener);
+}
+
+TEST(PairingChannelAccess, ABusyChannel2SendsNoKeyInitAndEndsTheStepAsAFailedTry) {
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  radio.set_channel_rssi(FREQ_CH2, -50);
+  pairing::PairingContext context = context_for_device();
+
+  EXPECT_FALSE(comp.pairing_engine_.run_key_exchange_phase_(context));
+
+  EXPECT_EQ(radio.get_send_count(), 0) << "never sent onto a channel measured busy";
+  EXPECT_EQ(comp.exchange_engine_.counters().channel_busy_attempts, 1u);
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(PairingChannelAccess, ABusyChannel2KeepsTheDiscoverConfirmSilentUntilItsTriesAreSpent) {
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  radio.set_channel_rssi(FREQ_CH2, -50);
+  pairing::PairingContext context = context_for_device();
+
+  EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::NO_REPLY);
+
+  EXPECT_EQ(radio.get_send_count(), 0);
+  EXPECT_EQ(comp.exchange_engine_.counters().channel_busy_attempts,
+            static_cast<uint32_t>(PAIRING_DISCOVER_CONFIRM_TRIES));
+}
+
+TEST(PairingChannelAccess, TheDiscoverConfirmLeavesTheChannelNearTheWifiAndEveryTryDrawsFromTheSet) {
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  use_second_band_with_wifi_on_ch2(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::NO_REPLY);
+
+  const std::vector<uint32_t> channels = tx_channels_of(radio, CMD_DISCOVER_CONFIRM);
+  ASSERT_EQ(channels.size(), static_cast<size_t>(PAIRING_DISCOVER_CONFIRM_TRIES));
+  for (const uint32_t freq : channels)
+    EXPECT_NE(freq, FREQ_CH2);
+}
+
+TEST(PairingChannelAccess, TheOptionalSetConfigAndTheKeyHeldCheckWaitForAFreeChannelToo) {
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  radio.set_channel_rssi(FREQ_CH2, -50);
+  pairing::PairingContext context = context_for_device();
+
+  comp.pairing_engine_.finalize_pairing_configuration_(context);
+  EXPECT_FALSE(comp.pairing_engine_.verify_device_holds_key_(context));
+
+  EXPECT_EQ(radio.get_send_count(), 0) << "no 0x6F and no 0x50 onto a busy channel";
+}
+
+TEST(PairingChannelAccess, TheKeyHeldCheckLeavesTheChannelNearTheWifi) {
+  esphome::test_clock::ManualClock clock;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  use_second_band_with_wifi_on_ch2(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  comp.pairing_engine_.verify_device_holds_key_(context);
+
+  const std::vector<uint32_t> channels = tx_channels_of(radio, CMD_GET_NAME);
+  ASSERT_FALSE(channels.empty());
+  for (const uint32_t freq : channels)
+    EXPECT_NE(freq, FREQ_CH2);
 }

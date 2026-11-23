@@ -861,17 +861,145 @@ TEST(ChannelAccess, AForcedLowPowerSendStaysOnChannel2) {
       << "the other channels are never measured: a low-power request may not use them";
 }
 
-TEST(ChannelAccess, ACallerThatNeedsItsChannelKeepsTheFixedChannelAccess) {
+TEST(ChannelAccess, AWakeUpChannelsRequestOnBand868WaitsLongerForChannel2LikeALowPowerOne) {
+  AccessRig rig;
+  rig.random_values = {1, 1, 1, 1, 1, 1, 1, 1};
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);
+  const uint32_t begin_ms = esphome::test_clock::peek_ms();
+
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}.on_wake_up_channels()), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 0) << "never sent onto a channel measured busy";
+  const Channels &measured = rig.radio.rssi_read_freqs();
+  EXPECT_EQ(std::set<uint32_t>(measured.begin(), measured.end()), std::set<uint32_t>{FREQ_CH2});
+  EXPECT_GE(esphome::test_clock::peek_ms() - begin_ms, LOW_POWER_CHANNEL_ACCESS_BUDGET_MS);
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 1u);
+}
+
+TEST(ChannelAccess, AWakeUpChannelsRequestOnBand868SendsOnChannel2WithAChannelCheckOnceItClears) {
   AccessRig rig;
   rig.random_values = {1, 1, 1};
-  rig.radio.set_rssi_default(-50);  // busy on every check
 
-  rig.run(false, ExchangeOptions{1}.on_fixed_channel());
+  rig.run(false, ExchangeOptions{1}.on_wake_up_channels());
 
-  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2})) << "the caller's channel, whatever the random source says";
-  EXPECT_EQ(rig.engine.counters().lbt_retries, static_cast<uint32_t>(LBT_MAX_RETRIES)) << "five checks, 5 ms apart";
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2}));
   ASSERT_EQ(rig.radio.get_tx_configs().size(), 1u);
-  EXPECT_FALSE(rig.radio.get_tx_configs()[0].cca_threshold_dbm.has_value()) << "then one send without a check";
+  EXPECT_TRUE(rig.radio.get_tx_configs()[0].cca_threshold_dbm.has_value()) << "checked, not the old unchecked send";
+  EXPECT_EQ(rig.radio.rssi_read_freqs().size(), static_cast<size_t>(CHANNEL_CHECK_READINGS));
+}
+
+TEST(ChannelAccess, AWakeUpChannelsRequestOnABandWithThreeWakeUpChannelsNeverUsesTheOneNearTheWifi) {
+  for (const uint32_t random : {0u, 1u, 2u, 3u}) {
+    AccessRig rig;
+    rig.radio.set_band(test_bands::second_band());
+    rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH2_HZ; });
+    rig.random_values = {random};
+
+    rig.run(false, ExchangeOptions{1}.on_wake_up_channels());
+
+    ASSERT_EQ(rig.sent_channels().size(), 1u);
+    EXPECT_NE(rig.sent_channels()[0], FREQ_CH2) << "random=" << random;
+  }
+}
+
+TEST(ChannelAccess, AWakeUpChannelsRequestOnABandWithThreeWakeUpChannelsMovesOffABusyChannel) {
+  AccessRig rig;
+  rig.radio.set_band(test_bands::second_band());
+  rig.random_values = {1, 0};  // CH1 first; then the back-off
+  rig.radio.set_channel_rssi(FREQ_CH1, -50);
+
+  rig.run(false, ExchangeOptions{1}.on_wake_up_channels());
+
+  ASSERT_EQ(rig.sent_channels().size(), 1u);
+  EXPECT_NE(rig.sent_channels()[0], FREQ_CH1);
+}
+
+TEST(ChannelAccess, AFrameInsideASessionGoesOutAtOnceOnTheCallersChannelWhateverTheAccess) {
+  AccessRig rig;
+  rig.radio.set_rssi_default(-50);  // busy everywhere
+  IoFrame inside = AccessRig::status_read(false);
+  inside.ctrl0 = static_cast<uint8_t>(inside.ctrl0 & ~CTRL0_START);
+  IoFrame response{};
+
+  rig.engine.send_and_receive(inside, response, FREQ_CH3, ExchangeOptions{1}.on_wake_up_channels());
+
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH3})) << "the session's channel, unchecked (ADR 0045)";
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 0u);
+}
+
+// === open_session() ===
+
+TEST(ChannelAccess, OpenSessionOnBand868SendsOnChannel2AndReportsIt) {
+  AccessRig rig;
+  const IoFrame frame = AccessRig::status_read(false);
+
+  const ExchangeEngine::ChannelTransmit opened = rig.engine.open_session(frame, 8, 0);
+
+  EXPECT_EQ(opened.status, decisions::ChannelAccessStatus::SENT);
+  EXPECT_EQ(opened.freq_hz, FREQ_CH2);
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2}));
+}
+
+TEST(ChannelAccess, OpenSessionOnABusyChannel2SendsNothingAndEndsAsChannelBusyAfterTheLongAccessTime) {
+  AccessRig rig;
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);
+  const uint32_t begin_ms = esphome::test_clock::peek_ms();
+
+  const ExchangeEngine::ChannelTransmit opened = rig.engine.open_session(AccessRig::status_read(false), 8, 0);
+
+  EXPECT_EQ(opened.status, decisions::ChannelAccessStatus::CHANNEL_BUSY);
+  EXPECT_EQ(opened.freq_hz, FREQ_CH2);
+  EXPECT_EQ(rig.radio.get_send_count(), 0);
+  EXPECT_GE(esphome::test_clock::peek_ms() - begin_ms, LOW_POWER_CHANNEL_ACCESS_BUDGET_MS);
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 1u);
+}
+
+TEST(ChannelAccess, OpenSessionOnABusyChannelMovesToAnotherChannelOfTheSetAndReportsWhereItWent) {
+  AccessRig rig;
+  rig.radio.set_band(test_bands::second_band());
+  rig.random_values = {1, 0};
+  rig.radio.set_channel_rssi(FREQ_CH1, -50);
+
+  const ExchangeEngine::ChannelTransmit opened = rig.engine.open_session(AccessRig::status_read(false), 8, 0);
+
+  EXPECT_EQ(opened.status, decisions::ChannelAccessStatus::SENT);
+  EXPECT_NE(opened.freq_hz, FREQ_CH1);
+  EXPECT_EQ(rig.sent_channels(), (Channels{opened.freq_hz}));
+}
+
+TEST(ChannelAccess, OpenSessionAvoidsThePreviousSessionsChannelWhereTheSetHasAnother) {
+  AccessRig rig;
+  rig.radio.set_band(test_bands::second_band());
+  rig.random_values = {0, 0};
+
+  const ExchangeEngine::ChannelTransmit opened =
+      rig.engine.open_session(AccessRig::status_read(false), 8, decisions::REQUEST_CHANNELS[0]);
+
+  EXPECT_NE(opened.freq_hz, decisions::REQUEST_CHANNELS[0]);
+}
+
+TEST(ChannelAccess, OpenSessionOnABandWithAWifiExclusionNeverUsesTheExcludedChannel) {
+  for (const uint32_t random : {0u, 1u, 2u, 3u}) {
+    AccessRig rig;
+    rig.radio.set_band(test_bands::second_band());
+    rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH2_HZ; });
+    rig.random_values = {random};
+
+    const ExchangeEngine::ChannelTransmit opened = rig.engine.open_session(AccessRig::status_read(false), 8, 0);
+
+    EXPECT_NE(opened.freq_hz, FREQ_CH2) << "random=" << random;
+  }
+}
+
+TEST(ChannelAccess, OpenSessionHonoursLbtForceWhenBusyLikeARequestDoes) {
+  AccessRig rig;
+  rig.tuning.lbt_force_when_busy = true;
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);
+
+  const ExchangeEngine::ChannelTransmit opened = rig.engine.open_session(AccessRig::status_read(false), 8, 0);
+
+  EXPECT_EQ(opened.status, decisions::ChannelAccessStatus::SENT_FORCED);
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2}));
 }
 
 TEST(ChannelAccess, TheHubInstallsItsRandomSourceSoARequestFollowsIt) {

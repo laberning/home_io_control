@@ -297,8 +297,9 @@ TEST(PairingKeyPull, ALowPowerDeviceIsAskedThreeTimesWithTheRetryGap) {
   EXPECT_EQ(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
   const auto &times = radio.send_times_ms();
   ASSERT_EQ(times.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
-  EXPECT_EQ(times[1] - times[0], PAIRING_KEY_REPLY_TIMEOUT_MS + EXCHANGE_RETRY_DELAY_MS)
-      << "one reply window and the retry gap between tries";
+  // Each try's 0x38 is preceded by its channel check (ADR 0133).
+  EXPECT_EQ(times[1] - times[0], PAIRING_KEY_REPLY_TIMEOUT_MS + EXCHANGE_RETRY_DELAY_MS + CHANNEL_CHECK_TIME_MS)
+      << "one reply window, the retry gap between tries and the next try's channel check";
 }
 
 TEST(PairingKeyPull, TheRetryGapOfTheKeyPullIsTheBandsOwn) {
@@ -314,7 +315,85 @@ TEST(PairingKeyPull, TheRetryGapOfTheKeyPullIsTheBandsOwn) {
 
   const auto &times = radio.send_times_ms();
   ASSERT_EQ(times.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
-  EXPECT_EQ(times[1] - times[0], PAIRING_KEY_REPLY_TIMEOUT_MS + 45) << "one reply window and the band's gap";
+  EXPECT_EQ(times[1] - times[0], PAIRING_KEY_REPLY_TIMEOUT_MS + 45 + CHANNEL_CHECK_TIME_MS)
+      << "one reply window, the band's gap and the next try's channel check";
+}
+
+// === Channel access of the session (ADR 0133) ===
+
+TEST(PairingKeyPull, ABusyChannel2SendsNoRequestAndEndsTheTriesAsSilentOnes) {
+  esphome::test_clock::ManualClock clock;
+  RngGuard rng;
+  MockRadio radio;
+  KeyPullRig rig(radio);
+  radio.set_channel_rssi(FREQ_CH2, -50);
+  pairing::PairingContext context = context_for_device();
+  context.discovery_low_power = true;
+
+  EXPECT_EQ(rig.key_pull.pull(context), KeyPull::Result::FAILED);
+
+  EXPECT_EQ(radio.get_send_count(), 0) << "never sent onto a channel measured busy";
+  EXPECT_GE(rig.engine.counters().channel_busy_attempts, 1u);
+}
+
+TEST(PairingKeyPull, TheRequestMovesOffABusyChannelToAnotherOfTheSet) {
+  esphome::test_clock::ManualClock clock;
+  RngGuard rng;
+  MockRadio radio;
+  radio.set_band(test_bands::second_band());
+  KeyPullRig rig(radio);
+  rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH2_HZ; });
+  radio.set_channel_rssi(FREQ_CH1, -50);  // the first draw of {CH1, CH3} is busy
+  pairing::PairingContext context = context_for_device();
+  context.discovery_low_power = true;
+
+  EXPECT_EQ(rig.key_pull.pull(context), KeyPull::Result::FAILED) << "nobody answers";
+
+  const std::vector<uint32_t> channels = tx_channels_of(radio, CMD_LAUNCH_KEY_TRANSFER);
+  ASSERT_FALSE(channels.empty());
+  for (const uint32_t freq : channels)
+    EXPECT_EQ(freq, FREQ_CH3) << "CH1 reads busy and CH2 is excluded";
+}
+
+TEST(PairingKeyPull, TheProofChallengeAndTheWaitsStayOnTheChannelTheRequestWentOutOn) {
+  esphome::test_clock::ManualClock clock;
+  RngGuard rng;
+  MockRadio radio;
+  radio.set_band(test_bands::second_band());
+  KeyPullRig rig(radio);
+  rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH2_HZ; });
+  pairing::PairingContext context = context_for_device();
+
+  const IoFrame reply = pulled_key_frame(rig.node_id, OTHER_KEY);
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx(to_packet(proof_frame(rig.node_id, reply, OTHER_KEY)));
+
+  ASSERT_EQ(rig.key_pull.pull(context), KeyPull::Result::OTHER_KEY);
+
+  const std::vector<uint32_t> opener = tx_channels_of(radio, CMD_LAUNCH_KEY_TRANSFER);
+  ASSERT_EQ(opener.size(), 1u);
+  EXPECT_NE(opener[0], FREQ_CH2);
+  EXPECT_EQ(tx_channels_of(radio, CMD_CHALLENGE_REQ), opener) << "the proof challenge follows the opener's channel";
+  EXPECT_EQ(context.session_freq, opener[0]);
+  EXPECT_EQ(radio.get_current_freq(), opener[0]) << "the waits held that channel";
+}
+
+TEST(PairingKeyPull, OnABandWithAWifiExclusionNoTryUsesTheExcludedChannel) {
+  esphome::test_clock::ManualClock clock;
+  RngGuard rng;
+  MockRadio radio;
+  radio.set_band(test_bands::second_band());
+  KeyPullRig rig(radio);
+  rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH2_HZ; });
+  pairing::PairingContext context = context_for_device();
+  context.discovery_low_power = true;
+
+  EXPECT_EQ(rig.key_pull.pull(context), KeyPull::Result::FAILED);
+
+  const std::vector<uint32_t> channels = tx_channels_of(radio, CMD_LAUNCH_KEY_TRANSFER);
+  ASSERT_EQ(channels.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
+  for (const uint32_t freq : channels)
+    EXPECT_NE(freq, FREQ_CH2);
 }
 
 TEST(PairingKeyPull, TheKeyPullNeverRunsPastTheExchangeBudget) {

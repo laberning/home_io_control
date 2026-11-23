@@ -8,6 +8,7 @@
 /// Inline, stateless helpers, testable without radio hardware or timing.
 
 #include "decisions_exchange.h"
+#include "proto_band.h"
 #include "proto_constants.h"
 #include "proto_device_kinds.h"
 #include "proto_device_types.h"
@@ -32,16 +33,22 @@ enum class PairingDiscoveryDisposition : uint8_t {
 ///
 /// The default sends every attempt on CH2, the 2W transmit channel. With @p rotate_channels the
 /// attempts of one discovery command take CH2, CH1 and CH3 in turn and start over after the third, so
-/// a device that hears the search on one channel only is reached within three attempts.
+/// a device that hears the search on one channel only is reached within three attempts. Both rules draw
+/// only from @p allowed (decisions::request_channels(), which leaves out the channels near the hub's
+/// Wi-Fi): a rotation skips an excluded channel, and the default takes the first allowed channel in
+/// that order when CH2 is excluded.
 /// @param rotate_channels True to rotate the channels (TuningConfig::pairing_discovery_send_channels
 ///        `all`); false to stay on CH2.
 /// @param attempt Attempt number of the command, counted from 1.
+/// @param allowed The channels the band and the hub's Wi-Fi leave a request (never empty).
 /// @return The request frequency in Hz.
-[[nodiscard]] inline uint32_t discovery_request_freq(bool rotate_channels, uint8_t attempt) {
-  static constexpr uint32_t ROTATION[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
-  if (!rotate_channels || attempt == 0)
+[[nodiscard]] inline uint32_t discovery_request_freq(bool rotate_channels, uint8_t attempt, const ChannelSet &allowed) {
+  // IO_CHANNELS is the rotation: CH2, CH1, CH3.
+  if (allowed.count() == 0)
     return FREQ_CH2;
-  return ROTATION[(attempt - 1U) % (sizeof(ROTATION) / sizeof(ROTATION[0]))];
+  if (!rotate_channels || attempt == 0)
+    return allowed.contains(FREQ_CH2) ? FREQ_CH2 : allowed.nth(0);
+  return allowed.nth((attempt - 1U) % allowed.count());
 }
 
 /// @brief Disposition during pairing key-challenge phase.

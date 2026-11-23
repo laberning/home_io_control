@@ -91,17 +91,18 @@ KeyPull::Result KeyPull::pull(pairing::PairingContext &context) {
     return Result::FAILED;
   }
   const uint16_t preamble = pairing_start_preamble(engine_, *tuning_, context.req);
-  const decisions::AttemptPlan plan =
-      engine_.plan_attempts(decisions::ReadKind::COMMAND, context.discovery_low_power, context.req, FREQ_CH2, preamble,
-                            static_cast<uint16_t>(PAIRING_KEY_REPLY_TIMEOUT_MS));
-  const ExchangeEngine::AttemptRun run{plan, engine_.tx_time_ms(context.req, FREQ_CH2, preamble)};
+  const decisions::AttemptPlan plan = engine_.plan_attempts(decisions::ReadKind::COMMAND, context.discovery_low_power,
+                                                            context.req, nominal_pairing_freq(engine_), preamble,
+                                                            static_cast<uint16_t>(PAIRING_KEY_REPLY_TIMEOUT_MS));
+  const ExchangeEngine::AttemptRun run{plan, engine_.tx_time_ms(context.req, nominal_pairing_freq(engine_), preamble)};
   const uint32_t begin_ms = millis();
   uint8_t tries = 0;
   const AttemptRunResult ran = engine_.run_attempts(run, [&](uint8_t try_number, uint16_t window_ms) {
     tries = try_number;
     enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_KEY_PULL, try_number, false);
     FrameLogHoldScope quiet_window;  // From before the 0x38 to the end of the wait for the 0x32 (ADR 0111).
-    if (!engine_.transmit_frame(context.req, FREQ_CH2, preamble))
+    // A channel that stays busy ends the try like a silent one; the next try takes another channel of the set.
+    if (!open_pairing_session(engine_, context, context.req, preamble))
       return AttemptVerdict::AGAIN;
     context.state = pairing::PairingState::WAIT_KEY_PULL_REPLY;
     this->telemetry_.set_phase(context.state);
@@ -160,7 +161,7 @@ KeyPull::Result KeyPull::prove_pulled_key_(pairing::PairingContext &context, con
       [&](uint8_t try_number, uint16_t /*window_ms*/) {
         challenges = try_number;
         const uint16_t challenge_preamble = try_number == 1 ? radio_()->response_preamble() : repeat_preamble;
-        proof = engine_.challenge_sender(context.rx, FREQ_CH2, key, verify_challenge, challenge_preamble);
+        proof = engine_.challenge_sender(context.rx, context.session_freq, key, verify_challenge, challenge_preamble);
         return proof == ExchangeEngine::ChallengeResult::NO_ANSWER ? AttemptVerdict::AGAIN : AttemptVerdict::DONE;
       });
   if (proof == ExchangeEngine::ChallengeResult::VERIFIED) {

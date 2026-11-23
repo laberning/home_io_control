@@ -197,7 +197,7 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; 
 | `phase` | The furthest stage the pairing state machine reached. |
 | `node` / `type` | The node ID and type of the device that answered discovery, or `-` if nothing was paired. After a key pull this is the node that handed the key over; an AGILIA's heater appears only in the log report. |
 | `attempts` | Number of discovery commands sent. An attempt started by the `pull_key` or `pair_device` action sends none, so it reports 0. |
-| `lbt` | Listen-before-talk retries consumed across the whole attempt; a channel-busy indicator. |
+| `lbt` | Busy channel checks consumed across the whole attempt, discovery's and the steps' alike; a channel-busy indicator. |
 | `dur_ms` | Attempt duration in milliseconds. |
 | `heard` | Total RX events seen, including ones the pairing classifiers rejected and a 1W gesture overheard just before the window opened. |
 | `advice` | Comma-separated advisor codes, described below, or `none`. |
@@ -255,9 +255,9 @@ Check in order:
 
 #### `channel_busy`
 
-Listen-before-talk retries were exhausted and the same source was heard repeatedly during the wait.
+The busy channel checks were exhausted and the same source was heard repeatedly during the wait.
 
-A repeating beacon (usually a nearby remote or sensor) is flooding the channel and delaying discovery transmissions. Try again, or tune `lbt_rssi_threshold_dbm` — see [Radio tuning](configuration/tuning.md).
+A repeating beacon (usually a nearby remote or sensor) is flooding the channel and delaying discovery transmissions, or a pairing step found its channel busy for its whole waiting time and sent nothing. Try again, or tune `lbt_rssi_threshold_dbm` — see [Radio tuning](configuration/tuning.md).
 
 #### `foreign_controller`
 

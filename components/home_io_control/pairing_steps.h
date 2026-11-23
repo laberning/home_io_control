@@ -51,6 +51,26 @@ void enter_pairing_state(ExchangeEngine &engine, PairingTelemetry &telemetry, pa
 [[nodiscard]] uint16_t pairing_start_preamble(const ExchangeEngine &engine, const TuningConfig &tuning,
                                               const IoFrame &frame);
 
+/// @brief Open a pairing or key-pull session with @p frame through the engine's channel access on the
+/// band's wake-up channels (ADR 0133), and keep the channel in `context.session_freq`.
+///
+/// Every later frame of the session goes out on `context.session_freq` and every wait for its answers
+/// listens there. A step whose channel stays busy ends like a try that got no answer: this returns false
+/// and nothing was sent. The next session avoids the channel of the previous one where the set has another.
+/// @param engine Exchange engine whose channel access applies.
+/// @param context Pairing context; `session_freq` is read as the previous channel and set to the new one.
+/// @param frame The frame that opens the session.
+/// @param preamble Preamble of the frame in programmed bytes.
+/// @return true when the frame went out.
+[[nodiscard]] bool open_pairing_session(ExchangeEngine &engine, pairing::PairingContext &context, const IoFrame &frame,
+                                        uint16_t preamble);
+
+/// @brief The channel a frame of pairing names where it needs one before a session has opened: the first
+/// of the band's wake-up channels. Only the estimate of a transmit time and the channel reported for a frame
+/// that cannot be built read it; an opening frame takes its channel from open_pairing_session().
+/// @param engine Exchange engine whose band applies.
+[[nodiscard]] uint32_t nominal_pairing_freq(const ExchangeEngine &engine);
+
 /// @brief Record a CMD_ERROR_RESP answer to the key step: context flag, telemetry, and a decoded log line.
 /// @param telemetry Recorder that gets the refusal code.
 /// @param context Pairing context to mark as refused.

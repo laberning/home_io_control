@@ -4,6 +4,7 @@
 #include "pairing_engine.h"
 #include "proto_frame.h"
 #include "radio_interface.h"
+#include "test_bands.h"
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -763,13 +764,19 @@ struct DiscoveryChannels {
   std::vector<uint32_t> listened;
 };
 
-DiscoveryChannels run_failed_discovery(DiscoverySendChannels send_channels) {
+/// @param wifi_on_second_band_ch2 Run on test_bands::second_band() with the hub's Wi-Fi on its CH2, so the
+///        band's set leaves a request CH1 and CH3 only.
+DiscoveryChannels run_failed_discovery(DiscoverySendChannels send_channels, bool wifi_on_second_band_ch2 = false) {
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
   comp.tuning_.pairing_discovery_send_channels = send_channels;
+  if (wifi_on_second_band_ch2) {
+    radio.set_band(test_bands::second_band());
+    comp.exchange_engine_.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH2_HZ; });
+  }
   pairing::PairingContext context;
   comp.pairing_engine_.run_discovery_phase_(context);
   DiscoveryChannels channels;
@@ -794,6 +801,15 @@ TEST(PairingHelpers, RunDiscoveryPhase_SendChannelsAllSendsTheAttemptsOnCh2Ch1Ch
   EXPECT_EQ(channels.sent, (std::vector<uint32_t>{FREQ_CH2, FREQ_CH1, FREQ_CH3}));
   EXPECT_GT(std::count(channels.listened.begin(), channels.listened.end(), FREQ_CH2), 0)
       << "the waits after the CH1 and CH3 requests listen on CH2: each skips its own attempt's channel";
+}
+
+TEST(PairingHelpers, RunDiscoveryPhase_NeverSendsOnTheChannelTheBandsSetExcludesNearTheWifi) {
+  EXPECT_EQ(run_failed_discovery(DiscoverySendChannels::REQUEST, true).sent,
+            (std::vector<uint32_t>{FREQ_CH1, FREQ_CH1, FREQ_CH1}))
+      << "the default takes the first allowed channel when CH2 is excluded";
+  EXPECT_EQ(run_failed_discovery(DiscoverySendChannels::ALL, true).sent,
+            (std::vector<uint32_t>{FREQ_CH1, FREQ_CH3, FREQ_CH1}))
+      << "the rotation skips the excluded CH2";
 }
 
 TEST(PairingHelpers, RunDiscoveryPhase_TheReplyWaitSkipsTheChannelOfItsOwnAttempt) {
@@ -1013,6 +1029,7 @@ pairing::PairingContext make_key_transfer_context(const uint8_t own_id[NODE_ID_S
   set_dst(context.req, device_id);
   set_src(context.req, own_id);
   set_cmd(context.req, CMD_KEY_TRANSFER, nullptr, 0);
+  context.session_freq = FREQ_CH2;  // The channel the key-init's session opened on, as open_pairing_session() keeps it.
   return context;
 }
 }  // namespace
@@ -1689,7 +1706,13 @@ TEST(PairingHelpers, DiscoverConfirm_DelayFeedingWdtChunksInThousandMsSteps) {
   esphome::test_hal::reset_delays();
   EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::ACKED);
 
-  EXPECT_EQ(esphome::test_hal::recorded_delays(), (std::vector<uint32_t>{1000, 1000, 500}))
+  // The 0x2C's channel check (ADR 0133) waits in 1 ms readings first; the pause itself is what is chunked.
+  std::vector<uint32_t> pause_chunks;
+  for (const uint32_t delay_ms : esphome::test_hal::recorded_delays()) {
+    if (delay_ms > CHANNEL_CHECK_READING_GAP_MS)
+      pause_chunks.push_back(delay_ms);
+  }
+  EXPECT_EQ(pause_chunks, (std::vector<uint32_t>{1000, 1000, 500}))
       << "a 2500 ms pause should be chunked into feed-wdt steps of at most 1000 ms each";
 }
 

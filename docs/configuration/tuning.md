@@ -619,12 +619,22 @@ collide with the traffic that kept the channel busy, and a missing answer after 
 the device, so the hub does not treat it as a sign that a moving cover has stopped. Leave it off
 unless a busy neighbour makes commands fail.
 
+Every frame that opens a pairing step or a key pull (the confirmation of a discovered device, the
+key init, the key pull request, the optional configuration and the key check) takes the same channel
+access as a request, on the channels a request to a `low_power:` device may use, because the hub
+cannot tell while pairing whether the device sleeps. On 868 MHz that is channel 2, so the step waits
+up to about 600 ms for channel 2 to be free, and a step whose channel stays busy ends like a try that
+got no answer. Every later frame of that step goes out on the channel of its first frame, and the
+hub listens there
+([ADR 0133](../adr/0133-pairing-and-the-key-pull-open-their-sessions-through-channel-access.md)).
+
 Frames that answer within an exchange, such as the challenge response, go out at once on the channel
 of the request without a check: the device is waiting for them, and some devices give up after a
-single 5 ms delay (issue #178). Discovery, pairing, the key pull and broadcasts keep channel 2 and
+single 5 ms delay (issue #178). Discovery requests and other broadcasts keep their own channel and
 the older check against the same limit: five readings, 5 ms apart, then a send even if the channel
 is still busy
-([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). When the idle receiver is on
+([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)); they leave out a channel the
+band's channel set excludes. When the idle receiver is on
 another channel, the radio first retunes to the channel being measured and waits about a millisecond
 for the reading to settle. The threshold applies to the signal level at the antenna: on a board with
 a front-end module the amplifier's gain is removed from the reading first (see

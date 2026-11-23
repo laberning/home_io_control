@@ -319,9 +319,9 @@ void ExchangeEngine::hear_channel_for_(uint32_t ms) {
   });
 }
 
-ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(const IoFrame &frame, uint32_t own_freq,
-                                                                              uint16_t preamble,
-                                                                              uint32_t previous_freq) {
+ExchangeEngine::ChannelTransmit ExchangeEngine::transmit_with_channel_access_(const IoFrame &frame, uint32_t own_freq,
+                                                                              uint16_t preamble, uint32_t previous_freq,
+                                                                              bool wake_up_channels) {
   RadioDriver *radio = *this->radio_ptr_;
   uint8_t buf[FRAME_MAX_WIRE_SIZE];
   const uint8_t len = serialize_for_tx(frame, buf);
@@ -329,8 +329,7 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
     return {decisions::ChannelAccessStatus::FAILED, own_freq};
   // The request draws from the channels its band and the hub's Wi-Fi leave it (ADR 0132), leaving the
   // previous attempt's channel and, on a busy result, the one it just measured.
-  const bool low_power = (frame.ctrl1 & CTRL1_LOW_POWER) != 0;
-  const ChannelSet channels = this->request_channels_(low_power);
+  const ChannelSet channels = this->request_channels(wake_up_channels);
   uint32_t freq = this->draw_request_channel_(channels, previous_freq);
   const uint32_t begin_ms = millis();
   for (uint8_t busy_checks = 0;; busy_checks++) {
@@ -344,7 +343,7 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
              this->band().air_hz_of(freq), busy_checks + 1);
     this->note_busy_check_(result.cca_level_dbm);
     const std::optional<uint32_t> backoff_ms =
-        decisions::next_backoff_ms(millis() - begin_ms, busy_checks, low_power, this->draw_random_());
+        decisions::next_backoff_ms(millis() - begin_ms, busy_checks, wake_up_channels, this->draw_random_());
     if (!backoff_ms.has_value())
       break;
     // The back-off is spent listening on the busy channel: that is where the traffic the hub backs
@@ -372,9 +371,21 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
   return {sent ? decisions::ChannelAccessStatus::SENT_FORCED : decisions::ChannelAccessStatus::FAILED, forced_freq};
 }
 
-ChannelSet ExchangeEngine::request_channels_(bool low_power) const {
+ChannelSet ExchangeEngine::request_channels(bool wake_up_channels) const {
   const uint32_t avoid_hz = this->avoid_frequency_provider_ ? this->avoid_frequency_provider_() : 0;
-  return decisions::request_channels(low_power, this->band(), avoid_hz);
+  return decisions::request_channels(wake_up_channels, this->band(), avoid_hz);
+}
+
+ExchangeEngine::ChannelTransmit ExchangeEngine::open_session(const IoFrame &frame, uint16_t preamble,
+                                                             uint32_t previous_freq) {
+  const ChannelTransmit sent = this->transmit_with_channel_access_(frame, previous_freq, preamble, previous_freq,
+                                                                   /*wake_up_channels=*/true);
+  if (sent.status == decisions::ChannelAccessStatus::CHANNEL_BUSY) {
+    this->counters_.channel_busy_attempts++;
+    ESP_LOGI(TAG, "Channel busy for cmd=%s(0x%02X), nothing sent, last checked %" PRIu32 " Hz preamble=%u",
+             command_name(frame.cmd), frame.cmd, this->band().air_hz_of(sent.freq_hz), preamble);
+  }
+  return sent;
 }
 
 uint32_t ExchangeEngine::draw_request_channel_(const ChannelSet &channels, uint32_t avoid_freq) const {
@@ -895,9 +906,10 @@ decisions::ChannelAccessStatus ExchangeEngine::transmit_request_(const IoFrame &
                                                                  uint16_t preamble, ChannelAccess access,
                                                                  uint32_t previous_freq,
                                                                  exchange::OutboundExchangeContext &ctx) {
-  RequestTransmit sent;
-  if (access == ChannelAccess::FREE_CHANNEL && is_start(request)) {
-    sent = this->transmit_with_channel_access_(request, freq, preamble, previous_freq);
+  ChannelTransmit sent;
+  if (is_start(request)) {
+    const bool wake_up_channels = access == ChannelAccess::WAKE_UP_CHANNELS || (request.ctrl1 & CTRL1_LOW_POWER) != 0;
+    sent = this->transmit_with_channel_access_(request, freq, preamble, previous_freq, wake_up_channels);
   } else {
     sent.status = this->transmit_frame(request, freq, preamble) ? decisions::ChannelAccessStatus::SENT
                                                                 : decisions::ChannelAccessStatus::FAILED;

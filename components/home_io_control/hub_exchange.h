@@ -151,9 +151,10 @@ using ReplyHandler = std::function<ReplyDisposition(const IoFrame *parsed, const
 
 /// @brief How the requests of an exchange get onto the air.
 enum class ChannelAccess : uint8_t {
-  FREE_CHANNEL,   ///< Take a free channel, never send onto a busy one, a new channel each attempt (ADR 0096).
-  FIXED_CHANNEL,  ///< The caller's channel, checked five times 5 ms apart, then sent anyway (ADR 0045): the senders
-                  ///< whose listen layouts assume that channel (pairing, discovery, the key pull).
+  FREE_CHANNEL,      ///< Take a free channel, never send onto a busy one, a new channel each attempt (ADR 0096);
+                     ///< the channels are all of them, or the band's wake-up channels for a low-power request.
+  WAKE_UP_CHANNELS,  ///< The same, always on the band's wake-up channels and with a low-power request's access time:
+                     ///< the steps of pairing and the key pull, whose target may sleep (ADR 0133).
 };
 
 /// @brief How one outbound exchange is to run, as the caller states it: one value for
@@ -175,8 +176,9 @@ struct ExchangeOptions {
   /// ExchangeEngine::key_for(request.dst). Only a caller that talks to a node the registry has no
   /// record of passes one.
   const uint8_t *key{nullptr};
-  /// How the request gets onto the air. The default takes a free channel; a caller whose listen
-  /// layout assumes the channel it names says FIXED_CHANNEL.
+  /// How the request gets onto the air. The default takes a free channel of all three; a caller that
+  /// cannot tell whether its target sleeps says WAKE_UP_CHANNELS. A frame inside a session (no START)
+  /// goes out at once on the `freq` the caller names, whichever access is set.
   ChannelAccess channel_access{ChannelAccess::FREE_CHANNEL};
 
   ExchangeOptions() = default;
@@ -195,10 +197,10 @@ struct ExchangeOptions {
     options.preamble_override = preamble_bytes;
     return options;
   }
-  /// @brief These options with the request kept on the channel the caller names (ChannelAccess::FIXED_CHANNEL).
-  [[nodiscard]] ExchangeOptions on_fixed_channel() const {
+  /// @brief These options with the request on the band's wake-up channels (ChannelAccess::WAKE_UP_CHANNELS).
+  [[nodiscard]] ExchangeOptions on_wake_up_channels() const {
     ExchangeOptions options = *this;
-    options.channel_access = ChannelAccess::FIXED_CHANNEL;
+    options.channel_access = ChannelAccess::WAKE_UP_CHANNELS;
     return options;
   }
   /// @brief These options with the challenge answered under @p exchange_key.

@@ -365,12 +365,13 @@ static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;  ///< Copies of each 1W comma
 /// is 2 hours.
 static constexpr uint32_t RAIN_EVIDENCE_HOLD_MS = 2UL * 60UL * 60UL * 1000UL;
 
-/// Listen-before-talk (LBT) parameters of the senders that keep a fixed channel: discovery,
-/// pairing, the key pull and broadcasts. Before such a frame that opens a session (START set) the
+/// Listen-before-talk (LBT) parameters of the senders that keep a fixed channel: discovery and other
+/// broadcasts. Before such a frame that opens a session (START set) the
 /// radio checks that the channel RSSI is below the threshold; on a busy channel the frame is
 /// deferred by LBT_RETRY_DELAY_MS up to LBT_MAX_RETRIES times, then sent anyway. A frame without
 /// START answers within a session and is sent at once, unchecked. The exchange engine's requests
-/// use the channel access below instead (ADR 0096).
+/// use the channel access below instead, and so do the frames that open a pairing or key-pull session
+/// (ADR 0096, ADR 0133).
 ///
 /// The limit at or above which a reading makes a channel busy, for these senders and for the exchange
 /// engine's requests alike, is learned per board (decisions::busy_limit_dbm()): the board's own quiet

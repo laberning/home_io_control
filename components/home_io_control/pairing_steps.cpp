@@ -28,6 +28,17 @@ uint16_t pairing_start_preamble(const ExchangeEngine &engine, const TuningConfig
                   engine.preamble_bytes_for_ms(effective_discovery_preamble_ms(tuning)));
 }
 
+bool open_pairing_session(ExchangeEngine &engine, pairing::PairingContext &context, const IoFrame &frame,
+                          uint16_t preamble) {
+  const ExchangeEngine::ChannelTransmit opened = engine.open_session(frame, preamble, context.session_freq);
+  // The channel is kept whatever the result: a busy end still names the last channel checked, which the
+  // next session avoids.
+  context.session_freq = opened.freq_hz;
+  return decisions::request_was_sent(opened.status);
+}
+
+uint32_t nominal_pairing_freq(const ExchangeEngine &engine) { return engine.band().wake_up_channels.nth(0); }
+
 void note_key_refusal(PairingTelemetry &telemetry, pairing::PairingContext &context, const IoFrame &reply,
                       const char *step) {
   const uint8_t code = reply.data_len > 0 ? reply.data[0] : 0;
