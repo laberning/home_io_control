@@ -31,37 +31,39 @@ namespace home_io_control {
 /// Returned by ManagementActions::rename_device() and DiagnosticProbes::probe_device(), and re-exported from the hub
 /// as IOHomeControlComponent::ManagementActionResult via a public type alias.
 struct ManagementActionResult {
-  bool success{false};           ///< Whether the requested management action succeeded.
-  bool verified{false};          ///< Whether a follow-up readback confirmed the applied state.
-  bool has_result_code{false};   ///< True when result_code contains a decoded CMD_ERROR_RESP byte.
-  uint8_t result_code{0};        ///< Optional CMD_ERROR_RESP result byte.
-  std::string action;            ///< Action name, e.g. "rename_device".
-  std::string device_id;         ///< Target IO-homecontrol device ID.
-  std::string message;           ///< Human-readable outcome summary. Published as the action-result event, which
-                                 ///< Home Assistant records: it never carries key material.
-  std::string log_message;       ///< When non-empty, the device log shows this instead of `message`. For the
-                                 ///< one report that may print a device key (scan_paired_devices()); the key
-                                 ///< stays in the log and out of the event.
-  std::string requested_name;    ///< Requested normalized UTF-8 name for rename actions.
-  std::string applied_name;      ///< Verified cached UTF-8 name after a readback, when available.
-  std::string probe_name;        ///< Probe name for probe_device()/probe_sweep(), e.g. "private_fn".
-  std::string probe_index;       ///< Requested index argument, as received (before parsing).
-  bool has_response_cmd{false};  ///< True when response_cmd contains a probe reply's command byte.
-  uint8_t response_cmd{0};       ///< Probe reply's command byte (distinct from a CMD_ERROR_RESP
-                                 ///< result_code above, which is a different byte with a
-                                 ///< different meaning).
-  std::string response_hex;      ///< Probe reply's full raw wire hex, for pasting into
-                                 ///< scripts/corpus/ingest.py.
-  std::string decoded;           ///< Rendering of the probe reply for the replies this codebase can
-                                 ///< decode (currently a limitation reply, labelled "assumed layout");
-                                 ///< empty otherwise. Reported beside the raw hex, never instead of it.
-  bool terminal_refusal{false};  ///< True when probe_device() failed for a reason that will
-                                 ///< recur identically for every remaining index in a sweep
-                                 ///< (diagnostic probes not enabled, device moving) — set only by
-                                 ///< probe_device(), read only by probe_sweep() to decide
-                                 ///< whether to stop early. A structured flag rather than
-                                 ///< probe_sweep() pattern-matching `message` text, which would
-                                 ///< silently break if that text were ever reworded.
+  bool success{false};                ///< Whether the requested management action succeeded.
+  bool verified{false};               ///< Whether a follow-up readback confirmed the applied state.
+  bool has_result_code{false};        ///< True when result_code contains a decoded CMD_ERROR_RESP byte.
+  uint8_t result_code{0};             ///< Optional CMD_ERROR_RESP result byte.
+  std::string action;                 ///< Action name, e.g. "rename_device".
+  std::string device_id;              ///< Target IO-homecontrol device ID.
+  std::string target_noun{"device"};  ///< What `device_id` names in the log line ("device", or "controller" for
+                                      ///< pull_key); set by parse_management_node_id().
+  std::string message;                ///< Human-readable outcome summary. Published as the action-result event, which
+                                      ///< Home Assistant records: it never carries key material.
+  std::string log_message;            ///< When non-empty, the device log shows this instead of `message`. For the
+                                      ///< one report that may print a device key (scan_paired_devices()); the key
+                                      ///< stays in the log and out of the event.
+  std::string requested_name;         ///< Requested normalized UTF-8 name for rename actions.
+  std::string applied_name;           ///< Verified cached UTF-8 name after a readback, when available.
+  std::string probe_name;             ///< Probe name for probe_device()/probe_sweep(), e.g. "private_fn".
+  std::string probe_index;            ///< Requested index argument, as received (before parsing).
+  bool has_response_cmd{false};       ///< True when response_cmd contains a probe reply's command byte.
+  uint8_t response_cmd{0};            ///< Probe reply's command byte (distinct from a CMD_ERROR_RESP
+                                      ///< result_code above, which is a different byte with a
+                                      ///< different meaning).
+  std::string response_hex;           ///< Probe reply's full raw wire hex, for pasting into
+                                      ///< scripts/corpus/ingest.py.
+  std::string decoded;                ///< Rendering of the probe reply for the replies this codebase can
+                                      ///< decode (currently a limitation reply, labelled "assumed layout");
+                                      ///< empty otherwise. Reported beside the raw hex, never instead of it.
+  bool terminal_refusal{false};       ///< True when probe_device() failed for a reason that will
+                                      ///< recur identically for every remaining index in a sweep
+                                      ///< (diagnostic probes not enabled, device moving) — set only by
+                                      ///< probe_device(), read only by probe_sweep() to decide
+                                      ///< whether to stop early. A structured flag rather than
+                                      ///< probe_sweep() pattern-matching `message` text, which would
+                                      ///< silently break if that text were ever reworded.
 };
 
 // === Shared helpers ===
@@ -155,7 +157,8 @@ inline bool apply_error_response(const IoFrame &response, ManagementActionResult
 /// string and returns false (callers return `result` at once, so nothing is sent).
 /// @param action Action name to record on `result`.
 /// @param node_id Requested node ID (hex string, case-insensitive, as received from HA).
-/// @param noun What the ID names ("device", "controller"), for the refusal text.
+/// @param noun What the ID names ("device", "controller"), for the refusal text and the result's log line
+///             (ManagementActionResult::target_noun).
 /// @param initialized The hub's initialized flag.
 /// @param result Populated with the action name and normalised ID, plus the refusal message.
 /// @param[out] parsed The ID's NODE_ID_SIZE bytes when this returns true.
@@ -164,6 +167,7 @@ inline bool parse_management_node_id(const char *action, const std::string &node
                                      ManagementActionResult &result, uint8_t parsed[NODE_ID_SIZE]) {
   const std::string normalized_id = normalize_device_id_argument(node_id);
   result = make_management_result(action, normalized_id);
+  result.target_noun = noun;
   if (!initialized) {
     result.message = "hub is not initialized";
     return false;
@@ -173,6 +177,22 @@ inline bool parse_management_node_id(const char *action, const std::string &node
     return false;
   }
   return true;
+}
+
+/// @brief The start of the log line every management action's result is published with.
+///
+/// "Management action <action> for <noun> <id>: " on success, "... failed: " otherwise. The noun comes from
+/// ManagementActionResult::target_noun, so pull_key names a controller and every other action a device. An action
+/// with no single target (empty `device_id`, e.g. scan_paired_devices) leaves the "for ..." clause out rather than
+/// printing "for device :".
+/// @param result The action's result.
+/// @return The prefix, ending in ": ".
+inline std::string management_result_log_prefix(const ManagementActionResult &result) {
+  std::string prefix = "Management action " + result.action;
+  if (!result.device_id.empty())
+    prefix += " for " + result.target_noun + " " + result.device_id;
+  prefix += result.success ? ": " : " failed: ";
+  return prefix;
 }
 
 /// @brief Shared preamble for every device-addressed action: validate the hub and device ID,

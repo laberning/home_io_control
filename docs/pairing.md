@@ -196,7 +196,7 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; 
 | `outcome` | How the attempt ended; the values are listed below. |
 | `phase` | The furthest stage the pairing state machine reached. |
 | `node` / `type` | The node ID and type of the device that answered discovery, or `-` if nothing was paired. After a key pull this is the node that handed the key over; an AGILIA's heater appears only in the log report. |
-| `attempts` | Number of discovery command retries sent. |
+| `attempts` | Number of discovery commands sent. An attempt started by the `pull_key` or `pair_device` action sends none, so it reports 0. |
 | `lbt` | Listen-before-talk retries consumed across the whole attempt; a channel-busy indicator. |
 | `dur_ms` | Attempt duration in milliseconds. |
 | `heard` | Total RX events seen, including ones the pairing classifiers rejected and a 1W gesture overheard just before the window opened. |

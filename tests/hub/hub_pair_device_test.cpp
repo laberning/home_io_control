@@ -73,6 +73,7 @@ TEST(HubPairDevice, ReportsTheConfirmOnSuccess) {
   EXPECT_TRUE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "device confirmed the key");
+  EXPECT_EQ(component.pairing_telemetry().discovery_attempts(), 0u) << "pair_device sends no discovery";
 }
 
 TEST(HubPairDevice, ReportsNoConfirmWhenTheDeviceStaysSilent) {

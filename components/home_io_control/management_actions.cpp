@@ -438,14 +438,7 @@ void ManagementActions::api_rename_device(const std::string &device_id, const st
 }
 
 void ManagementActions::publish_result(const ManagementActionResult &result) {
-  // device_id is empty for actions with no single target (e.g. scan_paired_devices' roll-call);
-  // the "for device %s" clause is omitted rather than rendering as "for device :".
-  const bool has_device = !result.device_id.empty();
-  std::string prefix = "Management action " + result.action;
-  if (has_device)
-    prefix += " for device " + result.device_id;
-  prefix += result.success ? ": " : " failed: ";
-  detail::log_multiline_result(detail::TAG, !result.success, prefix,
+  detail::log_multiline_result(detail::TAG, !result.success, management_result_log_prefix(result),
                                result.log_message.empty() ? result.message : result.log_message);
 
   if (!hub_->is_connected())

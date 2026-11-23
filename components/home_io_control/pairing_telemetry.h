@@ -210,7 +210,8 @@ class PairingTelemetry : public TransmitObserver {
   [[nodiscard]] pairing::PairingState phase() const { return this->phase_; }
   /// @return Final outcome, or PairingOutcome::NONE if no attempt has completed yet.
   [[nodiscard]] PairingOutcome outcome() const { return this->outcome_; }
-  /// @return Number of discovery command attempts made.
+  /// @return Number of discovery command attempts made. 0 for an attempt started by the pull_key or pair_device
+  /// action, which address a node the user names and send no discovery.
   [[nodiscard]] uint8_t discovery_attempts() const { return this->discovery_attempts_; }
   /// @return Total listen-before-talk retries consumed across the whole attempt.
   [[nodiscard]] uint8_t lbt_retries() const { return this->lbt_retries_; }

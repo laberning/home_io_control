@@ -107,6 +107,34 @@ TEST(HubPullKey, ARefusedActionReportsNoPairingAttempt) {
 }
 
 // ============================================================================
+// Log-line wording
+// ============================================================================
+
+// The host log stub discards its arguments, so these assert on management_result_log_prefix(), the one place
+// publish_result() builds its log line from.
+TEST(HubPullKey, TheLogLineNamesAControllerOnFailureRefusalAndSuccess) {
+  PullKeyHub silent;
+  EXPECT_EQ(management_result_log_prefix(silent.component.management_actions_.pull_key(PullKeyHub::controller_id())),
+            "Management action pull_key for controller B6BDFB failed: ");
+
+  PullKeyHub own;
+  EXPECT_EQ(management_result_log_prefix(own.component.management_actions_.pull_key("c0ffee")),
+            "Management action pull_key for controller C0FFEE failed: ")
+      << "a refusal before anything is sent names the controller too";
+
+  PullKeyHub proven;
+  proven.queue_pull(OTHER_KEY, /*proven=*/true);
+  EXPECT_EQ(management_result_log_prefix(proven.component.management_actions_.pull_key(PullKeyHub::controller_id())),
+            "Management action pull_key for controller B6BDFB: ");
+}
+
+TEST(HubPullKey, AnotherActionsLogLineStillNamesADevice) {
+  PullKeyHub hub;
+  EXPECT_EQ(management_result_log_prefix(hub.component.management_actions_.rename_device("ABC123", "Patio Awning")),
+            "Management action rename_device for device ABC123 failed: ");
+}
+
+// ============================================================================
 // Outcomes
 // ============================================================================
 
@@ -191,6 +219,8 @@ TEST(HubPullKey, ASilentControllerIsNoKey) {
   EXPECT_FALSE(result.verified);
   EXPECT_NE(result.message.find("sent no key"), std::string::npos) << result.message;
   EXPECT_FALSE(result.has_result_code);
+  EXPECT_EQ(hub.component.pairing_telemetry().discovery_attempts(), 0u)
+      << "pull_key sends no discovery, so \"Last Pairing Result\" shows attempts=0";
 }
 
 TEST(HubPullKey, AKeyNobodyProvesIsNotProvenAndNotPrinted) {
