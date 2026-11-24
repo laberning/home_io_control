@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0047 -->
 
-**Status:** Accepted · **Recorded:** 2026-09
+**Status:** Accepted, amends [ADR 0023](0023-reference-material-as-a-corpus-origin.md) (a fifth corpus origin) · **Recorded:** 2026-09
 
 ## Context
 
@@ -128,3 +128,25 @@ Four things about a bridge differ from an SPI radio and decide the shape of the 
   those exist.
 - A user of `radio_type: bridle` needs nothing beyond the component directory: no Python step, no Java,
   no specification files.
+- **The hub's challenge answer (0x3D) carries the low-power flag; the 2.4 GHz capture of a vendor controller
+  shows it clear.** The hub marks every 0x3D it sends with `CTRL1_LOW_POWER` (`0E 20 ...` in its own 868 MHz
+  captures, which every device there accepts). The VELUX KLR 200 on 2.4 GHz answers with CTRL1 `0x00`
+  (`velux_klr200_exchange_execute_open_2g4`), as a VELUX KIG 300 does on 868 MHz
+  (`somfy_rs100_statuspoll_kig300_sx1276`). The exchange replay of the 2.4 GHz capture expects the hub's frame
+  to differ from the captured one in that flag alone, the HMAC included. Whether a 2.4 GHz device accepts the
+  flag set is an open hardware question: the capture shows what one controller sends, not what a device
+  accepts, so only a bench run that answers a 2.4 GHz device's challenge from the hub can settle it.
+- **2.4 GHz captures have an origin of their own.** The captures of 2.4 GHz traffic come from contributors who
+  sniffed their own installation and sent the log privately with permission to publish it. Neither
+  `github-issue` (no public thread holds the log) nor `reference-material` (no public source whose licence could
+  be checked) describes that truthfully, so [ADR 0023](0023-reference-material-as-a-corpus-origin.md)'s list
+  gains a fifth value, `contributor`: a real installation's traffic captured by someone other than the
+  maintainer. `issue` is `null` unless a public thread exists, `source.device` names the devices and the
+  capturing tool, frames are literal as captured, and key material is re-keyed before the first commit exactly
+  as for `reference-material`. The CRC and FCS checks at ingest and the crypto checks after re-keying are what
+  stand behind such a capture's bytes.
+- **On 2.4 GHz overheard status frames are normal traffic.** Every VELUX remote there is two-way, so each remote
+  press and each gateway poll draws a 0x04 or 0x71 the hub did not ask for. [ADR 0022](0022-unauthenticated-status-frames-are-never-applied.md)
+  holds unchanged: the content is never applied and the hub's own poll, which the remote's request schedules,
+  sets the state. The frame stamps only link health (last contact and RSSI), which describe its reception, not
+  what it claims, and it is logged at INFO once per device per ten minutes and at DEBUG otherwise.

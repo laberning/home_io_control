@@ -1,0 +1,9 @@
+# Synthetic 2.4 GHz sniffer log for scripts/corpus/tests/run_tests.py (ingest_2g4.py self-tests).
+# Format as the nRF52840 sniffer prints it: <micros() at frame end> <802.15.4 channel>: <PSDU incl. FCS>.
+# A 4-frame wake train with counter 2 missing, then an unauthenticated 0x03 -> 0x04 from AABBCC to 112233.
+1000000 20: 00 00 03 9B 32
+...
+1001954 20: 00 00 01 89 11
+1002931 20: 00 00 00 00 00
+1004884 20: 01 69 6F 52 20 11 22 33 AA BB CC 03 01 FE 01 01 01 01 01 01 01 00 FE 4F
+1007814 20: 01 69 6F 90 00 AA BB CC 11 22 33 04 2D 60 00 00 80 00 00 00 C3 46

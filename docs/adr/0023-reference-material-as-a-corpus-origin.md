@@ -1,7 +1,7 @@
 # ADR 0023: `reference-material` as a fourth corpus origin, for real devices this project doesn't own
 <!-- doxygen-label: adr0023 -->
 
-**Status:** Accepted · **Recorded:** 2026-08
+**Status:** Accepted, amended by [ADR 0047](0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md) (a fifth origin, `contributor`) · **Recorded:** 2026-08
 
 ## Context
 

@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include "corpus_generated.h"
+#include "corpus_test_helpers.h"
 #include "io_blind_emulator.h"
 #include "proto_commands.h"
 #include "proto_constants.h"
@@ -241,4 +243,55 @@ TEST(IoBlindEmulator, AMainParameterItDoesNotUnderstandMovesNothingAndIsNotConfi
   EXPECT_EQ(blind.accepted_executes(), 0u);
   EXPECT_FALSE(blind.moving(REQUEST_END_US + 1000000));
   EXPECT_EQ(blind.current_raw(REQUEST_END_US + 1000000), 30 * 512);
+}
+
+// === The model against the real replies ===
+
+namespace {
+
+/// The data of the 0x04 in the corpus capture `id` (its last rx frame).
+std::vector<uint8_t> captured_reply_data(const char *id) {
+  const corpus::CorpusCapture *capture = corpus_test::capture_by_id(id);
+  EXPECT_NE(capture, nullptr) << id;
+  std::vector<uint8_t> data;
+  if (capture == nullptr)
+    return data;
+  for (uint8_t i = 0; i < capture->frame_count; i++) {
+    if (capture->frames[i].tx)
+      continue;
+    const IoFrame f = corpus_test::parse_capture_frame(capture->frames[i]);
+    data.assign(f.data, f.data + f.data_len);
+  }
+  return data;
+}
+
+}  // namespace
+
+TEST(IoBlindEmulator, ARestingStatusReplyIsTheCapturedOneUpToTheFewRawUnitsTheCaptureDiffersBy) {
+  const std::vector<uint8_t> captured = captured_reply_data("velux_skylight_blind_statuspoll_hub_request_resting_2g4");
+  ASSERT_EQ(captured.size(), 14u);
+  IoBlindEmulator::Config c = config();
+  c.position_pct = 47.0;
+  const std::vector<uint8_t> model = IoBlindEmulator(c).status_data(0);
+  ASSERT_EQ(model.size(), captured.size());
+  for (const size_t i : {0u, 1u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u})
+    EXPECT_EQ(model[i], captured[i]) << "byte " << i;
+  EXPECT_NEAR(u16(model, 4), u16(captured, 4), STATUS_POS_TOLERANCE_RAW)
+      << "the real blind stops 31 raw units past its target";
+  EXPECT_NEAR(u16(model, 2), u16(captured, 2), STATUS_POS_TOLERANCE_RAW);
+}
+
+TEST(IoBlindEmulator, ASettingOffStatusReplyIsTheCapturedOneAtTheSameMomentOfTheTravel) {
+  const std::vector<uint8_t> captured =
+      captured_reply_data("velux_skylight_blind_statuspoll_hub_request_setting_off_2g4");
+  ASSERT_EQ(captured.size(), 14u);
+  IoBlindEmulator::Config c = config();
+  c.position_pct = 0.0;
+  IoBlindEmulator blind(c);
+  blind.set_off(0xC800, 0);
+  const std::vector<uint8_t> model = blind.status_data(2180000);  // 2.18 s into a 72 s travel: 3 % closed
+  ASSERT_EQ(model.size(), captured.size());
+  for (const size_t i : {0u, 1u, 2u, 3u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u})
+    EXPECT_EQ(model[i], captured[i]) << "byte " << i;
+  EXPECT_NEAR(u16(model, 4), u16(captured, 4), STATUS_POS_TOLERANCE_RAW);
 }

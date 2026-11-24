@@ -114,6 +114,8 @@ class CorpusPairingReplay : public ::testing::TestWithParam<const corpus::Corpus
 TEST_P(CorpusPairingReplay, EngineReproducesCapturedPairing) {
   const corpus::CorpusCapture *capture = GetParam();
   SCOPED_TRACE(::testing::Message() << "capture=" << capture->id);
+  if (const char *skip = corpus_test::pairing_replay_skip_reason(*capture))
+    GTEST_SKIP() << skip;
   ASSERT_GT(capture->frame_count, 0u);
 
   std::vector<const corpus::CorpusFrame *> rx_frames;

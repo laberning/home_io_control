@@ -91,16 +91,17 @@ TEST(OpcodeNameSync, PythonCmdNamesMatchCppConstants) {
 
 TEST(OpcodeNameSync, PythonRekeyConstantsMatchCpp) {
   // protolib.py's bare module-level CMD_* constants drive
-  // which frames `ingest.py --rekey` rewrites — more load-bearing than CMD_NAMES, which only
+  // which frames `ingest.py --rekey` rewrites and how the corpus scripts place a key transfer
+  // (a push after a 0x31, a pull after a 0x38) — more load-bearing than CMD_NAMES, which only
   // decorates scaffold notes. Deliberately one-directional: the reverse (every C++ CMD_* must have
-  // a bare Python constant) must NOT be asserted — that set is an intentional 7-of-50 subset
-  // scoped to --rekey's needs, and asserting the reverse would force 43 unused module-level
+  // a bare Python constant) must NOT be asserted — that set is an intentional 8-of-50 subset
+  // scoped to those tools' needs, and asserting the reverse would force 42 unused module-level
   // constants into protolib.py.
   auto py_entries = test::parse_python_uint8_assignments(kProtolibPath, "CMD_");
   auto cpp_entries = test::parse_cpp_uint8_constants(kProtoConstantsPath, "CMD_");
   // Exact-count guard rather than a floor: this set is small, fixed and hand-curated, so a bare
   // ASSERT_GT would be meaninglessly loose here.
-  ASSERT_EQ(py_entries.size(), 7u) << "protolib.py's rekey-pipeline CMD_* constants changed count — "
+  ASSERT_EQ(py_entries.size(), 8u) << "protolib.py's rekey-pipeline CMD_* constants changed count — "
                                    << "update this test's expectations (and check the parser) deliberately.";
 
   for (const auto &[name, value] : py_entries) {

@@ -264,32 +264,41 @@ struct ExecuteAnswerTally {
   size_t without_speed_block_code_zero{0};
 };
 
-/// Pair every EXECUTE of a real device capture with the CMD_PRIVATE_RESP that answers it (the next one
-/// before the following EXECUTE) and count them by frame shape and result code. Synthetic captures are
-/// hand-written and say nothing about a device. An answer to the speed block counts as expected when it
-/// carries code 0 in a capture of ACCEPTS_SPEED_BLOCK_CAPTURES and code 5 in any other.
+/// Call @p on_answer(request, answer) for every EXECUTE of @p capture and the CMD_PRIVATE_RESP with a
+/// payload that answers it (the next one before the following EXECUTE).
+template<class OnAnswer> void for_each_execute_answer(const corpus::CorpusCapture &capture, OnAnswer on_answer) {
+  const corpus::CorpusFrame *execute = nullptr;
+  for (uint8_t i = 0; i < capture.frame_count; i++) {
+    const corpus::CorpusFrame &cf = capture.frames[i];
+    if (!cf.has_cmd)
+      continue;
+    if (cf.tx && cf.cmd == CMD_EXECUTE) {
+      execute = &cf;
+      continue;
+    }
+    if (cf.tx || cf.cmd != CMD_PRIVATE_RESP || execute == nullptr)
+      continue;
+    const IoFrame request = corpus_test::parse_capture_frame(*execute);
+    const IoFrame answer = corpus_test::parse_capture_frame(cf);
+    execute = nullptr;
+    if (answer.data_len > 0)
+      on_answer(request, answer);
+  }
+}
+
+/// Count the answers to an EXECUTE in every real 868 MHz device capture by frame shape and result code.
+/// Synthetic captures are hand-written and say nothing about a device. An answer to the speed block counts
+/// as expected when it carries code 0 in a capture of ACCEPTS_SPEED_BLOCK_CAPTURES and code 5 in any other.
+/// The 2.4 GHz captures stay out: the skylight blind answers an EXECUTE with a first byte of 0x54 (code 10,
+/// state 4), which no 868 MHz device returns and no capture explains, so the 868 MHz result-code split does
+/// not describe it; TheSkylightBlindAnswersEveryExecuteOn2g4WithCodeTen pins that exception.
 ExecuteAnswerTally tally_execute_answers() {
   ExecuteAnswerTally tally;
   for (const corpus::CorpusCapture *capture : corpus_test::all_captures()) {
-    if (std::strncmp(capture->id, "synthetic_", 10) == 0)
+    if (std::strncmp(capture->id, "synthetic_", 10) == 0 || capture->phy == corpus::Phy::IO_2G4)
       continue;
     const uint8_t speed_block_code = accepts_speed_block(capture->id) ? 0 : 5;
-    const corpus::CorpusFrame *execute = nullptr;
-    for (uint8_t i = 0; i < capture->frame_count; i++) {
-      const corpus::CorpusFrame &cf = capture->frames[i];
-      if (!cf.has_cmd)
-        continue;
-      if (cf.tx && cf.cmd == CMD_EXECUTE) {
-        execute = &cf;
-        continue;
-      }
-      if (cf.tx || cf.cmd != CMD_PRIVATE_RESP || execute == nullptr)
-        continue;
-      const IoFrame request = corpus_test::parse_capture_frame(*execute);
-      const IoFrame answer = corpus_test::parse_capture_frame(cf);
-      execute = nullptr;
-      if (answer.data_len == 0)
-        continue;
+    for_each_execute_answer(*capture, [&](const IoFrame &request, const IoFrame &answer) {
       const uint8_t code = result_code_of(answer.data[0]);
       if (execute_carries_speed_block(request)) {
         tally.with_speed_block++;
@@ -299,7 +308,7 @@ ExecuteAnswerTally tally_execute_answers() {
         tally.without_speed_block++;
         tally.without_speed_block_code_zero += code == 0 ? 1 : 0;
       }
-    }
+    });
   }
   return tally;
 }
@@ -321,6 +330,24 @@ TEST(CorpusResultCode, EveryRealDeviceAnswersTheShortFrameWithCodeZero) {
   EXPECT_GE(tally.without_speed_block, 22u)
       << "the awning, pergola and VELUX captures plus the twelve dimmer runs and the four short awning runs";
   EXPECT_EQ(tally.without_speed_block_code_zero, tally.without_speed_block);
+}
+
+/// The answers the 868 MHz sweep leaves out: every answer to an EXECUTE on 2.4 GHz carries code 10 with
+/// state 4 (executing). A 2.4 GHz capture with another code makes this fail, so the exclusion above cannot
+/// hide it.
+TEST(CorpusResultCode, TheSkylightBlindAnswersEveryExecuteOn2g4WithCodeTen) {
+  size_t answers = 0;
+  for (const corpus::CorpusCapture *capture : corpus_test::all_captures()) {
+    if (capture->phy != corpus::Phy::IO_2G4)
+      continue;
+    SCOPED_TRACE(capture->id);
+    for_each_execute_answer(*capture, [&](const IoFrame &, const IoFrame &answer) {
+      answers++;
+      EXPECT_EQ(result_code_of(answer.data[0]), 10u);
+      EXPECT_EQ(execution_state_of(answer.data[0]), ExecutionState::EXECUTING);
+    });
+  }
+  EXPECT_GE(answers, 2u) << "the KLR 200 and the hub's own EXECUTE to the skylight blind";
 }
 
 namespace {

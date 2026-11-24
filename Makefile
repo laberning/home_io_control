@@ -105,10 +105,10 @@ yamllint:
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
 # (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.
 # The generated C++ headers are used for unit-tests
-corpus-validate:
+corpus-validate: tools
 	@echo "Validating golden-frame corpus captures..."
-	@python3 scripts/corpus/validate.py
-	@python3 scripts/corpus/tests/run_tests.py
+	@$(PY) scripts/corpus/validate.py
+	@$(PY) scripts/corpus/tests/run_tests.py
 	@python3 scripts/lr1121_firmware/tests/run_tests.py
 
 # libFuzzer targets, seeded from the golden-frame corpus. Time-boxed background checks
