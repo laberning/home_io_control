@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
+#include <utility>
 
 namespace esphome {
 namespace home_io_control {
@@ -240,7 +241,7 @@ bool SoftPhyDriverBase::try_early_completion_(RadioRxPacket &packet, uint32_t sy
 
 #ifdef IOHOME_FRAME_LOG
   frame_log_line(FrameLogLevel::DEBUG, TAG, "Early RX: frame_len=%u raw_len=%u air_us=%" PRIu32, frame_len, read_len,
-                 (uint32_t) (micros() - sync_us));
+                 micros() - sync_us);
   log_frame("RX", packet.data, packet.len, this->band().air_hz_of(this->current_freq_));
 #endif
 
@@ -344,6 +345,47 @@ void SoftPhyDriverBase::reset_rx_state_(bool force_standby) {
   this->set_mode_rx();
 }
 
+#ifdef IOHOME_FRAME_LOG
+/// @brief Frame-log diagnostic for a reception whose UART probe found no CRC-valid frame.
+///
+/// Logs the probe's decoded length, the first 32 raw bytes, and, where a frame header parses, the CRC
+/// computed over the best candidate length against the CRC received after it. It helps tell whether
+/// post-TX corruption is caught by the CRC or slips through.
+/// @param probe The rejected probe result.
+/// @param rx_buf The raw bytes read from the chip.
+/// @param raw_probe_len How many bytes of `rx_buf` were read.
+static void log_rejected_uart_probe(const UartProbeResult &probe, const uint8_t *rx_buf, uint8_t raw_probe_len) {
+  char hex_buf[97] = {0};  // 32 bytes * 3 chars + null
+  const uint8_t dump_len = std::min(raw_probe_len, (uint8_t) 32);
+  for (uint8_t i = 0; i < dump_len; i++)
+    snprintf(hex_buf + (i * 3), 4, "%02X ", rx_buf[i]);
+  frame_log_line(FrameLogLevel::WARN, TAG, "UART probe: valid=0 decoded_len=%u raw_probe_len=%u", probe.decoded_len,
+                 raw_probe_len);
+  frame_log_line(FrameLogLevel::WARN, TAG, "  raw[0..%u]: %s", dump_len - 1, hex_buf);
+  if (probe.decoded_len < FRAME_MIN_SIZE)
+    return;
+  // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: this is the diagnostic that explains *why* a CRC
+  // check failed, so it must be able to reach a MAC-bearing 1W frame's longer non-CRC length
+  // (see IoFrame::has_mac) too — capped at the declared-only bound, this log would report a
+  // spurious mismatch for a frame that is actually fine, exactly during the bring-up it exists
+  // to help with.
+  const int best_len = std::min<int>(probe.decoded_len, FRAME_MAX_WIRE_SIZE);
+  IoFrame test_frame;
+  for (int cl = best_len; std::cmp_greater_equal(cl, FRAME_MIN_SIZE); cl--) {
+    if (!parse(probe.decoded, cl, test_frame))
+      continue;
+    if (std::cmp_less_equal(cl + 2, probe.decoded_len)) {
+      const uint16_t computed = crc_ccitt(probe.decoded, cl);
+      const uint16_t received = (uint16_t) probe.decoded[cl] | ((uint16_t) probe.decoded[cl + 1] << 8);
+      frame_log_line(FrameLogLevel::WARN, TAG,
+                     "  CRC check: candidate_len=%d cmd=0x%02X crc_computed=0x%04X crc_received=0x%04X %s", cl,
+                     test_frame.cmd, computed, received, computed == received ? "MATCH" : "MISMATCH");
+    }
+    break;
+  }
+}
+#endif
+
 bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait, uint32_t irq_status) {
   uint8_t raw_reported_len = 0;
   uint8_t rx_offset = 0;
@@ -384,37 +426,7 @@ bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait
 #endif
   } else {
 #ifdef IOHOME_FRAME_LOG
-    // Log diagnostic info when CRC validation rejects all decode attempts — helps identify
-    // whether post-TX RX corruption is being correctly caught by CRC or slipping through.
-    char hex_buf[97] = {0};  // 32 bytes * 3 chars + null
-    uint8_t dump_len = std::min(raw_probe_len, (uint8_t) 32);
-    for (uint8_t i = 0; i < dump_len; i++)
-      snprintf(hex_buf + (i * 3), 4, "%02X ", rx_buf[i]);
-    frame_log_line(FrameLogLevel::WARN, TAG, "UART probe: valid=0 decoded_len=%u raw_probe_len=%u", probe.decoded_len,
-                   raw_probe_len);
-    frame_log_line(FrameLogLevel::WARN, TAG, "  raw[0..%u]: %s", dump_len - 1, hex_buf);
-    // Try to show why CRC failed at best offset
-    if (probe.decoded_len >= FRAME_MIN_SIZE) {
-      // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: this is the diagnostic that explains *why* a CRC
-      // check failed, so it must be able to reach a MAC-bearing 1W frame's longer non-CRC length
-      // (see IoFrame::has_mac) too — capped at the declared-only bound, this log would report a
-      // spurious mismatch for a frame that is actually fine, exactly during the bring-up it exists
-      // to help with.
-      int best_len = std::min<int>(probe.decoded_len, FRAME_MAX_WIRE_SIZE);
-      IoFrame test_frame;
-      for (int cl = best_len; cl >= FRAME_MIN_SIZE; cl--) {
-        if (!parse(probe.decoded, cl, test_frame))
-          continue;
-        if (cl + 2 <= (int) probe.decoded_len) {
-          uint16_t computed = crc_ccitt(probe.decoded, cl);
-          uint16_t received = (uint16_t) probe.decoded[cl] | ((uint16_t) probe.decoded[cl + 1] << 8);
-          frame_log_line(FrameLogLevel::WARN, TAG,
-                         "  CRC check: candidate_len=%d cmd=0x%02X crc_computed=0x%04X crc_received=0x%04X %s", cl,
-                         test_frame.cmd, computed, received, computed == received ? "MATCH" : "MISMATCH");
-        }
-        break;
-      }
-    }
+    log_rejected_uart_probe(probe, rx_buf, raw_probe_len);
 #endif
     // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: this fallback runs when no CRC-valid frame was
     // found, so what's being copied is raw chip-reported bytes on a best-effort basis, not a

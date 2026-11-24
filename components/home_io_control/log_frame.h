@@ -320,12 +320,13 @@ inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint
     cmd_str = command_name(data[FRAME_CMD_OFFSET]);
   }
 
-  if (preamble > 0)
+  if (preamble > 0) {
     frame_log_line(FrameLogLevel::INFO, "io_frame", "%s [%u bytes] freq=%" PRIu32 " preamble=%u cmd=%s %s: %s", prefix,
                    len, freq, preamble, cmd_str, flags, hex);
-  else
+  } else {
     frame_log_line(FrameLogLevel::INFO, "io_frame", "%s [%u bytes] freq=%" PRIu32 " cmd=%s %s: %s", prefix, len, freq,
                    cmd_str, flags, hex);
+  }
 }
 #endif
 

@@ -146,9 +146,15 @@ fuzz-soft-phy:
 		tests/fuzz/fuzz_soft_phy_rx.cpp)
 
 # Static analysis (local clang-tidy after building inside Docker)
+# The second pass analyzes, in a build with the frame log on, only the translation units that name the frame-log
+# or held-log switch or include a header that does (CLANG_TIDY_ONLY_FILES_WITH); the first build has the
+# switch off, so without it the code under IOHOME_FRAME_LOG is never analyzed.
+CLANG_TIDY_FRAME_LOG_CONFIG := config/tests/test-esp32-sx1262-fem.yaml
 clang-tidy:
 	@echo "Running clang-tidy..."
 	@scripts/run-clang-tidy.sh
+	@echo "Running clang-tidy on a frame-log build..."
+	@CLANG_TIDY_ONLY_FILES_WITH='IOHOME_FRAME_LOG|IOHOME_HELD_LOG' scripts/run-clang-tidy.sh $(CLANG_TIDY_FRAME_LOG_CONFIG)
 
 # Cross-language check: tuning parameter names must match between tuning.py and the C++ registry
 tuning-sync:

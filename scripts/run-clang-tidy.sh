@@ -56,10 +56,14 @@ mkdir -p "$(dirname "$FILTERED_DB")"
 # link error further down (see scripts/check-build-cache.py for the full story).
 python3 "$SCRIPT_DIR/check-build-cache.py" --clean
 
-# Build inside Docker if compile_commands.json missing
-if [ ! -f "$COMPILE_DB" ]; then
+# Build inside Docker if compile_commands.json is missing or older than the config: a config edit can change
+# the build flags (the frame-log pass depends on its -D switch), and a database from before it would analyze
+# the old flags without a word. The touch marks a rebuild that left the database unchanged as current.
+if [ ! -f "$COMPILE_DB" ] || [ "$CONFIG_FILE" -nt "$COMPILE_DB" ]; then
   echo "==> Building $CONTAINER_CONFIG inside Docker..."
   docker compose run --rm esphome compile "$CONTAINER_CONFIG"
+  # The database is root-owned (written through the container's bind mount), so touch it from there too.
+  docker compose run --rm --entrypoint touch esphome "/${COMPILE_DB#./}"
 fi
 
 # ESPHome's generated api/proto.h makes ProtoMessage's destructor public only under
@@ -86,12 +90,14 @@ fi
 # xtensa-esp-elf/<version>/), and a stale hardcoded path here used to silently degrade to
 # clang-tidy running with no toolchain headers at all (missing -isystem dirs just get skipped
 # below) instead of failing loudly.
-COMPILER_PATH=$(grep -m1 -oE '/[^"[:space:]]*xtensa-esp32-elf-g\+\+' "$COMPILE_DB" || true)
+# The compiler is named after the chip (xtensa-esp32-elf-g++, xtensa-esp32s3-elf-g++); both ship in one toolchain.
+COMPILER_PATH=$(grep -m1 -oE '/[^"[:space:]]*xtensa-esp32[a-z0-9]*-elf-g\+\+' "$COMPILE_DB" || true)
 if [ -z "$COMPILER_PATH" ]; then
-  echo "ERROR: Could not find xtensa-esp32-elf-g++ in $COMPILE_DB"
+  echo "ERROR: Could not find an xtensa-esp32*-elf-g++ compiler in $COMPILE_DB"
   exit 1
 fi
-TOOLCHAIN_PKG_ROOT="$REPO_ROOT${COMPILER_PATH%/bin/xtensa-esp32-elf-g++}"
+TOOLCHAIN_PKG_ROOT="$REPO_ROOT${COMPILER_PATH%/bin/*}"
+CHIP_DIR=$(basename "$COMPILER_PATH" | sed -e 's/^xtensa-//' -e 's/-elf-g++$//')
 XTENSA_TOOLCHAIN="$TOOLCHAIN_PKG_ROOT/xtensa-esp-elf"
 PICOLIBC_TOOLCHAIN="$TOOLCHAIN_PKG_ROOT/picolibc/xtensa-esp-elf"
 if [ ! -d "$XTENSA_TOOLCHAIN" ]; then
@@ -149,7 +155,7 @@ sed \
 # Replace cross-compiler with clang++ (full absolute path or bare name, depending on how the
 # build generated this compile database)
 echo "==> Replacing cross-compiler with clang++..."
-sed 's|"command": "[^"]*xtensa-esp32-elf-g++|"command": "clang++|' "$RAW_DB" > "$RAW_DB.tmp" && mv "$RAW_DB.tmp" "$RAW_DB"
+sed -E 's|"command": "[^"]*xtensa-esp32[a-z0-9]*-elf-g\+\+|"command": "clang++|' "$RAW_DB" > "$RAW_DB.tmp" && mv "$RAW_DB.tmp" "$RAW_DB"
 
 # Keep only this component's translation units and map them back to repository sources.
 echo "==> Reducing compile_commands.json to project sources..."
@@ -263,7 +269,7 @@ CXX_VER=$(ls "$XTENSA_TOOLCHAIN/include/c++" 2>/dev/null | head -n1 || true)
 if [ -n "$CXX_VER" ]; then
   CXX_PATH="$XTENSA_TOOLCHAIN/include/c++/$CXX_VER"
   [ -d "$CXX_PATH" ] && EXTRA_ARGS+=( -isystem "$CXX_PATH" )
-  for tdir in xtensa-esp-elf esp32; do
+  for tdir in xtensa-esp-elf "$CHIP_DIR"; do
     [ -d "$CXX_PATH/$tdir" ] && EXTRA_ARGS+=( -isystem "$CXX_PATH/$tdir" )
   done
 fi
@@ -289,6 +295,33 @@ done < <(find "$COMPONENT_DIR" -type f -name '*.cpp' | sort)
 if [ ${#FILES_ARRAY[@]} -eq 0 ]; then
   echo "No source files found in components/home_io_control"
   exit 1
+fi
+
+# Optional restriction: CLANG_TIDY_ONLY_FILES_WITH=<extended regex> keeps the translation units that name
+# a match themselves or include a component header that does. A second pass over a build with a compile-time
+# switch on (e.g. the frame log) then analyzes only the code that switch can change, found from the sources
+# rather than from a list kept by hand. Unset (the default) keeps every translation unit.
+if [ -n "${CLANG_TIDY_ONLY_FILES_WITH:-}" ]; then
+  SWITCH_HEADERS=()
+  while IFS= read -r h; do
+    SWITCH_HEADERS+=("$(basename "$h")")
+  done < <(grep -lE "$CLANG_TIDY_ONLY_FILES_WITH" "$COMPONENT_DIR"/*.h 2>/dev/null || true)
+  INCLUDE_REGEX=""
+  if [ ${#SWITCH_HEADERS[@]} -gt 0 ]; then
+    INCLUDE_REGEX="#include \"($(printf '%s\n' "${SWITCH_HEADERS[@]}" | sed -e 's/[][\\.*^$+?(){}|]/\\&/g' | paste -sd'|'))\""
+  fi
+  SWITCH_FILES=()
+  for f in "${FILES_ARRAY[@]}"; do
+    if grep -qE "$CLANG_TIDY_ONLY_FILES_WITH" "$f" || { [ -n "$INCLUDE_REGEX" ] && grep -qE "$INCLUDE_REGEX" "$f"; }; then
+      SWITCH_FILES+=("$f")
+    fi
+  done
+  FILES_ARRAY=("${SWITCH_FILES[@]}")
+  echo "==> Restricted to ${#FILES_ARRAY[@]} translation units matching /$CLANG_TIDY_ONLY_FILES_WITH/ or including a header that does"
+  if [ ${#FILES_ARRAY[@]} -eq 0 ]; then
+    echo "ERROR: no translation unit matches CLANG_TIDY_ONLY_FILES_WITH"
+    exit 1
+  fi
 fi
 
 # Optional shard: CLANG_TIDY_SHARD=<index>/<count> (index 1-based) keeps every count-th translation unit
