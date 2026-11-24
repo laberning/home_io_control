@@ -1,0 +1,10 @@
+# expect-error: io2g4_hop_dwell_ms is ignored by the radio of radio_type: sx1262
+# covers: tuning.validate_tuning_for_radio
+# The 2.4 GHz hop dwell belongs to the bridge; the SPI radios have no such key.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  tuning:
+    io2g4_hop_dwell_ms: 4

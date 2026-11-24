@@ -15,7 +15,7 @@ from esphome.components import number, select
 from esphome.const import CONF_ID, CONF_NAME, ENTITY_CATEGORY_CONFIG
 from esphome.core import ID
 
-from .hub_names import home_io_control_ns
+from .hub_names import BRIDLE_DEFAULT_BAND, CONF_BRIDLE_BAND, CONF_RADIO_TYPE, home_io_control_ns
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -223,6 +223,84 @@ KEY_TRANSFER_MODE_OPTIONS = {
     "push": KeyTransferMode.PUSH,
     "pull": KeyTransferMode.PULL,
 }
+
+
+# The radios a tuning key is about. A profile is a radio type, and for the bridge its band too, because the band's
+# profile decides what the bridge reads: the three SPI radios, the bridge on 868 MHz (a `gfsk_raw` radio that carries
+# the same coding as the SX1262) and the bridge on 2.4 GHz (an 802.15.4 radio with no preamble to set).
+PROFILE_SX1276 = "sx1276"
+PROFILE_SX1262 = "sx1262"
+PROFILE_LR1121 = "lr1121"
+PROFILE_BRIDLE_868 = "bridle_io_868"
+PROFILE_BRIDLE_2G4 = "bridle_io_2g4"
+_SPI_PROFILES = (PROFILE_SX1276, PROFILE_SX1262, PROFILE_LR1121)
+_EVERY_PROFILE = (*_SPI_PROFILES, PROFILE_BRIDLE_868, PROFILE_BRIDLE_2G4)
+# What a profile is called in a message.
+_PROFILE_NAMES = {
+    PROFILE_SX1276: "radio_type: sx1276",
+    PROFILE_SX1262: "radio_type: sx1262",
+    PROFILE_LR1121: "radio_type: lr1121",
+    PROFILE_BRIDLE_868: "radio_type: bridle with bridle_band: io_868",
+    PROFILE_BRIDLE_2G4: "radio_type: bridle with bridle_band: io_2g4",
+}
+
+# The profiles a tuning key applies to; a key not listed applies to every profile. The rule: a key the band's radio
+# ignores is rejected on that band. The table says what the radio reads, not whether a key could matter for another
+# reason (a key of a feature the hub offers, such as the key-extraction responder's, is read by the hub whatever the
+# radio and has no row). The one place code generation reads: validate_tuning_for_radio() rejects a key on a profile
+# that is not listed and drops its companion entity ID, and to_code() creates the entities of the keys that apply. A
+# key applies to a profile when the profile's driver reads it, or the hub reads it whatever the driver. The SPI
+# radios keep every key whatever their chip (an LR1121 key on an SX1276 board is accepted); the rows below only take
+# keys away from a bridge, and add the one key that only the 2.4 GHz bridge reads. The evidence for each row is in ADR 0048 and in the drivers:
+#  - A chip's key is read by that chip's driver alone (RadioSX1262, RadioSX1276, RadioLR1121). The 868 MHz bridge
+#    reads two SX1262 keys, `sx1262_rx_bandwidth` (Io868GfskPhy::write_params) and `sx1262_discovery_hop_slice_ms`
+#    (Io868GfskPhy::hop_dwell_ms); its co-processor owns the turnaround after a transmission, so the post-TX settles
+#    are not read. The 2.4 GHz bridge reads none (Io2g4Phy::write_params takes no tuning), and its hop dwell is
+#    `io2g4_hop_dwell_ms` (Io2g4Phy::hop_dwell_ms).
+#  - A preamble duration reaches the 2.4 GHz bridge only as the wake level it labels (tx_wake_for(): a start frame is
+#    LONG from WAKE_PREAMBLE_MIN_MS, else SHORT), and Io2g4Phy::tx_shape() ignores the length. `start_preamble_ms`
+#    and `cold_broadcast_reply_preamble_ms` stop below 70 ms (always SHORT), `low_power_wake_ms` starts at 300 ms
+#    (always LONG), and a response frame opens no session (no wake). `pairing_discovery_preamble_ms` reaches
+#    300 ms, so it can pick the long train and stays; its deprecated byte key stops at 1024 bytes, about 213 ms on
+#    this radio (always SHORT), and goes.
+_APPLIES_TO = {
+    CONF_SX1262_RX_BANDWIDTH: (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    CONF_SX1262_POST_TX_SETTLE_US: _SPI_PROFILES,
+    CONF_SX1276_RX_BANDWIDTH: _SPI_PROFILES,
+    CONF_SX1276_DISCOVERY_HOP_SLICE_MS: _SPI_PROFILES,
+    CONF_LR1121_RX_BANDWIDTH: _SPI_PROFILES,
+    CONF_LR1121_POST_TX_SETTLE_US: _SPI_PROFILES,
+    CONF_LR1121_DISCOVERY_HOP_SLICE_MS: _SPI_PROFILES,
+    CONF_IO2G4_HOP_DWELL_MS: (PROFILE_BRIDLE_2G4,),
+    CONF_RESPONSE_PREAMBLE_MS: (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS: (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    CONF_START_PREAMBLE_MS: (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    CONF_LOW_POWER_WAKE_MS: (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    # The deprecated byte keys apply where the duration key they became applies; a response key of another radio
+    # never applied to a radio that is not its own.
+    "low_power_wake_preamble": (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    "normal_start_preamble": (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    "cold_broadcast_reply_preamble": (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    "pairing_discovery_preamble": (*_SPI_PROFILES, PROFILE_BRIDLE_868),
+    "sx1262_response_preamble": _SPI_PROFILES,
+    "sx1276_response_preamble": _SPI_PROFILES,
+    "lr1121_response_preamble": _SPI_PROFILES,
+}
+
+
+def radio_profile(config):
+    """The profile of a hub config: its `radio_type`, and for a bridge `radio_type` and `bridle_band`."""
+    radio_type = config[CONF_RADIO_TYPE]
+    if radio_type != "bridle":
+        return radio_type
+    return f"bridle_{config.get(CONF_BRIDLE_BAND, BRIDLE_DEFAULT_BAND)}"
+
+
+def key_applies(key, profile):
+    """Whether the tuning `key` applies to the `profile`, that is, whether the profile's radio reads it: the key is in no
+    row of `_APPLIES_TO` (the hub reads it whatever the radio), or the profile is one of the row's."""
+    return profile in _APPLIES_TO.get(key, _EVERY_PROFILE)
 
 
 def _id_key(param_key):
@@ -676,6 +754,31 @@ TUNING_CONFIG_SCHEMA = cv.All(
 )
 
 
+def validate_tuning_for_radio(config):
+    """Reject a tuning key the band's radio ignores, and leave it no entity.
+
+    The tuning block is validated before the hub's `radio_type` and `bridle_band` are known, so this runs on the
+    whole hub block (`_APPLIES_TO`). The message names the key and the radio and band it does not apply to. The
+    companion entity IDs that block declared for every key are dropped for the keys that do not apply, so no
+    number or select is created for them.
+    """
+    tuning = config.get(CONF_TUNING)
+    if tuning is None:
+        return config
+    profile = radio_profile(config)
+    for key, profiles in _APPLIES_TO.items():
+        if profile in profiles:
+            continue
+        if key in tuning:
+            raise cv.Invalid(
+                f"tuning: {key} is ignored by the radio of {_PROFILE_NAMES[profile]}; it applies to "
+                f"{' and '.join(_PROFILE_NAMES[p] for p in profiles)} only",
+                path=[CONF_TUNING, key],
+            )
+        tuning.pop(_id_key(key), None)
+    return config
+
+
 def _cpp_bool(value):
     """Format a Python bool as a C++ boolean literal."""
     return "true" if value else "false"
@@ -776,17 +879,20 @@ def _apply_tuning_config(config, var, radio_type):
     cg.add(var.set_tuning_config(tuning))
 
 
-async def _create_tuning_entities(config, var):
-    """Generate number/select entities for the tuning parameters when enabled."""
+async def _create_tuning_entities(config, var, profile):
+    """Generate number/select entities for the tuning parameters that apply to the radio profile, when enabled."""
     if not config[CONF_UI_CONTROLS]:
         return
 
     # --- Select entities (options sourced from _SELECT_OPTIONS) ---
     for key, options in _SELECT_OPTIONS.items():
-        await _create_select(config, var, key, options)
+        if key_applies(key, profile):
+            await _create_select(config, var, key, options)
 
     # --- Number entities (bounds sourced from _NUMBER_PARAMS) ---
     for key, (min_value, max_value, step, unit) in _NUMBER_PARAMS.items():
+        if not key_applies(key, profile):
+            continue
         await _create_number(
             config, var, key, min_value=min_value, max_value=max_value, step=step, unit=unit
         )
@@ -846,10 +952,11 @@ async def _create_select(config, var, key, options):
     await cg.register_component(entity, entity_config)
 
 
-async def to_code(config, var, radio_type):
+async def to_code(config, var, radio_type, profile):
     """Generate code for the tuning block.
 
-    `radio_type` is the hub's `radio_type:`; it decides which deprecated response key applies.
+    `radio_type` is the hub's `radio_type:`; it decides which deprecated response key applies. `profile` (radio_profile())
+    decides which keys get an entity (`_APPLIES_TO`).
     """
     _apply_tuning_config(config, var, radio_type)
-    await _create_tuning_entities(config, var)
+    await _create_tuning_entities(config, var, profile)

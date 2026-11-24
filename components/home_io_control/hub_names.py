@@ -33,6 +33,11 @@ CONF_SYSTEM_KEY = "system_key"
 CONF_TX_POWER = "tx_power"
 CONF_PA_PIN = "pa_pin"
 CONF_RADIO_TYPE = "radio_type"
+# The band a `radio_type: bridle` co-processor is asked for (its PHY profile), and whether every Bridle
+# message is logged as a trace line (the recording format of session replay).
+CONF_BRIDLE_BAND = "bridle_band"
+BRIDLE_DEFAULT_BAND = "io_2g4"
+CONF_BRIDLE_TRACE = "bridle_trace"
 CONF_FEM_EN_PIN = "fem_en_pin"
 CONF_VFEM_PIN = "vfem_pin"
 CONF_FEM_PA_PIN = "fem_pa_pin"

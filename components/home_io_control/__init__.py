@@ -11,13 +11,17 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import spi
-from esphome.const import CONF_ID
+from esphome.components import spi, uart
+from esphome.const import CONF_BUILD_FLAGS, CONF_ESPHOME, CONF_ID, CONF_UART_ID
+from esphome.core import CORE
 
 from . import tuning as tuning_module
 from .hub_names import (
     CONF_ACCEPT_FOREIGN_PAIRING,
     CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID,
+    BRIDLE_DEFAULT_BAND,
+    CONF_BRIDLE_BAND,
+    CONF_BRIDLE_TRACE,
     CONF_BUSY_PIN,
     CONF_DIAGNOSTIC_PROBES,
     CONF_DIO0_PIN,
@@ -47,13 +51,18 @@ from .hub_names import (
     IOHomeRecoverOneWayKeySwitch,
 )
 from .hub_validators import (
+    BRIDLE_BANDS,
+    BRIDLE_TX_POWER_RANGE,
     FEM_PROFILES,
+    FRAME_LOG_BUILD_FLAG,
     PA_PIN_OPTIONS,
     RADIO_TYPE_OPTIONS,
     SPI_RADIO_TYPES,
     TCXO_VOLTAGE_OPTIONS,
+    bridle_held_log_lines,
     validate_fem,
     validate_radio_transport,
+    validate_tx_power,
     validate_device_id,
     validate_node_id,
     validate_system_key,
@@ -99,8 +108,11 @@ from .hub_validators import (  # noqa: F401
     validate_status_poll_interval,
 )
 
-DEPENDENCIES = ["api", "spi"]
+DEPENDENCIES = ["api"]
+# spi: the hub is an SPIDevice whatever its radio; loading it here (not requiring it) lets a
+# `radio_type: bridle` config have no spi: bus.
 AUTO_LOAD = [
+    "spi",
     "binary_sensor",
     "button",
     "climate",
@@ -133,7 +145,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_BUSY_PIN): pins.internal_gpio_input_pin_schema,
             cv.Required(CONF_NODE_ID): validate_node_id,
             cv.Required(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
-            cv.Optional(CONF_TX_POWER, default=17): cv.int_range(min=0, max=22),
+            # No default: validate_tx_power() gives the SPI radios their 17 and leaves a bridge's power
+            # to the radio. The widest range any radio takes is checked here, the per-radio one there.
+            cv.Optional(CONF_TX_POWER): cv.int_range(min=BRIDLE_TX_POWER_RANGE[0], max=22),
             cv.Optional(CONF_PA_PIN, default="BOOST"): cv.enum(
                 PA_PIN_OPTIONS, upper=True
             ),
@@ -142,9 +156,13 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_VFEM_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_FEM_PA_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_FEM, default="none"): cv.one_of(*FEM_PROFILES, lower=True),
-            cv.Optional(CONF_TCXO_VOLTAGE, default="1_8V"): cv.enum(
-                TCXO_VOLTAGE_OPTIONS, upper=True
-            ),
+            # No schema default, so that a bridge (which has no TCXO to configure) can reject the key;
+            # validate_radio_transport() gives an SPI radio its 1.8 V default.
+            cv.Optional(CONF_TCXO_VOLTAGE): cv.enum(TCXO_VOLTAGE_OPTIONS, upper=True),
+            # radio_type: bridle -- the co-processor's UART, the band it is asked for, message trace
+            cv.Optional(CONF_UART_ID): cv.use_id(uart.UARTComponent),
+            cv.Optional(CONF_BRIDLE_BAND): cv.one_of(*BRIDLE_BANDS, lower=True),
+            cv.Optional(CONF_BRIDLE_TRACE): cv.boolean,
             cv.Optional(CONF_EXPOSED_SENDERS, default=[]): cv.ensure_list(
                 validate_device_id
             ),
@@ -171,8 +189,32 @@ CONFIG_SCHEMA = cv.All(
     validate_oneway_controllers,
     validate_lr1121_firmware_update,
     validate_radio_transport,
+    validate_tx_power,
     validate_fem,
+    tuning_module.validate_tuning_for_radio,
 )
+
+
+def _frame_log_enabled():
+    """Whether the build asks for the frame log (`-DIOHOME_FRAME_LOG` among the `esphome: build_flags:`)."""
+    return FRAME_LOG_BUILD_FLAG in CORE.config.get(CONF_ESPHOME, {}).get(CONF_BUILD_FLAGS, [])
+
+
+async def _bridle_to_code(config, var):
+    """The code only a `radio_type: bridle` build has: the Bridle sources, their held log and the link's settings."""
+    # ESPHome compiles every .cpp of the component; the Bridle sources exist only in a build that asks for a bridge
+    # (their files include esphome/core/hal.h first, which is where this define becomes visible).
+    cg.add_define("IOHOME_BRIDLE")
+    # The driver writes its trace through the frame log's hold, and one hold must take the lines of a whole exchange:
+    # build flags, so every translation unit sees the same size (a define would reach only those that include
+    # esphome/core/defines.h first).
+    cg.add_build_flag("-DIOHOME_HELD_LOG")
+    cg.add_build_flag(f"-DIOHOME_HELD_LOG_LINES={bridle_held_log_lines(_frame_log_enabled())}")
+    cg.add(var.set_uart_parent(await cg.get_variable(config[CONF_UART_ID])))
+    cg.add(var.set_bridle_trace(config.get(CONF_BRIDLE_TRACE, False)))
+    cg.add(var.set_bridle_band(config.get(CONF_BRIDLE_BAND, BRIDLE_DEFAULT_BAND)))
+    if CONF_TX_POWER in config:
+        cg.add(var.set_tx_power_dbm(config[CONF_TX_POWER]))
 
 
 async def to_code(config):
@@ -225,12 +267,16 @@ async def to_code(config):
 
     cg.add(var.set_node_id(config[CONF_NODE_ID]))
     cg.add(var.set_system_key(config[CONF_SYSTEM_KEY]))
-    cg.add(var.set_tx_power(config[CONF_TX_POWER]))
+    if config[CONF_RADIO_TYPE] in SPI_RADIO_TYPES:
+        cg.add(var.set_tx_power(config[CONF_TX_POWER]))
     cg.add(var.set_pa_pin(config[CONF_PA_PIN]))
 
     cg.add(var.set_radio_type(config[CONF_RADIO_TYPE]))
 
-    cg.add(var.set_tcxo_voltage(config[CONF_TCXO_VOLTAGE]))
+    cg.add(var.set_tcxo_voltage(config.get(CONF_TCXO_VOLTAGE, TCXO_VOLTAGE_OPTIONS["1_8V"])))
+
+    if config[CONF_RADIO_TYPE] == "bridle":
+        await _bridle_to_code(config, var)
 
     for sender_id in config[CONF_EXPOSED_SENDERS]:
         cg.add(var.add_exposed_sender(sender_id))
@@ -278,5 +324,5 @@ async def to_code(config):
 
     if tuning_module.CONF_TUNING in config:
         await tuning_module.to_code(
-            config[tuning_module.CONF_TUNING], var, config[CONF_RADIO_TYPE]
+            config[tuning_module.CONF_TUNING], var, config[CONF_RADIO_TYPE], tuning_module.radio_profile(config)
         )
