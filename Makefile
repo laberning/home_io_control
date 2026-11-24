@@ -85,13 +85,17 @@ dashboard:
 # dev machine installs as plain `clang-format`), because versions disagree on comment alignment.
 CLANG_FORMAT ?= clang-format
 
+# The generated Bridle headers (scripts/bridle-update.sh) keep the formatting of their release: both
+# targets leave them out.
 format:
 	@echo "Formatting C++ source files with clang-format..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec $(CLANG_FORMAT) -i {} +
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -not -name radio_bridle_enums.h -not -path 'tests/bridle/*' \
+		-exec $(CLANG_FORMAT) -i {} +
 
 format-check:
 	@echo "Checking C++ formatting with clang-format (--dry-run)..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec $(CLANG_FORMAT) --dry-run --Werror {} +
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -not -name radio_bridle_enums.h -not -path 'tests/bridle/*' \
+		-exec $(CLANG_FORMAT) --dry-run --Werror {} +
 
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
@@ -336,6 +340,7 @@ INCLUDES := -Icomponents/home_io_control \
             -Itests/include \
             -Itests/support \
             -Ibuild/corpus \
+            -Itests/bridle \
             -Itests
 
 # Mirror the ESPHome API defines that the component injects during firmware codegen.
@@ -348,13 +353,20 @@ INCLUDES := -Icomponents/home_io_control \
 # IOHOME_LR1121_BOOTLOADER_UPDATE is the same story one level down: normally only set when a
 # `bootloader:` sub-block is configured, but the 0x81xx primitives and the three-stage
 # orchestration it gates need to be always-on for their host tests to have anything to link.
-# IOHOME_BRIDLE compiles the Bridle radio sources (no firmware configuration sets it yet).
+# IOHOME_BRIDLE compiles the Bridle radio sources (no firmware configuration sets it yet). The Bridle
+# driver writes its trace through the held log, so IOHOME_HELD_LOG comes with it (log_frame.h).
 UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_CUSTOM_SERVICES \
 			 -DUSE_API_HOMEASSISTANT_SERVICES \
 			 -DIOHOME_LR1121_FIRMWARE_UPDATE \
 			 -DIOHOME_LR1121_BOOTLOADER_UPDATE \
-			 -DIOHOME_BRIDLE
+			 -DIOHOME_BRIDLE \
+			 -DIOHOME_HELD_LOG
+
+# Bridle: the generated headers of one Bridle release are committed (components/home_io_control/radio_bridle_enums.h,
+# tests/bridle/) and named by BRIDLE_VERSION; scripts/bridle-update.sh is the only thing that writes them.
+bridle-check:
+	@scripts/bridle-update.sh --check
 
 # Regenerates build/corpus/corpus_generated.h from tests/corpus/captures/**/*.yaml.
 # see tests/corpus/README.md.
@@ -470,11 +482,12 @@ doxygen:
 #   stub-sync           -> stub-sync
 #   board-pinout-sync   -> board-pinout-sync
 #   corpus-validate     -> corpus-validate
+#   bridle-check        -> bridle-check
 #   docs-link-check     -> docs-link-check
 #   corpus-citation-check -> corpus-citation-check
 #   key-material-scan   -> key-material-scan
 #   private-path-check  -> private-path-check
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate docs-link-check corpus-citation-check docs-prose-check key-material-scan private-path-check
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate bridle-check docs-link-check corpus-citation-check docs-prose-check key-material-scan private-path-check
 test: unit-test unit-test-asan py-test firmware-test
 check: lint test doxygen
 
@@ -491,7 +504,7 @@ test-unit: unit-test
 		include-graph stub-sync \
 		docs-prose-check \
 		key-material-scan private-path-check \
-		fuzz-frame fuzz-soft-phy \
+		fuzz-frame fuzz-soft-phy bridle-check \
 		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
 		unit-test unit-test-asan py-test host-run host-component-objs clean-host lint test check \
 		test-compile test-unit \
