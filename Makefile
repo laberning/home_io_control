@@ -154,13 +154,16 @@ fuzz-soft-phy:
 # or held-log switch or include a header that does (CLANG_TIDY_ONLY_FILES_WITH); the first build has the
 # switch off, so without it the code under IOHOME_FRAME_LOG is never analyzed.
 CLANG_TIDY_FRAME_LOG_CONFIG := config/tests/test-esp32-sx1262-fem.yaml
+# The third pass analyzes the bridge sources (IOHOME_BRIDLE) in a bridge build, which also has the frame log on, so
+# the trace's frame-log code is analyzed with them.
+CLANG_TIDY_BRIDLE_CONFIG := config/tests/test-esp32-bridle.yaml
 clang-tidy:
 	@echo "Running clang-tidy..."
 	@scripts/run-clang-tidy.sh
 	@echo "Running clang-tidy on a frame-log build..."
 	@CLANG_TIDY_ONLY_FILES_WITH='IOHOME_FRAME_LOG|IOHOME_HELD_LOG' scripts/run-clang-tidy.sh $(CLANG_TIDY_FRAME_LOG_CONFIG)
-	@echo "Running clang-tidy on the Bridle sources..."
-	@CLANG_TIDY_ONLY_FILES_WITH=IOHOME_BRIDLE scripts/run-clang-tidy.sh config/tests/test-esp32-bridle-868.yaml
+	@echo "Running clang-tidy on the Bridle sources in a frame-log build..."
+	@CLANG_TIDY_ONLY_FILES_WITH=IOHOME_BRIDLE scripts/run-clang-tidy.sh $(CLANG_TIDY_BRIDLE_CONFIG)
 
 # Cross-language check: tuning parameter names must match between tuning.py and the C++ registry
 tuning-sync:
