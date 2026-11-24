@@ -107,9 +107,11 @@ Each UI change is also logged in YAML-compatible form, ready to paste back:
 
 Parameters fall into two groups: the **radio / physical layer** (how the chip transmits and
 receives) and the **pairing protocol** (which frames are sent and how the hub waits for
-answers). The *Radio* column shows which chip a parameter affects — a chip-specific parameter
-(*SX1262*, *SX1276*, or *LR1121*) is ignored on any other chip's boards; *both* applies
-everywhere.
+answers). The *Radio* column shows which radio a parameter affects. On the SPI radios, a
+chip-specific parameter (*SX1262*, *SX1276*, or *LR1121*) is accepted and ignored on any other
+chip's boards, and *both* applies to all three. A radio co-processor (`radio_type: bridle`) reads
+fewer keys and rejects the others when the configuration is validated; the
+[keys a bridge reads](#keys-a-bridge-reads) are listed below the quick reference.
 
 Each parameter below has a short **What we've seen** note. These summarise concrete behaviour
 observed while getting pairing to work — treat them as starting hints, not guarantees, because
@@ -144,6 +146,7 @@ your device may differ.
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). `117.3` is validated on real LR1121 hardware. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
+| `io2g4_hop_dwell_ms` | 2.4 GHz bridge | `2` | 1–200 ms | Per-channel dwell for any hopping listen on a bridge on 2.4 GHz. See [`io2g4_hop_dwell_ms`](#io2g4_hop_dwell_ms). |
 | `cold_broadcast_reply_preamble_ms` | both | `20` | 1.5–70 ms | Preamble duration for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
 | `key_extraction_type_word` | both | `0x0080` | `0x0000`–`0xFFFF` | Device type the key-extraction responder's discovery reply (0x29) claims, as the reply's two type bytes. Applies to an open search only. See below. |
 | `key_extraction_multi_info` | both | `0xDD` | `0x00`–`0xFF` | The key-extraction responder's discovery reply (0x29) flags byte: reply speed and whether the device sleeps. See below. |
@@ -172,6 +175,21 @@ your device may differ.
 
 `ui_controls` itself is a feature toggle (default `false`) that exposes these as entities; it is
 not a tunable.
+
+### Keys a bridge reads
+
+A radio co-processor (`radio_type: bridle`) takes a tuning key only when its radio reads it. A key
+the radio ignores fails validation with a message that names the key and the band, and no entity
+is created for it. The three SPI radios accept every key except `io2g4_hop_dwell_ms`, so a chip's
+key on another chip's board stays accepted. Keys that belong to the hub rather than the radio (the
+exchange windows, channel access, polls, pairing and key extraction) apply on every radio.
+
+| Radio | Keys it rejects |
+|---|---|
+| 868 MHz bridge (`bridle_band: io_868`) | `io2g4_hop_dwell_ms`; `sx1262_post_tx_settle_us` and `lr1121_post_tx_settle_us`, because the co-processor does the turnaround after a transmission; the SX1276 and LR1121 bandwidth and discovery-slice keys; the response-preamble byte keys of every chip (`sx1262_response_preamble`, `sx1276_response_preamble`, `lr1121_response_preamble`). It reads `sx1262_rx_bandwidth`, `sx1262_discovery_hop_slice_ms` and the [preamble durations](#preamble-durations): it wakes a device with a long preamble. |
+| 2.4 GHz bridge (`bridle_band: io_2g4`) | Every chip key, which are the bandwidth, post-TX settle, discovery-slice and response-preamble byte keys of the three chips, and `start_preamble_ms`, `cold_broadcast_reply_preamble_ms`, `response_preamble_ms` and `low_power_wake_ms` with their deprecated byte keys. A wake-up on 2.4 GHz is a fixed train, so a preamble duration reaches it only as the choice between the short and the long train. It reads `io2g4_hop_dwell_ms`, and `pairing_discovery_preamble_ms`, whose ceiling of 300 ms selects the long train (its deprecated byte key stops at about 213 ms and is rejected). |
+
+Configuring a bridge is described in [Configuration](index.md).
 
 ### Radio / physical layer — in detail
 
@@ -273,7 +291,9 @@ longer settle.
 
 How long the hub listens for a device's reply before giving up on a try. The radio's band gives
 the start window (`400` ms on 868 MHz) and, for a `low_power` device, the low-power window, so a
-band with other reply times needs no setting. `exchange_start_response_wait_ms` is an override: leave
+band with other reply times needs no setting: a bridge on 2.4 GHz gets `60` ms for both windows, because a
+device there answers within a few milliseconds, and pauses `50` ms between the tries of one command, each retry
+going to another channel. `exchange_start_response_wait_ms` is an override: leave
 it out to use the band's window, and set it only to replace that window for start frames, for example
 when a device ignores commands but is known to be in range and correctly paired. It changes nothing
 else, and the boot log shows the window in effect (`Start reply window`).
@@ -385,6 +405,16 @@ meaningful minimum for the chip — coverage degrades gradually below the low si
 only collapses at the literal `0`, where `wait_for_packet(..., 0)` returns before anything can be
 observed at all — so it is left open as an experimentally checkable floor rather than assumed.
 Values near that floor are for probing it, not for everyday tuning.
+
+#### `io2g4_hop_dwell_ms`
+
+How long the receiver of a bridge on 2.4 GHz dwells on each channel while the hub hops, in pairing
+discovery and in the `scan_paired_devices` roll-call. A retune costs the UART time of the receive
+command and the co-processor's ramp-up, about 0.3 ms at 1 Mbaud and 1.2 ms at 115 200 baud, so the
+default of 2 ms sweeps all three channels in 6 ms. A slower UART needs no change at the default.
+Whether a broadcast reply on 2.4 GHz needs a longer dwell is not yet measured; raise it if a device
+is clearly present but its discovery reply is never caught. The key applies to the 2.4 GHz bridge
+only; see [the keys a bridge reads](#keys-a-bridge-reads).
 
 #### `lr1121_rx_bandwidth` / `lr1121_post_tx_settle_us` / `lr1121_discovery_hop_slice_ms`
 

@@ -101,8 +101,8 @@ TEST(OpcodeNameSync, PythonRekeyConstantsMatchCpp) {
   auto cpp_entries = test::parse_cpp_uint8_constants(kProtoConstantsPath, "CMD_");
   // Exact-count guard rather than a floor: this set is small, fixed and hand-curated, so a bare
   // ASSERT_GT would be meaninglessly loose here.
-  ASSERT_EQ(py_entries.size(), 8u) << "protolib.py's rekey-pipeline CMD_* constants changed count — "
-                                   << "update this test's expectations (and check the parser) deliberately.";
+  ASSERT_EQ(py_entries.size(), 12u) << "protolib.py's rekey-pipeline CMD_* constants changed count — "
+                                    << "update this test's expectations (and check the parser) deliberately.";
 
   for (const auto &[name, value] : py_entries) {
     auto it = cpp_entries.find(name);

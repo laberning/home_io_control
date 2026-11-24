@@ -122,6 +122,11 @@ CMD_LAUNCH_KEY_TRANSFER = 0x38
 CMD_CHALLENGE_REQ = 0x3C
 CMD_CHALLENGE_RESP = 0x3D
 CMD_DISCOVER_SPE_REQ = 0x2A
+# The bench scripts (scripts/bench/) build and read these frames.
+CMD_EXECUTE = 0x00
+CMD_PRIVATE = 0x03
+CMD_PRIVATE_RESP = 0x04
+CMD_ERROR_RESP = 0xFE
 
 # Commands that authenticate themselves in a single frame — payload = [challenge(6) | HMAC(6)],
 # the HMAC taken over just the command byte, so one broadcast frame carries both halves of a

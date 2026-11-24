@@ -13,6 +13,10 @@ After setup, run `make check` to verify the full toolchain.
 
 ```bash
 sudo apt-get update && sudo apt-get install -y clang-format clang-tidy yamllint libgtest-dev
+# The Bridle tools (session linter, bench scripts) come from a pinned wheel that `make tools` installs into
+# build/tools/venv; while the Bridle release is private pass BRIDLE_WHEEL=<wheel>, or build it in a sibling
+# ../bridle checkout (`make release`), whose dist/ is used when it holds the pinned wheel
+sudo apt-get install -y python3-venv
 # Optional: for API documentation generation
 sudo apt-get install graphviz python3-pygments
 ```
@@ -38,6 +42,11 @@ the golden-frame corpus, `tests/sync/` checks that C++ and Python tables agree, 
 tests the host stubs themselves. The doubles the suites share are in `tests/support/` (a hub-free `HeaterController` fixture, the hub port doubles, timed replay, a log capture that counts the lines a call logs) and `tests/stubs/` (scripted SPI, the software-PHY test driver); `tests/include/` holds the ESPHome header stubs. Put a new `*_test.cpp` in the directory of the code it tests; the
 Makefile finds it there. Any compiler warning fails the host build.
 
+`tests/fullstack/` is the exception: its tests need a Bridle simulator, a program that speaks the
+[simulator control channel](https://github.com/laberning/bridle/blob/bridle-v0.7.0/README.md#111-simulator-control-channel)
+of the Bridle specification and has an 802.15.4 radio. `make fullstack` builds and runs them against the
+simulator that `BRIDLE_SIM` names, and `make unit-test` does not build them.
+
 ```bash
 # Run host-based Google Test unit tests (no ESP32 needed)
 make unit-test
@@ -58,7 +67,21 @@ make check
 # Check the host-test ESPHome stubs against the real ESPHome headers (in the container; part of lint)
 make stub-sync
 
-# Validate the golden-frame corpus (schema, CRC, crypto — see tests/corpus/README.md)
+# Check that the committed Bridle headers and the wheel pin match BRIDLE_VERSION (part of lint)
+make bridle-check
+
+# Take a newer Bridle release (see scripts/bridle-update.sh)
+scripts/bridle-update.sh <release tag>
+
+# Lint the recorded Bridle sessions (part of lint), and the traces the unit tests write (part of make test)
+make bridle-session-check
+make bridle-trace-check
+
+# Regenerate the recorded sessions from the host tests that record them; review the diff before committing
+make bridle-sessions-regen
+
+# Validate the golden-frame corpus (schema, CRC, crypto — see tests/corpus/README.md) and run the
+# unit tests of the corpus and bench scripts (scripts/bench/)
 make corpus-validate
 
 # Regenerate the corpus's generated C++ fixture header (also runs automatically before unit-test)
@@ -68,6 +91,13 @@ make corpus-gen
 # (time-boxed, FUZZ_TIME seconds, default 60; not part of `make check`, runs weekly in CI)
 make fuzz-frame
 make fuzz-soft-phy
+make fuzz-bridle-codec
+make fuzz-io2g4-unwrap
+
+# Full-stack tests: the hub's exchange engine over the Bridle driver and a simulated co-processor,
+# with an emulated blind answering on the simulated air. Not part of `make check`; CI only compiles
+# them (make fullstack-build)
+make fullstack BRIDLE_SIM=<path to the simulator binary>
 
 # Clean stale build caches for config/tests/*.yaml (fixes confusing linker errors after
 # adding a new .cpp under components/home_io_control/)
@@ -90,6 +120,10 @@ make compile-v4
 
 # Compile the LR1121 config (LilyGO T3-S3 LR1121 variant)
 make compile-t3
+
+# Compile the configs of an ESP32-C3 SuperMini with a radio co-processor: 2.4 GHz and 868 MHz
+make compile-c3
+make compile-c3-868
 
 # Compile and flash via USB
 make upload          # SX1276
@@ -128,6 +162,33 @@ make doxygen
 
 # Start ESPHome dashboard on port 6052
 make dashboard
+```
+
+## Bench configurations and scripts
+
+The bench tools measure the bridge against real radios. None of them is part of a user's setup, and
+none addresses a real device.
+
+| Config (`make compile-…`) | What it is |
+|---|---|
+| `bench868-ref-v3.yaml` (`ref868-v3`) | A Heltec V3 (SX1262) as the 868 MHz reference radio: API actions to send a frame, an unmodulated carrier or a bare preamble, and to listen. It replaces that board's hub, so flash it only on a board set aside for the bench. |
+| `esp32c3-supermini-bridle-868-phantom.yaml` (`c3-868-phantom`) | The 868 MHz bridge with two covers bound to made-up node ids, so no real receiver can be addressed. |
+| `esp32c3-supermini-bridle-bench.yaml` (`c3-bench`) | A hub with one cover that a stand-in device answers, for the answer-delay measurement; commanded over HTTP. |
+| `esp32c3-supermini-bridle-coex.yaml` (`c3-coex`) | The same at the co-processor's maximum transmit power, with the Wi-Fi signal reported, for the Wi-Fi coexistence measurement. |
+| `esp32c3-supermini-idle.yaml` (`c3-idle`) | Wi-Fi, API and OTA only, never speaking to the co-processor, so a PC can use the co-processor over USB. Flash the bridge config again to go back. |
+
+The scripts in `scripts/bench/` run in the tools venv (`build/tools/venv/bin/python`); `make corpus-validate`
+runs their unit tests against an in-process fake co-processor.
+
+- `io2g4.py` drives a co-processor as a 2.4 GHz controller from a PC (`poll`, `execute`), or as a stand-in
+  device (`respond`) that answers a hub and prints what it heard.
+- `respond_report.py` reads that `respond` output and summarises each EXECUTE: the wake-up train, the
+  CTRL1 of the request and of the challenge answer, and the time from the end of the challenge to the answer.
+- `ref868.py` drives the 868 MHz reference radio over the ESPHome API. It runs in the ESPHome container,
+  which has the API client; mount the script directory, since the container sees only `config/` and `components/`:
+
+```bash
+docker compose run --rm -v "$PWD/scripts/bench:/bench:ro" --entrypoint python3 esphome /bench/ref868.py --help
 ```
 
 ## See also

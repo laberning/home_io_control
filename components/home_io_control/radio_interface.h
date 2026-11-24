@@ -157,6 +157,12 @@ struct RadioTxConfig {
   std::optional<int16_t> cca_threshold_dbm;
 };
 
+/// A signal a bench can ask a radio for that is no io frame (RadioDriver::transmit_test_signal()).
+enum class TestSignal : uint8_t {
+  CARRIER,   ///< An unmodulated carrier.
+  PREAMBLE,  ///< The modulated preamble alone, with no sync word and no payload.
+};
+
 /// What send_packet() did with a frame.
 struct TxResult {
   enum class Status : uint8_t {
@@ -400,6 +406,21 @@ class RadioDriver {
 
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
+
+  /// Transmit a bench test signal for `duration_ms` and return to standby. For measurements a frame cannot
+  /// give (a bare carrier, a preamble of a known length): never called by the hub itself, only by a
+  /// bench configuration that has set `set_radio_test_mode(true)`. Blocks for the duration. The default
+  /// offers nothing.
+  /// @param signal What to transmit.
+  /// @param freq_hz Carrier frequency in Hz.
+  /// @param duration_ms How long the signal is on air, in ms.
+  /// @return true if the signal was sent; false if this driver cannot send it or the radio refused.
+  virtual bool transmit_test_signal(TestSignal signal, uint32_t freq_hz, uint32_t duration_ms) {
+    (void) signal;
+    (void) freq_hz;
+    (void) duration_ms;
+    return false;
+  }
 
   /// Switch to continuous receive mode.
   virtual void set_mode_rx() = 0;

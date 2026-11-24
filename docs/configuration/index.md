@@ -46,17 +46,21 @@ home_io_control:
 ## Configuration variables:
 
 - `id` (Optional): Manually specify the hub ID for code generation. Use this when entity blocks should reference a specific hub with `home_io_control_id`.
-- `cs_pin` (Required): SPI chip select pin for the radio.
-- `rst_pin` (Required): Radio reset pin.
+- `cs_pin` (Required for an SPI radio): SPI chip select pin for the radio.
+- `rst_pin` (Required): Radio reset pin. On `radio_type: bridle` it is the reset line of the co-processor.
 - `dio0_pin` (Optional): SX1276 DIO0 interrupt pin.
 - `dio4_pin` (Optional): SX1276 DIO4 preamble-detect pin. Most boards do not wire this.
 - `dio1_pin` (Optional): The chip's IRQ line — SX1262 DIO1, or LR1121 DIO9.
 - `busy_pin` (Optional): SX1262/LR1121 BUSY pin.
 - `node_id` (Required): 3-byte controller ID as exactly 6 hexadecimal characters.
 - `system_key` (Required): 16-byte installation key as exactly 32 hexadecimal characters.
-- `tx_power` (Optional, default: `17`): Radio transmit power, `0` to `22`.
+- `tx_power` (Optional, default: `17`): Radio transmit power, `0` to `22`. On `radio_type: bridle` it is a power in dBm, `-40` to `22`, that the co-processor clamps to what its radio allows; left out, the co-processor uses its maximum.
 - `pa_pin` (Optional, default: `BOOST`): SX1276 PA path. Valid values are `BOOST` and `RFO`.
-- `radio_type` (Required): The radio chip fitted to your board. Valid values are `sx1276`, `sx1262`, and `lr1121` — see [Hardware](../hardware.md).
+- `radio_type` (Required): The radio fitted to your board. Valid values are `sx1276`, `sx1262`, `lr1121` and `bridle` — see [Hardware](../hardware.md).
+- `uart_id`, `bridle_band` (`radio_type: bridle` only): a radio co-processor behind a UART instead of a chip on an SPI bus; the boards are on [Hardware](../hardware.md). `uart_id` names the `uart:` block it is wired to and is required. The UART runs at 1 Mbaud unless the co-processor was built for another rate (115200, 230400, 460800 or 921600; set the same rate on both sides), and at least 460800 baud on `io_2g4`, where another controller's wake-up train puts a frame on the air every millisecond. Set `rx_buffer_size` of the UART to at least 1024. A bridge has no SPI bus, so `cs_pin`, `busy_pin`, `dio0_pin`, `dio1_pin`, `dio4_pin` and `tcxo_voltage` are rejected. `bridle_band` (default `io_2g4`) is the band: `io_2g4` is io-homecontrol on 2.4 GHz over 802.15.4, and `io_868` is io-homecontrol on 868 MHz over a `gfsk_raw` radio ([ADR 0047](../adr/0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md), [ADR 0048](../adr/0048-io-868-over-bridle.md)). A [tuning key](tuning.md#keys-a-bridge-reads) the band's radio ignores is rejected.
+  - On `io_2g4`, a try that gets no reply is retried on another channel after a short pause, and a device counts as `low_power` unless you set it otherwise (see `low_power` below). `oneway_controllers:` and `recover_oneway_key:` are refused at validation, because no one-way frame has been seen on 2.4 GHz; receiving one-way frames (`linked_remotes:`, `exposed_senders:`) still works.
+  - 2.4 GHz is also the band of Wi-Fi. When the hub is connected, a request leaves out each io channel that lies within 15 MHz of the hub's own Wi-Fi channel (the middle channel, 2450 MHz, sits inside Wi-Fi channels 6 to 11), and the log shows one line after Wi-Fi connects naming the channel given up and the Wi-Fi channels that would keep it. The hub knows only its primary 20 MHz channel, so an access point on 40 MHz is wider than the guard.
+- `bridle_trace` (Optional, default: `false`, `radio_type: bridle` only): log every message between the hub and the co-processor, one `[bridle]` line per message in each direction, at the `DEBUG` log level. Use it for short captures while you investigate a problem and turn it off afterwards: every line costs serial time on the hub, and a busy band produces many messages. While the hub waits for a reply it provoked, nothing is printed; the lines follow when the wait ends.
 - `fem_en_pin` (Optional): Front-end module enable pin (chip enable / CSD) for boards with an external RF front-end. Required by `fem: gc1109`/`fem: kct8103l`; not used by `fem: xy16p35` (that part has no such pin).
 - `vfem_pin` (Optional): Front-end module power pin for boards with an external RF front-end. Required whenever `fem:` is set to a profile other than `none`.
 - `fem_pa_pin` (Optional): Front-end module mode-select pin for boards with an external RF front-end — CPS on a GC1109, CTX on a KCT8103L (active-HIGH during TX on both); the LNA-control pin on an XY16P35 (active-LOW during TX — the inverse sense). Required whenever `fem:` is set to a profile other than `none`. `fem:` never fills this pin in — set it explicitly, per your board package.
@@ -231,6 +235,8 @@ adapting the example above by hand.
 | [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) | Heltec WiFi LoRa32 V4.2, SX1262 + GC1109 FEM | The same, with `fem: gc1109` and a conservative `tx_power` |
 | [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) | Heltec WiFi LoRa32 V4.3, SX1262 + KCT8103L FEM | The same, with `fem: kct8103l` and the low `tx_power` this board needs. A good starting point: the V4.3 is validated on real hardware and its front end hears further than a V3 — see [Hardware](../hardware.md#recommended-board) |
 | [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) | LilyGO T3-S3, LR1121 | The same, for the LR1121 |
+| [esp32c3-supermini-bridle.yaml](https://github.com/laberning/home_io_control/blob/main/config/esp32c3-supermini-bridle.yaml) | ESP32-C3 SuperMini with a radio co-processor, 2.4 GHz | A hub over a UART (`radio_type: bridle`, `bridle_band: io_2g4`) with one awning and one light |
+| [esp32c3-supermini-bridle-868.yaml](https://github.com/laberning/home_io_control/blob/main/config/esp32c3-supermini-bridle-868.yaml) | ESP32-C3 SuperMini with a radio co-processor, 868 MHz | The same on `bridle_band: io_868` |
 | [heltec-wifi-lora-32-v2-all-types.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2-all-types.yaml) | Heltec LoRa32 V2, SX1276 | Every supported device-bound platform — cover, light, lock, switch — with dummy device IDs ready to replace, plus `discover_and_pair_button: true` |
 | [heltec-wifi-lora-32-v3-monitor.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3-monitor.yaml) | Heltec WiFi LoRa32 V3/V3.2, SX1262 | A passive monitor: keeps the radio in RX, enables `IOHOME_FRAME_LOG`, creates no entities and no pairing button |
 

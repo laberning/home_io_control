@@ -53,7 +53,14 @@ DEVICE_VARIANTS := heltec-wifi-lora-32-v2:v2 \
                     heltec-wifi-lora-32-v4-3:v4-3 \
                     heltec-wifi-lora-32-v4-3:v4 \
                     t3s3-lr1121:t3 \
-                    t3s3-lr1121-monitor:t3-monitor
+                    t3s3-lr1121-monitor:t3-monitor \
+                    esp32c3-supermini-bridle:c3 \
+                    esp32c3-supermini-bridle-868:c3-868 \
+                    esp32c3-supermini-bridle-868-phantom:c3-868-phantom \
+                    esp32c3-supermini-bridle-bench:c3-bench \
+                    esp32c3-supermini-bridle-coex:c3-coex \
+                    esp32c3-supermini-idle:c3-idle \
+                    bench868-ref-v3:ref868-v3
 
 variant_stem = $(word 1,$(subst :, ,$1))
 variant_suffix = $(word 2,$(subst :, ,$1))
@@ -103,12 +110,16 @@ yamllint:
 	yamllint config/tests/*.yaml config/boards/*.yaml config/*.yaml tests/corpus/captures/ tests/python/fixtures/ .github/workflows/*.yml .github/dependabot.yml
 
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
-# (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.
+# (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests and the
+# bench scripts' unit tests (scripts/bench/).
 # The generated C++ headers are used for unit-tests
 corpus-validate: tools
 	@echo "Validating golden-frame corpus captures..."
 	@$(PY) scripts/corpus/validate.py
 	@$(PY) scripts/corpus/tests/run_tests.py
+	@$(PY) scripts/bench/ref868_test.py
+	@$(PY) scripts/bench/io2g4_test.py
+	@$(PY) scripts/bench/respond_report_test.py
 	@python3 scripts/lr1121_firmware/tests/run_tests.py
 
 # libFuzzer targets, seeded from the golden-frame corpus. Time-boxed background checks
