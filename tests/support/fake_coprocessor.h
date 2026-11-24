@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -113,8 +114,9 @@ class FakeCoprocessor {
                    uint16_t detail = 0, int radio = -1);
   /// The energy `tx` with `cca` measures (default -100 dBm: a quiet channel).
   void set_channel_level_dbm(int16_t level) { channel_level_dbm_ = level; }
-  /// The energy the next clear-channel checks measure, one queued level per check; the default
-  /// applies once the queue is empty.
+  /// The energy the next clear-channel readings measure, one queued level per reading, whether a `tx` with `cca`
+  /// takes it or a `get_rssi` (the hub's own readings before a send); the defaults (set_channel_level_dbm(),
+  /// set_channel_rssi_dbm()) apply once the queue is empty.
   void queue_channel_level_dbm(int16_t level) { channel_levels_.push_back(level); }
   /// Called for every accepted transmission with its payload (PSDU without FCS) and the manual-clock
   /// times its main frame starts and the transmission ends. A stand-in uses it to answer a frame.
@@ -123,8 +125,12 @@ class FakeCoprocessor {
   }
   /// Report this many late strobe frames in the next `tx_done`.
   void set_next_strobe_late(uint16_t n) { next_strobe_late_ = n; }
-  /// The RSSI a `get_rssi` reports while the radio receives.
+  /// The RSSI a `get_rssi` reports while the radio receives (and the RSSI of every received frame).
   void set_rssi_dbm(int8_t rssi) { rssi_dbm_ = rssi; }
+  /// The RSSI a `get_rssi` reports once no queued level is left (see queue_channel_level_dbm()), when it should
+  /// differ from the RSSI of a received frame: the level of the channel the radio listens on, as the hub's
+  /// clear-channel check reads it.
+  void set_channel_rssi_dbm(int8_t rssi) { channel_rssi_dbm_ = rssi; }
   /// Queue a received frame (payload including FCS) for `radio` at the current time plus `delay_us`.
   /// A frame shorter than the radio's `rx_min_psdu` is counted in `stats.rx_short` and reported as nothing.
   /// Events the host has not enabled (`frame_start`, a bad-CRC `rx`, `rx_abort`) are dropped, as a
@@ -279,6 +285,7 @@ class FakeCoprocessor {
   int16_t channel_level_dbm_{-100};
   uint16_t next_strobe_late_{0};
   int8_t rssi_dbm_{-60};
+  std::optional<int8_t> channel_rssi_dbm_;  ///< What `get_rssi` reports; unset: rssi_dbm_.
   uint64_t tx_busy_until_us_{0};
   uint32_t set_params_during_tx_{0};
   uint32_t tx_ok_{0};

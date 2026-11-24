@@ -523,7 +523,11 @@ void FakeCoprocessor::handle_(const Message &msg) {
         Rssi reply;
         reply.cmd_seq = seq;
         reply.radio = rssi->radio;
-        reply.rssi_dbm = rssi_dbm_;
+        reply.rssi_dbm = channel_rssi_dbm_.value_or(rssi_dbm_);
+        if (!channel_levels_.empty()) {
+          reply.rssi_dbm = static_cast<int8_t>(std::clamp<int16_t>(channel_levels_.front(), INT8_MIN, INT8_MAX));
+          channel_levels_.pop_front();
+        }
         queue_(reply, now_us());
       }
     }

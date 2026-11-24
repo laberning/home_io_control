@@ -102,6 +102,8 @@ template<class Band> class BasicBridleStandIn : public RadioStandIn {
     if (!esphome::test_clock::is_manual())
       std::abort();  // the stream's lockstep ticks and the co-processor's air time need the manual clock
     reset_.on_release = [this] { cp_.boot(); };
+    cp_.set_channel_rssi_dbm(
+        QUIET_CHANNEL_DBM);  // the hub's clear-channel check finds a quiet channel, as a MockRadio's
     cp_.set_tx_observer([this](const std::vector<uint8_t> &, uint64_t, uint64_t end_us) { on_transmission_(end_us); });
     if (trace_to_file)
       radio_.trace_to_environment_dir();
@@ -142,11 +144,14 @@ template<class Band> class BasicBridleStandIn : public RadioStandIn {
   const std::vector<uint32_t> &wait_timeouts() const override { return radio_.wait_timeouts; }
 
  private:
+  /// The level a clear-channel reading finds when nothing is scripted: below every band's busy limit.
+  static constexpr int8_t QUIET_CHANNEL_DBM = -100;
+
   static const auto &phy_() { return Band::phy(); }
 
   /// The air frequency of a packet named by its logical channel or already by its air frequency.
   static uint32_t air_freq_(const esphome::home_io_control::RadioRxPacket &packet) {
-    return phy_().channel_hz(packet.freq_hz) != 0 ? packet.freq_hz : phy_().air_freq_hz(packet.freq_hz);
+    return phy_().channel_hz(packet.freq_hz) != 0 ? packet.freq_hz : phy_().band().air_hz_of(packet.freq_hz);
   }
   /// The payload of the `tx` the hub sends for `frame`.
   static std::vector<uint8_t> with_header_(const std::vector<uint8_t> &frame) { return Band::request_payload(frame); }
