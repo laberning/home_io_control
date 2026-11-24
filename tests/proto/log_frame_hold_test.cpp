@@ -121,9 +121,9 @@ TEST_F(FrameLogHold, LinesPastTheCapacityKeepTheFirstOnesInOrderAndReportTheCoun
 TEST(FrameLogHeldLimits, AFrameLogLineFitsAndTheDefaultCapacityIsTwelve) {
   static_assert(FRAME_LOG_LINE_SIZE <= HELD_LOG_LINE_SIZE);
   EXPECT_GE(HELD_LOG_LINE_SIZE, 320u);
-  // The host build does not set IOHOME_HELD_LOG_LINES (log_frame.h defines it to the default when unset, so an
-  // #ifndef here would always be false), so this reads the default.
-  EXPECT_EQ(FRAME_LOG_HELD_LINES, 12u);
+  // A build that does not set IOHOME_HELD_LOG_LINES gets this default (log_frame.h). The host build sets the larger
+  // number of a bridge build (Makefile), so the capacity it runs with is checked with the Bridle trace's tests.
+  EXPECT_EQ(FRAME_LOG_OWN_HELD_LINES, 12u);
 }
 
 TEST_F(FrameLogHold, ReleaseWithoutHoldIsHarmless) {

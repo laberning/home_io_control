@@ -2,6 +2,7 @@
 /// @brief RadioBridle over a scripted co-processor: handshake, transmit, receive, ordering, scans,
 ///        and the spec's own scenario event streams.
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -448,7 +449,11 @@ TEST(RadioBridleHeldTrace, TheDriversTraceIsNotPrintedWhileTheFrameLogIsHeldAndF
   ASSERT_EQ(lines.size(), 2u) << "the tx and its tx_done";
   EXPECT_EQ(lines[0].rfind("[bridle] > ", 0), 0u) << lines[0];
   EXPECT_EQ(lines[1].rfind("[bridle] < ", 0), 0u) << lines[1];
-  EXPECT_EQ(log.lines().size(), 2u);
+#ifdef IOHOME_FRAME_LOG
+  EXPECT_EQ(log.lines().size(), 3u) << "the two trace lines and the TX line of the frame log";
+#else
+  EXPECT_EQ(log.lines().size(), 2u) << "the two trace lines, and no frame line without the frame log";
+#endif
 }
 
 TEST(RadioBridleHeldTrace, OneAuthenticatedExchangeWritesEightTraceLinesAndTheHoldBufferTakesThemWithRoomToSpare) {
@@ -474,16 +479,104 @@ TEST(RadioBridleHeldTrace, OneAuthenticatedExchangeWritesEightTraceLinesAndTheHo
   EXPECT_TRUE(log.lines().empty());
   frame_log_release();
 
-  EXPECT_EQ(trace_lines_of(log).size(), 8u);
-  // The hold buffer holds the trace's 12 lines per exchange (8 and 4 spare), and the frame log's own 12 in a build with
-  // the frame log: exactly, as radio_bridle_trace.cpp asserts at compile time.
-  EXPECT_EQ(8u + 4u, TRACE_HELD_LINES);
+  EXPECT_EQ(trace_lines_of(log).size(), TRACE_EXCHANGE_LINES);
+  // The hold buffer holds 36 lines per exchange for the trace (two channel checks with their retune and four readings
+  // each, the co-processor's refusal of the first `tx`, these 8 and 4 spare), and the frame log's own 12 in a build
+  // with the frame log: exactly, as radio_bridle_trace.cpp asserts at compile time and bridle_held_log_lines() in
+  // hub_validators.py sets it.
+  EXPECT_EQ(TRACE_CHANNEL_CHECK_LINES, 10u);
+  EXPECT_EQ(TRACE_REFUSAL_LINES, 4u);
+  EXPECT_EQ(TRACE_HELD_LINES, 36u);
 #ifdef IOHOME_FRAME_LOG
-  EXPECT_EQ(FRAME_LOG_HELD_LINES, 24u);
+  EXPECT_EQ(FRAME_LOG_HELD_LINES, 48u);
 #else
-  EXPECT_EQ(FRAME_LOG_HELD_LINES, 12u);
+  EXPECT_EQ(FRAME_LOG_HELD_LINES, 36u);
 #endif
 }
+
+// === The frame log shows the frames of the bridge ===
+// Only a build with the frame log writes these lines: `make unit-test` runs them in its frame-log variant.
+#ifdef IOHOME_FRAME_LOG
+
+namespace {
+
+/// The `io_frame` lines in @p log, in the order they were printed.
+std::vector<std::string> frame_lines_of(const test::LogCapture &log) {
+  std::vector<std::string> lines;
+  for (const auto &line : log.lines()) {
+    if (line.tag == "io_frame")
+      lines.push_back(line.text);
+  }
+  return lines;
+}
+
+}  // namespace
+
+TEST(RadioBridleFrameLog, ATransmittedFrameIsLoggedWithTheAirFrequencyOfItsChannelAndIsHeldWhileTheHubWaits) {
+  TracedRig rig;
+  rig.radio.set_trace(false);
+  ASSERT_TRUE(rig.radio.init());
+  test::LogCapture log(true);
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH3;
+  const auto frame = io_frame(1);
+
+  frame_log_hold();
+  ASSERT_TRUE(rig.radio.send_packet(frame.data(), frame.size(), cfg).sent());
+  EXPECT_TRUE(log.lines().empty()) << "the hub is waiting for the reply it provoked: nothing may be printed";
+  frame_log_release();
+
+  const auto lines = frame_lines_of(log);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_EQ(lines[0].rfind("TX [12 bytes] freq=2475000000 ", 0), 0u) << lines[0];
+}
+
+TEST(RadioBridleFrameLog, AReceivedFrameIsLoggedWithTheAirFrequencyItCameInOnAfterTheHoldEnds) {
+  TracedRig rig;
+  rig.radio.set_trace(false);
+  ASSERT_TRUE(rig.radio.init());
+  rig.radio.set_mode_rx();
+  test::LogCapture log(true);
+  RadioRxPacket packet;
+
+  frame_log_hold();
+  rig.cp.inject_rx(2425000000u, psdu(0x20, 12));
+  ASSERT_TRUE(rig.radio.wait_for_packet(packet, 5));
+  EXPECT_EQ(packet.freq_hz, FREQ_CH1);
+  EXPECT_TRUE(log.lines().empty()) << "the hub is waiting for the reply: nothing may be printed";
+  frame_log_release();
+
+  const auto lines = frame_lines_of(log);
+  ASSERT_EQ(lines.size(), 1u);
+  EXPECT_EQ(lines[0].rfind("RX [12 bytes] freq=2425000000 ", 0), 0u) << lines[0];
+}
+
+TEST(RadioBridleFrameLog, AFrameWithABadCrcIsNotLoggedAsReceived) {
+  TracedRig rig;
+  rig.radio.set_trace(false);
+  ASSERT_TRUE(rig.radio.init());
+  rig.radio.set_mode_rx();
+  test::LogCapture log(true);
+  RadioRxPacket packet;
+  rig.cp.inject_rx(2450000000u, psdu(0x20, 12), CrcState::BAD);
+  EXPECT_FALSE(rig.radio.wait_for_packet(packet, 5));
+  EXPECT_TRUE(frame_lines_of(log).empty());
+}
+
+TEST(RadioBridleFrameLog, AFrameTheCoprocessorRefusedForABusyChannelIsNotLoggedAsSent) {
+  TracedRig rig;
+  rig.radio.set_trace(false);
+  ASSERT_TRUE(rig.radio.init());
+  rig.radio.set_mode_rx();
+  rig.cp.set_channel_level_dbm(-60);
+  test::LogCapture log(true);
+  RadioTxConfig cfg;
+  cfg.cca_threshold_dbm = -75;
+  const auto frame = io_frame(1);
+  EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), cfg).status, TxResult::Status::CHANNEL_BUSY);
+  EXPECT_TRUE(frame_lines_of(log).empty());
+}
+#endif  // IOHOME_FRAME_LOG
 
 TEST(RadioBridle, AWarningTheReceivePathWritesIsHeldToo) {
   TracedRig rig;
@@ -520,6 +613,19 @@ TEST(RadioBridle, LogLinesGetTheAirFrequencyOfAChannelThroughTheBand) {
   EXPECT_EQ(rig.radio.band().air_hz_of(FREQ_CH3), 2475000000u);
   EXPECT_EQ(rig.radio.band().air_hz_of(2450000000u), 2450000000u)
       << "a value that is not a channel comes back unchanged";
+}
+
+TEST(RadioBridle, TheClearChannelCheckLogsItsRetuneWithTheAirFrequency) {
+  Rig rig;
+  rig.start();
+  rig.radio.set_mode_rx();
+  test::LogCapture log(true);
+  rig.radio.measure_channel_level(FREQ_CH3);
+  const auto retune = std::find_if(log.lines().begin(), log.lines().end(), [](const auto &line) {
+    return line.text.rfind("Clear-channel check retuned to ", 0) == 0;
+  });
+  ASSERT_NE(retune, log.lines().end());
+  EXPECT_NE(retune->text.find("to 2475000000 Hz"), std::string::npos) << retune->text;
 }
 
 TEST(RadioBridle, CcaIsRequestedOnlyWithAThresholdAndTheCapability) {

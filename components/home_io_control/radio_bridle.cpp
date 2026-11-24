@@ -700,6 +700,11 @@ TxResult RadioBridle::transmit_(const uint8_t *data, uint8_t len, const RadioTxC
   uint32_t const limit_ms = (this->tx_air_time_us(len, tx_config) / 1000) + TX_DONE_MARGIN_MS;
   switch (this->await_(seq, MsgType::TX_DONE, limit_ms)) {
     case Wait::REPLIED:
+      // The frame is on air: the line the SPI drivers write before their transmit (log_frame.h), written once the
+      // co-processor has sent it, since its own channel check can still refuse the `tx`.
+#ifdef IOHOME_FRAME_LOG
+      log_frame("TX", data, len, tx.freq_hz, tx_config.preamble_len);
+#endif
       return TxResult::ok();
     case Wait::ERROR: {
       Message m;
@@ -777,6 +782,9 @@ bool RadioBridle::decode_entry_(const RxEntry &entry, RadioRxPacket &packet) {
       packet.len = result.frame_len;
       std::memcpy(packet.data, frame, result.frame_len);
       capture(frame, result.frame_len);
+#ifdef IOHOME_FRAME_LOG
+      log_frame("RX", packet.data, packet.len, entry.freq_hz);  // the air frequency the frame came in on
+#endif
       return true;
     case UnwrapResult::Status::BAD_CRC:
       this->bad_crc_frames_++;

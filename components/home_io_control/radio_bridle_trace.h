@@ -32,6 +32,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "proto_timing.h"
+
 namespace esphome::home_io_control::bridle {
 
 /// Marks a trace line; the log prefix in front of it (level, tag) is ignored by readers.
@@ -40,13 +42,27 @@ static constexpr char TRACE_MARKER[] = "[bridle]";
 static constexpr size_t TRACE_PART_BYTES = 128;
 /// A buffer size that holds any trace line: marker, direction, clock, `k/n`, 256 hex digits.
 static constexpr size_t TRACE_LINE_MAX = 320;
-/// Trace lines one authenticated exchange puts into the hold buffer: its messages are the request's `tx` and
-/// `tx_done`, the challenge's `frame_start` and `rx`, the answer's `tx` and `tx_done` and the final reply's
-/// `frame_start` and `rx` (eight lines), and four more cover an `rx_on` with its `ack` and a stray event. The buffer
-/// is shared with the frame log (log_frame.h), so a build with the frame log has these lines on top of its own
-/// FRAME_LOG_OWN_HELD_LINES; the build sets `IOHOME_HELD_LOG_LINES` to exactly that sum (`bridle_held_log_lines()` in
-/// hub_validators.py), and radio_bridle_trace.cpp checks it.
-static constexpr size_t TRACE_HELD_LINES = 12;
+/// Trace lines the channel check of a request puts into the hold buffer: the `rx_on` that retunes the receiver to
+/// the request's channel with its `ack`, and one `get_rssi` with its reply for every reading the exchange engine takes
+/// itself (all of a check's CHANNEL_CHECK_READINGS but the last, which the co-processor takes with the `tx`).
+static constexpr size_t TRACE_CHANNEL_CHECK_LINES = 2 + (2 * (CHANNEL_CHECK_READINGS - 1));
+/// Trace lines of an authenticated exchange after its channel check: the request's `tx` and `tx_done`, the
+/// challenge's `frame_start` and `rx`, the answer's `tx` and `tx_done` and the final reply's `frame_start` and `rx`.
+static constexpr size_t TRACE_EXCHANGE_LINES = 8;
+/// Held lines of a `tx` the co-processor refuses for a busy channel after the hub's own readings found it clear: the
+/// `tx`, its `error`, the co-processor's `log` event and the warning that prints it. The request then takes a second
+/// channel check on another channel.
+static constexpr size_t TRACE_REFUSAL_LINES = 4;
+/// Spare trace lines for a stray event.
+static constexpr size_t TRACE_SPARE_LINES = 4;
+/// Held lines one authenticated exchange puts into the hold buffer when the co-processor refuses its request once
+/// (36): two channel checks, the refusal, the exchange and the spare. A busy channel the hub's own readings find costs
+/// less than a refusal; a second busy channel can need more, and a hold that overflows says how many lines it lost in
+/// its note (log_frame.h). The buffer is shared with the frame log, so a build with the frame log has these lines on
+/// top of its own FRAME_LOG_OWN_HELD_LINES; the build sets `IOHOME_HELD_LOG_LINES` to exactly that sum
+/// (`bridle_held_log_lines()` in hub_validators.py), and radio_bridle_trace.cpp checks it.
+static constexpr size_t TRACE_HELD_LINES =
+    (2 * TRACE_CHANNEL_CHECK_LINES) + TRACE_REFUSAL_LINES + TRACE_EXCHANGE_LINES + TRACE_SPARE_LINES;
 
 /// Which way a message travelled.
 enum class TraceDirection : char {

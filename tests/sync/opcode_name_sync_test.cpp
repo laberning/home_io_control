@@ -94,9 +94,9 @@ TEST(OpcodeNameSync, PythonRekeyConstantsMatchCpp) {
   // which frames `ingest.py --rekey` rewrites and how the corpus scripts place a key transfer
   // (a push after a 0x31, a pull after a 0x38) — more load-bearing than CMD_NAMES, which only
   // decorates scaffold notes. Deliberately one-directional: the reverse (every C++ CMD_* must have
-  // a bare Python constant) must NOT be asserted — that set is an intentional 8-of-50 subset
-  // scoped to those tools' needs, and asserting the reverse would force 42 unused module-level
-  // constants into protolib.py.
+  // a bare Python constant) must NOT be asserted — that set is an intentional subset (the 12
+  // counted below) scoped to those tools' needs, and asserting the reverse would force every other
+  // C++ opcode into protolib.py as an unused module-level constant.
   auto py_entries = test::parse_python_uint8_assignments(kProtolibPath, "CMD_");
   auto cpp_entries = test::parse_cpp_uint8_constants(kProtoConstantsPath, "CMD_");
   // Exact-count guard rather than a floor: this set is small, fixed and hand-curated, so a bare

@@ -252,12 +252,13 @@ def tx_power_is_per_radio():
 
 @case()
 def a_bridge_build_holds_the_trace_lines_and_those_of_the_frame_log_when_it_has_one():
-    """12 held lines carry the trace of one exchange; a build with the frame log adds the frame log's own 12.
+    """36 held lines carry the trace of one exchange whose request the co-processor refuses once for a busy channel; a
+    build with the frame log adds the frame log's own 12.
     radio_bridle_trace.cpp checks the number the build gets, exactly, against the C++ constants."""
     from esphome.components.home_io_control import hub_validators as v
 
-    assert v.bridle_held_log_lines(frame_log_enabled=False) == 12
-    assert v.bridle_held_log_lines(frame_log_enabled=True) == 24
+    assert v.bridle_held_log_lines(frame_log_enabled=False) == 36
+    assert v.bridle_held_log_lines(frame_log_enabled=True) == 48
 
 
 @case("hub_validators.final_validate_no_oneway_on_io_2g4")

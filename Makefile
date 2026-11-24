@@ -389,9 +389,13 @@ INCLUDES := -Icomponents/home_io_control \
 # `bootloader:` sub-block is configured, but the 0x81xx primitives and the three-stage
 # orchestration it gates need to be always-on for their host tests to have anything to link.
 # IOHOME_BRIDLE compiles the Bridle radio sources (a firmware configuration with `radio_type: bridle` sets it). The Bridle
-# driver writes its trace through the held log, so IOHOME_HELD_LOG comes with it (log_frame.h).
+# driver writes its trace through the held log, so IOHOME_HELD_LOG comes with it (log_frame.h), and the hold takes
+# HOST_HELD_LOG_LINES, the lines of a bridge build: 36 without the frame log (bridle_held_log_lines() in
+# hub_validators.py; radio_bridle_trace.cpp fails to compile on another number). The frame log stays off, as in an SPI
+# build; the framelog variant (unit-test-framelog) runs the tests that need it.
 # USE_WIFI is what ESPHome defines in a build with the wifi component: the hub reads its Wi-Fi channel behind it
 # (tests/include/esphome/components/wifi/wifi_component.h is the stub).
+HOST_HELD_LOG_LINES ?= 36
 UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_CUSTOM_SERVICES \
 			 -DUSE_API_HOMEASSISTANT_SERVICES \
@@ -399,6 +403,7 @@ UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DIOHOME_LR1121_BOOTLOADER_UPDATE \
 			 -DIOHOME_BRIDLE \
 			 -DIOHOME_HELD_LOG \
+			 -DIOHOME_HELD_LOG_LINES=$(HOST_HELD_LOG_LINES) \
 			 -DUSE_WIFI
 
 # Bridle: the generated headers of one Bridle release are committed (components/home_io_control/radio_bridle_enums.h,
@@ -458,7 +463,8 @@ corpus-gen:
 	@python3 scripts/corpus/build.py
 
 # --- Host unit-test build (incremental; objects mirror source paths) ---
-# HOST_VARIANT selects the object/binary tree; "asan" adds sanitizer flags (see unit-test-asan).
+# HOST_VARIANT selects the object/binary tree; "asan" adds sanitizer flags (see unit-test-asan), "framelog" the frame
+# log (see unit-test-framelog).
 HOST_VARIANT ?= default
 HOST_BUILD_DIR := build/host/$(HOST_VARIANT)
 HOST_OBJ_DIR := $(HOST_BUILD_DIR)/obj
@@ -488,8 +494,15 @@ HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)
 HOST_OBJS := $(patsubst %.cpp,$(HOST_OBJ_DIR)/%.o,$(HOST_SRCS))
 HOST_DEPS := $(HOST_OBJS:.o=.d)
 HOST_TEST_BIN := $(HOST_BUILD_DIR)/test_home_io_control
+# The variant's compile flags, rewritten only when they change. Every object depends on it, so a changed flag (another
+# HOST_HELD_LOG_LINES, say) rebuilds the whole tree instead of linking objects built with different values.
+HOST_FLAGS_STAMP := $(HOST_BUILD_DIR)/cxxflags
 
-$(HOST_OBJ_DIR)/%.o: %.cpp
+$(HOST_FLAGS_STAMP): FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(HOST_CXXFLAGS)' | cmp -s - $@ || echo '$(HOST_CXXFLAGS)' > $@
+
+$(HOST_OBJ_DIR)/%.o: %.cpp $(HOST_FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	g++ $(HOST_CXXFLAGS) -MMD -MP -c $< -o $@
 
@@ -497,6 +510,8 @@ $(HOST_TEST_BIN): $(HOST_OBJS)
 	g++ $(HOST_CXXFLAGS) $^ -lgtest -lgtest_main -pthread -o $@
 
 -include $(HOST_DEPS)
+
+FORCE:
 
 # Builds $(HOST_TEST_BIN) for the current HOST_VARIANT and runs it. Shared by unit-test and
 # unit-test-asan (invoked as a sub-make with HOST_VARIANT/HOST_EXTRA_FLAGS overridden on the
@@ -528,11 +543,12 @@ bridle-trace-check: unit-test tools
 
 # Public entry point: corpus-gen runs first (ordering!), then a parallel sub-make builds/links.
 # Parallelism is scoped to this sub-make (not a global -j) so the docker/esphome targets in
-# this Makefile stay serial. After changing HOST_CXXFLAGS, run `make clean-host` — make does
-# not hash command lines, so flag-only changes don't invalidate existing objects.
+# this Makefile stay serial. A change to HOST_CXXFLAGS rebuilds the variant's objects (HOST_FLAGS_STAMP).
+# The frame-log variant runs with it (unit-test-framelog below).
 unit-test: corpus-gen bridle-gen
 	@echo "Building Google Test unit tests for home_io_control (host-only)..."
 	@$(MAKE) --no-print-directory -j$(shell nproc) host-run
+	@$(MAKE) --no-print-directory -j$(shell nproc) $(FRAME_LOG_VARIANT) host-run
 
 # ASan/UBSan variant: same sources and rules as unit-test, built into a fully separate object
 # tree (build/host/asan/) so the two variants never poison each other. Uninstrumented system
@@ -543,6 +559,18 @@ unit-test-asan: corpus-gen bridle-gen
 	@echo "Building Google Test unit tests for home_io_control (ASan/UBSan)..."
 	@$(MAKE) --no-print-directory -j$(shell nproc) \
 		HOST_VARIANT=asan HOST_EXTRA_FLAGS="$(ASAN_HOST_FLAGS)" host-run
+
+# Frame-log variant: a bridge build with `-DIOHOME_FRAME_LOG`, whose hold also takes the frame log's own lines (48).
+# Built into its own object tree (build/host/framelog/) from the component and the tests that cover what the frame log
+# changes on a bridge: its TX and RX lines and the size of the hold with them. The default variant keeps the frame log
+# off, as an SPI build has it.
+FRAME_LOG_TEST_SRCS := tests/radio/radio_bridle_test.cpp tests/hub/exchange_over_bridle_test.cpp
+FRAME_LOG_VARIANT := HOST_VARIANT=framelog HOST_HELD_LOG_LINES=48 HOST_EXTRA_FLAGS=-DIOHOME_FRAME_LOG \
+		     HOST_SRCS="$(COMPONENT_SRCS) $(STUB_SRCS) $(FRAME_LOG_TEST_SRCS)"
+
+unit-test-framelog: corpus-gen bridle-gen
+	@echo "Building Google Test unit tests for home_io_control (frame log)..."
+	@$(MAKE) --no-print-directory -j$(shell nproc) $(FRAME_LOG_VARIANT) host-run
 
 # CodeQL's build (.github/workflows/codeql.yml): the component's translation units only, compiled in
 # parallel with the unit-test flags and not linked. CodeQL analyses what it sees compiled, so leaving out
@@ -635,6 +663,6 @@ test-unit: unit-test
 		fullstack fullstack-build fullstack-bin fullstack-run bridle-sessions-regen \
 		fuzz-frame fuzz-soft-phy fuzz-bridle-codec fuzz-io2g4-unwrap bridle-check bridle-session-check bridle-trace-check bridle-gen tools \
 		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
-		unit-test unit-test-asan py-test host-run host-component-objs clean-host lint test check \
+		unit-test unit-test-asan unit-test-framelog py-test host-run host-component-objs clean-host lint test check FORCE \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

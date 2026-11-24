@@ -40,7 +40,7 @@ int16_t RadioDriver::measure_channel_level(uint32_t freq_hz) {
     if (!this->cca_retune_logged_) {
       this->cca_retune_logged_ = true;
       ESP_LOGD(TAG, "Clear-channel check retuned to %" PRIu32 " Hz: %" PRIu32 " us including %" PRIu32 " us settle",
-               freq_hz, micros() - start_us, settle_us);
+               this->band().air_hz_of(freq_hz), micros() - start_us, settle_us);
     }
   }
   return this->read_rssi();

@@ -105,7 +105,7 @@ BRIDLE_MIN_RX_BUFFER = 1024
 # Held-log lines a bridge build keeps per exchange (mirrors TRACE_HELD_LINES in radio_bridle_trace.h and
 # FRAME_LOG_OWN_HELD_LINES in log_frame.h; radio_bridle_trace.cpp checks the sum exactly at compile time). The
 # trace's lines come on top of the frame log's own, which only a build with `-DIOHOME_FRAME_LOG` has.
-BRIDLE_TRACE_HELD_LINES = 12
+BRIDLE_TRACE_HELD_LINES = 36
 FRAME_LOG_OWN_HELD_LINES = 12
 FRAME_LOG_BUILD_FLAG = "-DIOHOME_FRAME_LOG"
 

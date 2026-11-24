@@ -20,7 +20,8 @@
 /// Receiving. One private drain (`drain_`) reads the stream chunk by chunk, deframes it and
 /// routes each message: a reply to the command awaiting it, a received frame into a small FIFO,
 /// `frame_start`/`rx_abort` into the reception state, `log` into the log. Every line the driver writes
-/// after its start-up, a trace line included, goes through the frame log's hold (`frame_log_line()`), so nothing
+/// after its start-up, a trace line and the frame log's TX and RX lines (`log_frame()`, as the SPI drivers write
+/// them) included, goes through the frame log's hold (`frame_log_line()`), so nothing
 /// is printed while the hub waits for a reply it provoked (ADR 0111). Every getter
 /// and every wait loop drains first, so the UART's receive buffer never has to hold more than one
 /// `loop()` pass. A drain stops reading once it has spent `DRAIN_BUDGET_US` (checked between chunk

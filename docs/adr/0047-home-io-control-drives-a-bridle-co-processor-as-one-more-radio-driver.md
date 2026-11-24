@@ -91,10 +91,14 @@ Four things about a bridge differ from an SPI radio and decide the shape of the 
   analyses every source that holds bridge code in a build that configures a bridge.
 - **The trace goes through the held log.** With `bridle_trace:` the driver logs every message, and while the hub
   waits for a reply it provoked nothing is printed ([ADR 0111](0111-nothing-is-logged-while-the-hub-waits-for-a-reply-it-provoked.md)):
-  the lines wait in the frame log's hold and follow when the wait ends. One authenticated exchange puts 12 trace lines
-  into the hold, and 12 more of the frame log's own in a build with `IOHOME_FRAME_LOG`, so `to_code()` sets
-  `IOHOME_HELD_LOG_LINES` to 12 or 24 as a build flag, and the driver's source checks the number at compile time,
-  exactly.
+  the lines wait in the frame log's hold and follow when the wait ends. The hold takes one authenticated exchange
+  whose request the co-processor refuses once for a busy channel: 36 lines (10 for each of two channel checks: the
+  retune and four readings, each with its reply; 4 for the refusal: the `tx`, its `error`, the co-processor's `log`
+  event and the warning that prints it; 8 for the exchange; 4 spare), and 12 more of the frame log's own in a build
+  with `IOHOME_FRAME_LOG`. `to_code()` sets `IOHOME_HELD_LOG_LINES` to 36 or 48 as a build flag, and the driver's
+  source checks the number at compile time, exactly. At 320 bytes a held line, that is 11,520 or 15,360 bytes of RAM
+  in every bridge build; an SPI build with the frame log keeps 12 lines. A second busy channel can need more lines than
+  the hold has, and a hold that overflows prints how many lines it lost.
 - **Unawaited commands.** Every Bridle command gets one reply. `RadioBridle` keeps a small table of
   commands nobody waits for (`rx_on`, `rx_scan`, `idle`), matches each `ack` or `error` against its head,
   resyncs the link on a lost or overtaking reply, and does not retry a refused `rx_scan` or `rx_on` for a
@@ -121,6 +125,10 @@ Four things about a bridge differ from an SPI radio and decide the shape of the 
   driver. The hub's composition adds one branch to the radio choice and skips the SPI registration when there
   is no SPI bus.
 - A 2.4 GHz frame's log line shows its air frequency, as every radio's does ([ADR 0132](0132-a-radio-describes-its-band-and-the-hubs-rules-read-it.md)).
+  `RadioBridle` writes the frame log's TX and RX lines through `log_frame()`, the call the SPI drivers make, so
+  `-DIOHOME_FRAME_LOG` shows a bridge's frames like any radio's and the frame-log tips of the docs apply unchanged. A
+  TX line follows the co-processor's `tx_done` (a `tx` it refuses for a busy channel logs none), an RX line follows
+  each frame delivered to the hub (a frame with a bad CRC logs none), and both go through the held log.
 - The reset pulse of a resync is a 20 ms block in the loop, the only one; a supervised link costs
   no other `loop()` pass more than a few milliseconds.
 - Recordings made from the driver's own tests pin its command sequence and prove nothing about a

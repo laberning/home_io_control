@@ -572,8 +572,69 @@ TEST(ExchangeOverBridle, TheTracePrintsNothingBetweenAChallengeAndItsAnswerAndAl
   EXPECT_GE(trace_lines_in(log), 8u) << "the request's, the challenge's, the answer's and the final reply's messages";
   EXPECT_LE(trace_lines_in(log), TRACE_HELD_LINES);
   EXPECT_FALSE(std::any_of(log.lines().begin(), log.lines().end(), [](const auto &line) {
-    return line.text.find("not held") != std::string::npos || line.text.find("dropped") != std::string::npos;
-  })) << "the hold took every line";
+    return line.text.find("hold buffer full") != std::string::npos;
+  })) << "the hold took every line, the request's channel check included";
+#ifdef IOHOME_FRAME_LOG
+  // The frame log's TX and RX lines of the request, the challenge, the answer and the final reply share the hold.
+  EXPECT_EQ(
+      std::count_if(log.lines().begin(), log.lines().end(), [](const auto &line) { return line.tag == "io_frame"; }),
+      4);
+#endif
+}
+
+// The hold is sized for an authenticated exchange whose request the co-processor refuses once for a busy channel
+// (ADR 0047): the first channel check, the refused `tx` with its `error`, the co-processor's `log` event with the
+// warning that prints it, a second channel check on another channel and the exchange. All of it is held and follows
+// at the end, without the overflow note.
+TEST(ExchangeOverBridle, AnExchangeWhoseRequestTheCoprocessorRefusesOnceKeepsEveryHeldLine) {
+  TracedEngineRig rig;
+  ASSERT_TRUE(rig.radio.init());
+  // Between exchanges the hub scans the band, last tuned to another channel than the request's, so the request's
+  // channel check starts with a retune. The scan's `ack` is drained here, as the hub's loop does.
+  rig.radio.change_frequency(FREQ_CH1);
+  ASSERT_TRUE(rig.radio.run_idle_scan());
+  RadioRxPacket idle{};
+  EXPECT_FALSE(rig.radio.check_for_packet(idle));
+  test::LogCapture log(/*with_text=*/true);
+
+  // The hub's own readings find the channel clear; the co-processor's reading with the `tx` finds it busy. The
+  // readings after that (the second channel check) find a quiet channel.
+  rig.cp.set_channel_rssi_dbm(-100);
+  for (uint8_t reading = 1; reading < CHANNEL_CHECK_READINGS; reading++)
+    rig.cp.queue_channel_level_dbm(-100);
+  rig.cp.queue_channel_level_dbm(-60);
+  // The `log` event a co-processor writes with its refusal; where it falls in the hold does not change the count.
+  rig.cp.inject_log(LogLevel::WARN, "tx refused: channel busy");
+  size_t transmissions = 0;
+  rig.cp.set_tx_observer([&](const std::vector<uint8_t> &, uint64_t, uint64_t end_us) {
+    const IoFrame frame = transmissions++ == 0 ? exchange_test::build_challenge(test::DST_ID, test::OWN_ID, CHALLENGE)
+                                               : exchange_test::build_status_response(test::DST_ID, test::OWN_ID);
+    // A co-processor reports each frame's start before the frame, on the channel the request went out on.
+    const uint64_t delay_us = end_us + Bridge2g4::REPLY_DELAY_US - FakeCoprocessor::now_us();
+    rig.cp.inject_frame_start(rig.cp.freq_hz(), FrameStage::SYNC, delay_us);
+    rig.cp.inject_rx(rig.cp.freq_hz(), Bridge2g4::reply_payload(frame_bytes(frame)), CrcState::OK, delay_us);
+  });
+
+  IoFrame response{};
+  ASSERT_EQ(rig.engine.send_and_receive(execute_request(false), response, FREQ_CH2),
+            ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+
+  EXPECT_EQ(rig.cp.errors_sent(ErrorCode::CHANNEL_BUSY), 1u) << "the co-processor refused the first `tx`";
+  EXPECT_EQ(transmissions, 2u) << "the request on a second channel and the answer";
+  const size_t coproc_lines = static_cast<size_t>(std::count_if(
+      log.lines().begin(), log.lines().end(), [](const auto &line) { return line.text.rfind("[coproc] ", 0) == 0; }));
+  EXPECT_EQ(coproc_lines, 1u) << "the warning that prints the co-processor's `log` event";
+  EXPECT_EQ(trace_lines_in(log) + coproc_lines,
+            (2 * TRACE_CHANNEL_CHECK_LINES) + TRACE_REFUSAL_LINES + TRACE_EXCHANGE_LINES)
+      << "two channel checks, the refusal and the exchange";
+  EXPECT_FALSE(std::any_of(log.lines().begin(), log.lines().end(), [](const auto &line) {
+    return line.text.find("hold buffer full") != std::string::npos;
+  })) << "the hold took every line of the refused try and of the exchange";
+#ifdef IOHOME_FRAME_LOG
+  EXPECT_EQ(
+      std::count_if(log.lines().begin(), log.lines().end(), [](const auto &line) { return line.tag == "io_frame"; }), 4)
+      << "a refused `tx` logs no frame line";
+#endif
 }
 
 // === Trace files ===
