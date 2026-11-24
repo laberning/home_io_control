@@ -40,11 +40,12 @@ static constexpr char TRACE_MARKER[] = "[bridle]";
 static constexpr size_t TRACE_PART_BYTES = 128;
 /// A buffer size that holds any trace line: marker, direction, clock, `k/n`, 256 hex digits.
 static constexpr size_t TRACE_LINE_MAX = 320;
-/// Trace lines the hold buffer must keep, on top of the lines of the frame log itself, for one authenticated
-/// exchange: its messages are the request's `tx` and `tx_done`, the challenge's `frame_start` and `rx`, the
-/// answer's `tx` and `tx_done` and the final reply's `frame_start` and `rx` (eight lines), and four more
-/// cover an `rx_on` with its `ack` and a stray event. A build with the Bridle driver sets `IOHOME_HELD_LOG_LINES` to at
-/// least the frame log's own 12 lines plus these.
+/// Trace lines one authenticated exchange puts into the hold buffer: its messages are the request's `tx` and
+/// `tx_done`, the challenge's `frame_start` and `rx`, the answer's `tx` and `tx_done` and the final reply's
+/// `frame_start` and `rx` (eight lines), and four more cover an `rx_on` with its `ack` and a stray event. The buffer
+/// is shared with the frame log (log_frame.h), so a build with the frame log has these lines on top of its own
+/// FRAME_LOG_OWN_HELD_LINES; the build sets `IOHOME_HELD_LOG_LINES` to exactly that sum (`bridle_held_log_lines()` in
+/// hub_validators.py), and radio_bridle_trace.cpp checks it.
 static constexpr size_t TRACE_HELD_LINES = 12;
 
 /// Which way a message travelled.

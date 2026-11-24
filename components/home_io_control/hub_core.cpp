@@ -19,6 +19,11 @@
 #include "radio_sx1276.h"
 #include "radio_sx1262.h"
 #include "radio_lr1121.h"
+#ifdef IOHOME_BRIDLE
+#include "radio_bridle.h"
+#include "radio_io2g4_phy.h"
+#include "radio_io868_gfsk_phy.h"
+#endif
 #include "tuning_config.h"
 #include "tuning_registry.h"
 
@@ -67,9 +72,9 @@ static const char *const TAG = detail::TAG;
 /// This is the main setup entry point called by ESPHome during startup.
 /// The sequence:
 ///   1. Parse node_id and system_key from hex strings (fails early if malformed).
-///   2. Initialize the SPI bus via spi_setup().
+///   2. Initialize the SPI bus via spi_setup() when there is one (a bridge has none).
 ///   3. Construct the driver named by the required `radio_type` YAML field
-///      ("sx1276", "sx1262", or "lr1121").
+///      ("sx1276", "sx1262", "lr1121" or, in a build configured for it, "bridle").
 ///   4. Allocate the appropriate RadioDriver (SX1276 needs DIO0; SX1262/LR1121 need BUSY+DIO1,
 ///      DIO1 carrying the LR1121's DIO9 IRQ line).
 ///   5. Call radio_->init() which performs chip reset, calibration, and register configuration.
@@ -108,7 +113,10 @@ void IOHomeControlComponent::setup() {
       callback(report);
   });
 
-  this->spi_setup();
+  // A UART-attached radio (bridle) has no spi: bus, so there is no SPI parent to register with;
+  // SPIClient::spi_setup() would dereference it.
+  if (this->parent_ != nullptr)
+    this->spi_setup();
 
   const char *chip_name_for_log = nullptr;
   this->radio_ = this->select_and_construct_radio_(&chip_name_for_log);
@@ -175,9 +183,9 @@ void IOHomeControlComponent::start_initialized_radio_(const char *chip_name) {
 }
 
 // See the declaration in hub_core.h for the full contract. `radio_type_` is one of "lr1121",
-// "sx1262", or "sx1276" — the YAML schema requires the field and validates it against exactly
-// those three values, so the fallthrough below is unreachable in a config-driven build and
-// exists only to fail loudly rather than guess if this method is ever called some other way.
+// "sx1262", "sx1276" or (in a build configured for it) "bridle" — the YAML schema requires the field and
+// validates it against exactly those values, so the fallthrough below is unreachable in a config-driven
+// build and exists only to fail loudly rather than guess if this method is ever called some other way.
 RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **chip_name_out) {
   if (this->radio_type_ == "lr1121") {
     *chip_name_out = "LR1121";
@@ -218,6 +226,27 @@ RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **ch
       ESP_LOGE(detail::TAG, "Failed to allocate SX1276 radio driver");
     return radio;
   }
+
+#ifdef IOHOME_BRIDLE
+  if (this->radio_type_ == "bridle") {
+    *chip_name_out = "Bridle";
+    if (!this->uart_stream_.has_uart()) {
+      ESP_LOGE(detail::TAG, "radio_type: bridle requires uart_id (the UART the co-processor is wired to)");
+      return nullptr;
+    }
+    // The one place that names a band's profile: everything above RadioDriver reads the band the driver describes.
+    const bridle::BridlePhy &phy = this->bridle_band_ == "io_868"
+                                       ? static_cast<const bridle::BridlePhy &>(bridle::io868_gfsk_phy())
+                                       : static_cast<const bridle::BridlePhy &>(bridle::io2g4_phy());
+    auto *radio = new (std::nothrow) RadioBridle(&this->uart_stream_, phy, this->rst_pin_, this->bridle_tx_power_dbm_);
+    if (radio == nullptr) {
+      ESP_LOGE(detail::TAG, "Failed to allocate Bridle radio driver");
+      return nullptr;
+    }
+    radio->set_trace(this->bridle_trace_);
+    return radio;
+  }
+#endif
 
   *chip_name_out = "unknown";
   ESP_LOGE(detail::TAG, "Unrecognized radio_type '%s'", this->radio_type_.c_str());
@@ -728,11 +757,32 @@ void IOHomeControlComponent::queue_due_periodic_polls_() {
   }
 }
 
+#ifdef IOHOME_BRIDLE
+void IOHomeControlComponent::dump_bridle_config_() {
+  ESP_LOGCONFIG(detail::TAG, "  Co-processor link: UART%s, band %s, trace %s",
+                this->uart_stream_.has_uart() ? "" : " (missing)", this->bridle_band_.c_str(),
+                this->bridle_trace_ ? "on" : "off");
+  if (this->bridle_tx_power_dbm_.has_value()) {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: %d dBm requested", *this->bridle_tx_power_dbm_);
+  } else {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: the radio's maximum");
+  }
+}
+#endif
+
 void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "IO-Homecontrol:");
   ESP_LOGCONFIG(detail::TAG, "  Node ID: %s", this->node_id_str_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.c_str());
+#ifdef IOHOME_BRIDLE
+  if (this->radio_type_ == "bridle") {
+    this->dump_bridle_config_();
+  } else {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+  }
+#else
   ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+#endif
   // Printed for every board, from the dump rather than from setup(): the durations decide whether a
   // directed start frame is heard at all, and a reporter's pasted log is usually captured after
   // boot, where setup()'s output is already gone. Each is also shown in programmed bytes on this

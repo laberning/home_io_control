@@ -475,8 +475,14 @@ TEST(RadioBridleHeldTrace, OneAuthenticatedExchangeWritesEightTraceLinesAndTheHo
   frame_log_release();
 
   EXPECT_EQ(trace_lines_of(log).size(), 8u);
-  EXPECT_GE(FRAME_LOG_HELD_LINES, TRACE_HELD_LINES) << "the held buffer takes the trace, 8 lines and 4 spare";
-  EXPECT_LE(8u + 4u, TRACE_HELD_LINES);
+  // The hold buffer holds the trace's 12 lines per exchange (8 and 4 spare), and the frame log's own 12 in a build with
+  // the frame log: exactly, as radio_bridle_trace.cpp asserts at compile time.
+  EXPECT_EQ(8u + 4u, TRACE_HELD_LINES);
+#ifdef IOHOME_FRAME_LOG
+  EXPECT_EQ(FRAME_LOG_HELD_LINES, 24u);
+#else
+  EXPECT_EQ(FRAME_LOG_HELD_LINES, 12u);
+#endif
 }
 
 TEST(RadioBridle, AWarningTheReceivePathWritesIsHeldToo) {

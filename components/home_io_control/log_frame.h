@@ -99,8 +99,9 @@ enum class FrameLogLevel : uint8_t { WARN, INFO, DEBUG };
 /// most four, on a failed decode), the 0x3D's TX and re-arm lines and the final reply's reception lines (at most
 /// four), with a margin for a probe line. A driver that writes a line per message of its own protocol (a trace) can
 /// need more within one try and raises it.
+inline constexpr size_t FRAME_LOG_OWN_HELD_LINES = 12;  ///< The lines the frame log's own output of one exchange needs.
 #ifndef IOHOME_HELD_LOG_LINES
-#define IOHOME_HELD_LOG_LINES 12
+#define IOHOME_HELD_LOG_LINES FRAME_LOG_OWN_HELD_LINES
 #endif
 inline constexpr size_t FRAME_LOG_HELD_LINES = IOHOME_HELD_LOG_LINES;
 static_assert(FRAME_LOG_HELD_LINES >= 1 && FRAME_LOG_HELD_LINES <= UINT8_MAX, "the held-line counters are one byte");

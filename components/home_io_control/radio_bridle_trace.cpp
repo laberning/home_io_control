@@ -21,9 +21,17 @@ namespace esphome::home_io_control::bridle {
 
 // A held line keeps HELD_LOG_LINE_SIZE - 1 characters; a longer trace line would be cut.
 static_assert(TRACE_LINE_MAX <= HELD_LOG_LINE_SIZE, "a trace line must fit a held log line");
-// The hold buffer must at least take the trace of one exchange; a build with the frame log adds its own lines
-// to this (see TRACE_HELD_LINES).
-static_assert(FRAME_LOG_HELD_LINES >= TRACE_HELD_LINES, "IOHOME_HELD_LOG_LINES is too small for the Bridle trace");
+// The hold buffer takes the trace of one exchange and, in a build with the frame log, the frame log's own lines
+// (see TRACE_HELD_LINES). The count is exact: a smaller one loses lines of a recording, a larger one is memory
+// (320 bytes a line) that no exchange fills.
+#ifdef IOHOME_FRAME_LOG
+static constexpr size_t EXPECTED_HELD_LINES = TRACE_HELD_LINES + FRAME_LOG_OWN_HELD_LINES;
+#else
+static constexpr size_t EXPECTED_HELD_LINES = TRACE_HELD_LINES;
+#endif
+static_assert(FRAME_LOG_HELD_LINES == EXPECTED_HELD_LINES,
+              "IOHOME_HELD_LOG_LINES of a Bridle build must be the trace's 12 lines, plus the frame log's 12 when the "
+              "build has IOHOME_FRAME_LOG (bridle_held_log_lines() in hub_validators.py sets it)");
 
 static const char *const TAG = "home_io_control.bridle";
 

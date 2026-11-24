@@ -161,6 +161,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::tuning_;
   using IOHomeControlComponent::convert_legacy_preamble_bytes_;
   using IOHomeControlComponent::start_initialized_radio_;
+  using IOHomeControlComponent::select_and_construct_radio_;
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::exchange_engine_;
