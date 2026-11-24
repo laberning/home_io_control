@@ -115,7 +115,7 @@ TEST(RadioIo868GfskPhy, ItsConstantsMatchTheSoftPhysProbeLengthAndLineRate) {
 
 namespace {
 
-/// The SX1262 behind a Kite, with `change` applied.
+/// The SX1262 behind a bridge, with `change` applied.
 template<class F> RadioDescriptor gfsk_radio_with(F change) {
   RadioDescriptor d = FakeCoprocessor::reference_gfsk_radio(0);
   change(d);

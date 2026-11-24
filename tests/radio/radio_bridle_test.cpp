@@ -1073,7 +1073,7 @@ TEST(RadioBridleScenario, ACcaBusyThenClearSequenceGivesBusyThenSent) {
 
 namespace {
 
-/// A co-processor with one `gfsk_raw` radio, as the SX1262 behind a Kite.
+/// A co-processor with one `gfsk_raw` radio, as the SX1262 behind a bridge.
 FakeCoprocessor::Config gfsk_only() {
   FakeCoprocessor::Config c;
   c.radios = {FakeCoprocessor::reference_gfsk_radio(0)};

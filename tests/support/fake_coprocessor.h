@@ -66,7 +66,7 @@ class FakeCoprocessor {
   /// The reference 802.15.4 radio: nRF52840, the capabilities of the reference co-processor (`strobe`,
   /// `scheduled_tx`, `rx_scan`, `cca`), TX power -40…+8 dBm, 125-byte payloads.
   [[nodiscard]] static RadioDescriptor reference_802154_radio(uint8_t index = 0);
-  /// The SX1262 behind a Kite: `gfsk_raw` in 863-870 MHz, TX power -9…+22 dBm, 147-byte payloads,
+  /// The SX1262 behind a bridge: `gfsk_raw` in 863-870 MHz, TX power -9…+22 dBm, 147-byte payloads,
   /// preambles up to 8191 bytes, capabilities `rx_scan` and `cca`; no strobe, no scheduled transmission.
   [[nodiscard]] static RadioDescriptor reference_gfsk_radio(uint8_t index = 0);
   /// Both radios of a dual-band board: 802.15.4 as radio 0, `gfsk_raw` as radio 1 (spec vector `ready_dual_band`).

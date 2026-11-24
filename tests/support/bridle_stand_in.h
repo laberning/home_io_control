@@ -52,7 +52,7 @@ struct Bridge2g4 {
 struct Bridge868 {
   using Phy = esphome::home_io_control::bridle::Io868GfskPhy;
   static const Phy &phy() { return esphome::home_io_control::bridle::io868_gfsk_phy(); }
-  /// The co-processor: one `gfsk_raw` radio, as the SX1262 behind a Kite.
+  /// The co-processor: one `gfsk_raw` radio, as the SX1262 behind a bridge.
   static FakeCoprocessor::Config config() {
     FakeCoprocessor::Config c;
     c.radios = {FakeCoprocessor::reference_gfsk_radio(0)};
