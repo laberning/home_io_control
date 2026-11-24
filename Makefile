@@ -159,6 +159,8 @@ clang-tidy:
 	@scripts/run-clang-tidy.sh
 	@echo "Running clang-tidy on a frame-log build..."
 	@CLANG_TIDY_ONLY_FILES_WITH='IOHOME_FRAME_LOG|IOHOME_HELD_LOG' scripts/run-clang-tidy.sh $(CLANG_TIDY_FRAME_LOG_CONFIG)
+	@echo "Running clang-tidy on the Bridle sources..."
+	@CLANG_TIDY_ONLY_FILES_WITH=IOHOME_BRIDLE scripts/run-clang-tidy.sh config/tests/test-esp32-bridle-868.yaml
 
 # Cross-language check: tuning parameter names must match between tuning.py and the C++ registry
 tuning-sync:
@@ -269,7 +271,8 @@ clean-test-cache:
 # config/tests/test-*.yaml must be in exactly one group — firmware-test-groups-check fails
 # otherwise, so a new config can never silently drop out of CI.
 FIRMWARE_TEST_GROUP_1 := test-esp32-arduino.yaml test-esp32-esp-idf-tuning.yaml test-esp32-lr1121.yaml
-FIRMWARE_TEST_GROUP_2 := test-esp32-esp-idf.yaml test-esp32-sx1262-fem-xy16p35.yaml test-esp32-sx1262-fem.yaml
+FIRMWARE_TEST_GROUP_2 := test-esp32-bridle.yaml test-esp32-bridle-868.yaml test-esp32-esp-idf.yaml \
+                         test-esp32-sx1262-fem-xy16p35.yaml test-esp32-sx1262-fem.yaml
 FIRMWARE_TEST_EXCLUDED := test-esp32-lr1121-fwupdate.yaml
 
 # Configs compiled by firmware-test; override to compile a subset, e.g.
@@ -354,7 +357,7 @@ INCLUDES := -Icomponents/home_io_control \
 # IOHOME_LR1121_BOOTLOADER_UPDATE is the same story one level down: normally only set when a
 # `bootloader:` sub-block is configured, but the 0x81xx primitives and the three-stage
 # orchestration it gates need to be always-on for their host tests to have anything to link.
-# IOHOME_BRIDLE compiles the Bridle radio sources (no firmware configuration sets it yet). The Bridle
+# IOHOME_BRIDLE compiles the Bridle radio sources (a firmware configuration with `radio_type: bridle` sets it). The Bridle
 # driver writes its trace through the held log, so IOHOME_HELD_LOG comes with it (log_frame.h).
 # USE_WIFI is what ESPHome defines in a build with the wifi component: the hub reads its Wi-Fi channel behind it
 # (tests/include/esphome/components/wifi/wifi_component.h is the stub).
