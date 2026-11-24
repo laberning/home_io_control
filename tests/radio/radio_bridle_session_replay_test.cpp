@@ -1,12 +1,12 @@
 /// @file radio_bridle_session_replay_test.cpp
-/// @brief Recorded Bridle sessions replayed through the driver that recorded them.
+/// @brief Recorded Bridle sessions replayed through the driver alone.
 ///
 /// A fixture (tests/corpus/sessions/) is a conversation between the hub's driver and a co-processor. Here the
 /// co-processor is the recording: FakeCoprocessor plays every recorded message at the gap it had after the command
 /// it followed, and compares each command the driver sends with the recorded one (type and body, not `seq` or CRC).
 /// A replay therefore fails when the driver's command sequence changes, and passes exactly when it is the recorded
-/// one. The fixtures here are the ones the driver's own tests record; the driver alone replays them, the 868 MHz
-/// one over the `Io868GfskPhy`, the other over the 2.4 GHz profile.
+/// one. The link and boot fixtures replay here, the 868 MHz one over the `Io868GfskPhy`, the other over the 2.4 GHz
+/// profile; the exchange fixtures replay through the engine in corpus_bridle_session_replay_test.cpp.
 /// @ingroup hioc_radio
 
 #include <cstring>
@@ -14,68 +14,13 @@
 
 #include <gtest/gtest.h>
 
-#include "fake_coprocessor.h"
-#include "testable_radio_bridle.h"
+#include "bridle_session_playback.h"
 
 using namespace esphome::home_io_control;
 using namespace esphome::home_io_control::bridle;
-using esphome::test_clock::ManualClock;
-
-namespace {
-
-const Session &session_named(const std::string &name) {
-  for (size_t i = 0; i < SESSION_COUNT; i++) {
-    if (name == SESSIONS[i].name)
-      return SESSIONS[i];
-  }
-  ADD_FAILURE() << "no session fixture named " << name << "; record it from the test that writes its trace";
-  static const Session none{};
-  return none;
-}
-
-/// Whether the host's version rule (spec §10.2) refuses the co-processor of a recording: its first `ready` names a
-/// protocol this build does not accept. Such a recording is migrated (`bridle-session migrate`); until then its
-/// replay is skipped by name, never dropped.
-bool refused_by_version_rule(const Session &session) {
-  for (size_t i = 0; i < session.message_count; i++) {
-    const SessionMessage &m = session.messages[i];
-    Message decoded;
-    if (!m.from_host && decode_message(m.bytes, m.len, decoded) == DecodeStatus::OK) {
-      if (const auto *ready = std::get_if<Ready>(&decoded.body))
-        return !version_accepted(PROTO_MAJOR, PROTO_MINOR, ready->proto_major, ready->proto_minor);
-    }
-  }
-  return false;
-}
-
-#define SKIP_IF_REFUSED(session) \
-  if (refused_by_version_rule(session)) \
-  GTEST_SKIP() << "recording refused by the version rule, not replayed: " << (session).name
-
-/// The driver over a recording. No reset hook: the recording holds the boot `ready`.
-struct PlaybackRig {
-  ManualClock clock;
-  FakeByteStream stream;
-  FakeCoprocessor cp;
-  FakeResetLine reset;
-  TestableRadioBridle radio;
-
-  explicit PlaybackRig(const Session &session, const BridlePhy &phy = io2g4_phy(),
-                       std::optional<int8_t> tx_power_dbm = std::nullopt)
-      : cp(stream), radio(&stream, phy, &reset, tx_power_dbm) {
-    cp.play_session(session);
-  }
-
-  /// The failures of the replay, one per line, for a test to print.
-  [[nodiscard]] std::string errors() const {
-    std::string text;
-    for (const std::string &e : cp.playback_errors())
-      text += e + "\n";
-    return text;
-  }
-};
-
-}  // namespace
+using bridle_playback::PlaybackRig;
+using bridle_playback::refused_by_version_rule;
+using bridle_playback::session_named;
 
 TEST(BridleLinkSessionReplay, TheDriverReconfiguresAfterTheRecordedReboot) {
   const Session &session = session_named("bridle_link_unsolicited_ready");
@@ -141,14 +86,4 @@ TEST(BridleSessionReplay, ARecordingOfAnotherProtocolVersionIsRefused) {
   const Session old{"old", "", "", "", "", &message, 1};
   EXPECT_TRUE(refused_by_version_rule(old));
   EXPECT_FALSE(refused_by_version_rule(SESSIONS[0]));
-}
-
-TEST(BridleSessionReplay, EveryFixtureHereIsReplayedAndKeepsTheOriginItWasRecordedWith) {
-  const char *replayed[] = {"bridle_868_boot_configure_dual_band", "bridle_link_unsolicited_ready"};
-  ASSERT_EQ(SESSION_COUNT, sizeof(replayed) / sizeof(replayed[0])) << "a new fixture needs a replay in this file";
-  for (size_t i = 0; i < SESSION_COUNT; i++) {
-    EXPECT_STREQ(SESSIONS[i].name, replayed[i]);
-    EXPECT_STREQ(SESSIONS[i].origin, "synthetic-bootstrap") << SESSIONS[i].name;
-    EXPECT_STRNE(SESSIONS[i].description, "");
-  }
 }

@@ -118,6 +118,9 @@ corpus-validate:
 #   fuzz-frame     frame parser + its pure decoders (proto_frame/codecs/device_model/device_readings/dhw/device_types/heating_profiles/
 #                  heating/private_registers/value_codecs/crypto, all ESPHome-free; tests/include only
 #                  supplies esp_random.h for proto_crypto.cpp).
+#   fuzz-bridle-codec  Bridle framing, message decode, TLV and `ready` parsing (radio_bridle_codec.cpp);
+#                  seeded from the Bridle release's vectors and the recorded sessions.
+#   fuzz-io2g4-unwrap  2.4 GHz PSDU unwrap (radio_io2g4_phy.cpp), seeded from the io_2g4 captures.
 #   fuzz-soft-phy  software-PHY RX decoder (radio_soft_phy.cpp): raw chip buffers through the
 #                  length peek, UART probe and CRC recovery. radio_soft_phy.h reaches
 #                  esphome/core/hal.h through radio_interface.h, which tests/include stubs.
@@ -125,17 +128,17 @@ corpus-validate:
 FUZZ_TIME ?= 60
 FUZZ_CXX ?= clang++
 FUZZ_CXXFLAGS := -std=c++20 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
-	-Icomponents/home_io_control -Itests/include
+	-Icomponents/home_io_control -Itests/include -Itests/bridle -DIOHOME_BRIDLE -DIOHOME_HELD_LOG
 
 # $(1) = binary/target name, $(2) = extract_fuzz_seeds.py flags, $(3) = seed dir name, $(4) = sources
 define FUZZ_RUN
 	@mkdir -p build/fuzz/$(3) build/fuzz/corpus_$(1)
-	@python3 scripts/corpus/extract_fuzz_seeds.py $(2)
+	@$(PY) scripts/corpus/extract_fuzz_seeds.py $(2)
 	$(FUZZ_CXX) $(FUZZ_CXXFLAGS) $(4) -o build/fuzz/$(1)
 	./build/fuzz/$(1) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 build/fuzz/corpus_$(1) build/fuzz/$(3)
 endef
 
-fuzz-frame:
+fuzz-frame: tools
 	$(call FUZZ_RUN,fuzz_frame_parse,,seeds,\
 		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
 		components/home_io_control/proto_device_model.cpp components/home_io_control/proto_device_readings.cpp components/home_io_control/proto_dhw.cpp \
@@ -144,7 +147,17 @@ fuzz-frame:
 		components/home_io_control/proto_private_registers.cpp components/home_io_control/proto_value_codecs.cpp \
 		components/home_io_control/proto_crypto.cpp tests/fuzz/fuzz_frame_parse.cpp)
 
-fuzz-soft-phy:
+fuzz-bridle-codec: tools
+	$(call FUZZ_RUN,fuzz_bridle_codec,--bridle,seeds_bridle,\
+		components/home_io_control/radio_bridle_codec.cpp components/home_io_control/proto_frame.cpp \
+		tests/fuzz/fuzz_bridle_codec.cpp)
+
+fuzz-io2g4-unwrap: tools
+	$(call FUZZ_RUN,fuzz_io2g4_unwrap,--io2g4,seeds_io2g4,\
+		components/home_io_control/radio_io2g4_phy.cpp components/home_io_control/radio_bridle_codec.cpp \
+		components/home_io_control/proto_frame.cpp tests/fuzz/fuzz_io2g4_unwrap.cpp)
+
+fuzz-soft-phy: tools
 	$(call FUZZ_RUN,fuzz_soft_phy_rx,--soft-phy,seeds_soft_phy,\
 		components/home_io_control/radio_soft_phy.cpp components/home_io_control/proto_frame.cpp \
 		tests/fuzz/fuzz_soft_phy_rx.cpp)
@@ -337,7 +350,11 @@ STUB_SRCS := tests/stubs/stubs.cpp tests/support/test_isolation.cpp tests/suppor
 
 # All test files (*_test.cpp), one directory per layer under tests/ (proto/, radio/, hub/, platform/,
 # oneway/, tuning/, corpus/, sync/, harness/). tests/fuzz/ holds libFuzzer targets, built separately.
-TEST_SRCS := $(sort $(shell find tests -name '*_test.cpp' -not -path 'tests/fuzz/*'))
+TEST_SRCS := $(sort $(shell find tests -name '*_test.cpp' -not -path 'tests/fuzz/*' -not -path 'tests/fullstack/*'))
+
+# The full-stack suite (tests/fullstack/) needs a simulator and is built and run by `make fullstack` on its own,
+# never into the unit-test binary.
+FULLSTACK_SRCS := $(sort $(wildcard tests/fullstack/*.cpp)) tests/support/io_blind_emulator.cpp tests/support/sim_bridge.cpp
 
 # Include paths (build/corpus holds the generated golden-frame corpus header — see corpus-gen below).
 # -Itests comes last: test files name shared harness headers relative to tests/ ("stubs/…",
@@ -381,6 +398,7 @@ UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 # equal BRIDLE_VERSION's); without it, the sibling checkout's ../bridle/dist/ is used when its wheel is that file.
 TOOLS_VENV := build/tools/venv
 BRIDLE_TOOLS_BIN := $(TOOLS_VENV)/bin
+PY := $(BRIDLE_TOOLS_BIN)/python
 BRIDLE_WHEEL ?=
 
 $(TOOLS_VENV)/.stamp: scripts/requirements-dev.txt BRIDLE_VERSION
@@ -483,6 +501,11 @@ host-run: $(HOST_TEST_BIN)
 		LSAN_OPTIONS=suppressions=$(CURDIR)/tests/asan/lsan.supp \
 		./$(HOST_TEST_BIN)
 
+# Regenerates the session fixtures from the host tests that record them; see the script's docstring
+# for when to, and review the diff before committing.
+bridle-sessions-regen: unit-test tools
+	@$(PY) scripts/regen-bridle-sessions.py
+
 # The session linter (Bridle specification section 12.1) over every trace the default unit-test run wrote:
 # a driver that breaks a rule of the spec fails here even when its C++ test passed.
 bridle-trace-check: unit-test tools
@@ -515,6 +538,31 @@ unit-test-asan: corpus-gen bridle-gen
 # the test sources and gtest keeps the scan on the shipped code and its run short.
 host-component-objs:
 	@$(MAKE) --no-print-directory -j$(shell nproc) $(patsubst %.cpp,$(HOST_OBJ_DIR)/%.o,$(COMPONENT_SRCS))
+
+# === Full-stack tests ===========================================================
+# The hub's exchange engine over the real Bridle driver over a simulated co-processor, with an emulated
+# 2.4 GHz blind on the simulated air (tests/fullstack/, tests/support/sim_bridge.h). The simulator is any
+# program that speaks the simulator control channel of the Bridle specification (section 11.1) and has an
+# 802.15.4 radio: BRIDLE_SIM names its binary. The suite has its own object tree (build/host/fullstack/), so
+# the simulator-dependent sources never reach the unit-test binary. fullstack-build only compiles the suite
+# (no simulator needed), which keeps it building in CI.
+BRIDLE_SIM ?=
+FULLSTACK_VARIANT := HOST_VARIANT=fullstack HOST_SRCS="$(COMPONENT_SRCS) $(STUB_SRCS) $(FULLSTACK_SRCS)"
+
+fullstack-build: corpus-gen bridle-gen
+	@echo "Building the full-stack tests..."
+	@$(MAKE) --no-print-directory -j$(shell nproc) $(FULLSTACK_VARIANT) fullstack-bin
+
+# The binary of the sub-make's variant: HOST_TEST_BIN expands there, not in the caller.
+fullstack-bin: $(HOST_TEST_BIN)
+
+fullstack: fullstack-build
+	@test -x "$(BRIDLE_SIM)" || { echo "fullstack: set BRIDLE_SIM= to the binary of a Bridle simulator (Bridle specification section 11.1)"; exit 1; }
+	@echo "Running the full-stack tests..."
+	@$(MAKE) --no-print-directory $(FULLSTACK_VARIANT) fullstack-run
+
+fullstack-run: $(HOST_TEST_BIN)
+	@BRIDLE_SIM=$(abspath $(BRIDLE_SIM)) ./$(HOST_TEST_BIN)
 
 clean-host:
 	rm -rf build/host
@@ -573,7 +621,8 @@ test-unit: unit-test
 		include-graph stub-sync \
 		docs-prose-check \
 		key-material-scan private-path-check \
-		fuzz-frame fuzz-soft-phy bridle-check bridle-session-check bridle-trace-check bridle-gen tools \
+		fullstack fullstack-build fullstack-bin fullstack-run bridle-sessions-regen \
+		fuzz-frame fuzz-soft-phy fuzz-bridle-codec fuzz-io2g4-unwrap bridle-check bridle-session-check bridle-trace-check bridle-gen tools \
 		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
 		unit-test unit-test-asan py-test host-run host-component-objs clean-host lint test check \
 		test-compile test-unit \

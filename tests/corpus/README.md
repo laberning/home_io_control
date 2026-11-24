@@ -14,6 +14,8 @@ tests/corpus/
   captures/
     <phase>/               # one directory per protocol phase: exchange/ pairing/ probe/ oneway/ …
       <id>.yaml            # filename is always the capture id + ".yaml"
+  sessions/
+    bridle_<layer>_<scenario>.yaml  # recorded Bridle sessions, see "Bridle sessions" below
 ```
 
 **One directory per protocol phase, one YAML file per scenario, `filename == id`.** Nothing in
@@ -193,6 +195,33 @@ expect:                              # deliberately sparse — only assert what 
     into device state. Only a status-poll reply is long enough and positioned right to trip the
     `reported_tilt` check, so don't set this expectation on an EXECUTE-ack capture even if its
     bytes happen to satisfy the length/selector test.
+
+### Bridle sessions (`tests/corpus/sessions/`)
+
+A session fixture is one recorded conversation between the hub's driver and a Bridle co-processor
+(the [Bridle protocol](https://github.com/laberning/bridle/blob/bridle-v0.7.0/README.md)), in the recording format of
+that release ([specification §12.1](https://github.com/laberning/bridle/blob/bridle-v0.7.0/README.md#121-traces-and-session-recordings)).
+It is not a golden-frame capture: it holds the link's messages. A host test replays it by playing every recorded
+co-processor message back at its recorded gap after the command it followed and comparing each command the hub sends
+with the recorded one by type and body: the link and boot fixtures through the driver alone
+(`tests/radio/radio_bridle_session_replay_test.cpp`), the exchange fixtures through the exchange engine
+(`corpus_bridle_session_replay_test.cpp`).
+
+- **Naming.** `filename == id`, `bridle_<layer>_<scenario>.yaml`.
+- **Provenance.** Every fixture carries a `source` block with origin `synthetic-bootstrap`: the driver talking to a
+  scripted stand-in, recorded from the host test named in `source.recorded_by`. The fixtures pin the hub's own command
+  sequence, so a changed command shows as a playback difference; they show nothing a real co-processor does.
+- **Regeneration.** `make bridle-sessions-regen` re-records every fixture from the test that writes it
+  (`scripts/regen-bridle-sessions.py` lists them). A regenerated fixture passes its replay by construction, so
+  review the diff of every file it changes before committing it. Regenerate when the hub's commands change on
+  purpose, or when the protocol version moves (a recording carries the version it was made with).
+- **Protocol versions.** The replay skips by name a recording the driver's version rule refuses, and the fixture
+  list check in `corpus_bridle_session_replay_test.cpp` keeps every fixture accounted for.
+- **Checks.** `make bridle-session-check` validates each fixture against the session schema and lints it against the
+  specification's session rules; `make bridle-trace-check` lints the traces the unit tests write while they run
+  (`HIOC_BRIDLE_TRACE_DIR`, set for the default variant only).
+- **Keys.** A fixture carries only keys already public in this repository (the corpus key or the host tests' key);
+  `make key-material-scan` stays green.
 
 ### Raw bytes are immutable
 

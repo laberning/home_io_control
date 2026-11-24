@@ -1,0 +1,288 @@
+protocol: '0.7'
+header:
+  host_version: null
+  firmware_version: fake-0.0
+  board: fake-board
+  chip_id: nrf52840
+  proto: '0.7'
+  reset_cause: pin
+  radios:
+  - radio: 0
+    chip: sx1262
+    profiles:
+      gfsk_raw: true
+    band_min_hz: 863000000
+    band_max_hz: 870000000
+    tx_power_min_dbm: -9
+    tx_power_max_dbm: 22
+    max_payload: 147
+    max_preamble_bytes: 8191
+    strobe_jitter_us: 0
+    caps:
+      rx_scan: true
+      cca: true
+source:
+  origin: synthetic-bootstrap
+  recorded_by: host test ExchangeOverBridle868.ExecuteWithChallengeIsAnsweredAndTheStatusReplyEndsIt
+  description: 'An EXECUTE to an always-alive device over the 868 radio: the challenge, the answer to
+    it and the status reply, the replies reported rx_len bytes behind their sync word.'
+messages:
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 8000000007010000000000010866616b652d302e30020a66616b652d626f61726403180000010200c05570338025db33f71693ff1f00000c000000040110050101e35b
+  msg_type: ready
+  seq: 0
+  fields:
+    cmd_seq: 0
+    proto_major: 0
+    proto_minor: 7
+    chip_id: nrf52840
+    caps: {}
+    info:
+    - id: fw_version
+      value: fake-0.0
+    - id: board
+      value: fake-board
+    - id: radio
+      value:
+        radio: 0
+        chip: sx1262
+        profiles:
+          gfsk_raw: true
+        band_min_hz: 863000000
+        band_max_hz: 870000000
+        tx_power_min_dbm: -9
+        tx_power_max_dbm: 22
+        max_payload: 147
+        max_preamble_bytes: 8191
+        strobe_jitter_us: 0
+        caps:
+          rx_scan: true
+          cca: true
+    - id: rx_queue_depth
+      value: 16
+    - id: reset_cause
+      value: pin
+- dir: host_to_coproc
+  host_ms: 100020
+  hex: 0201ff03010f8bc8
+  msg_type: set_params
+  seq: 1
+  fields:
+    radio: 255
+    params:
+    - id: event_mask
+      value:
+        frame_start: true
+        crc_error_rx: true
+        rx_abort: true
+        log: true
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 810101ff03010f3edd
+  msg_type: params_ack
+  seq: 1
+  fields:
+    cmd_seq: 1
+    radio: 255
+    applied:
+    - id: event_mask
+      value:
+        frame_start: true
+        crc_error_rx: true
+        rx_abort: true
+        log: true
+- dir: host_to_coproc
+  host_ms: 100020
+  hex: 0202000401010704009600000804004b0000090434ca01000a01040b0357fd990c01300d01100e0490d00300020116559d
+  msg_type: set_params
+  seq: 2
+  fields:
+    radio: 0
+    params:
+    - id: phy_profile
+      value: gfsk_raw
+    - id: bitrate_bps
+      value: 38400
+    - id: fdev_hz
+      value: 19200
+    - id: rx_bw_hz
+      value: 117300
+    - id: pulse_shape
+      value: gaussian_bt_1_0
+    - id: sync_word
+      value: 57fd99
+    - id: rx_len
+      value: 48
+    - id: preamble_detect_bits
+      value: 16
+    - id: sync_timeout_us
+      value: 250000
+    - id: tx_power_dbm
+      value: 22
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 810202000401010704009600000804004b0000090434ca01000a01040b0357fd990c01300d01100e0490d003000201167857
+  msg_type: params_ack
+  seq: 2
+  fields:
+    cmd_seq: 2
+    radio: 0
+    applied:
+    - id: phy_profile
+      value: gfsk_raw
+    - id: bitrate_bps
+      value: 38400
+    - id: fdev_hz
+      value: 19200
+    - id: rx_bw_hz
+      value: 117300
+    - id: pulse_shape
+      value: gaussian_bt_1_0
+    - id: sync_word
+      value: 57fd99
+    - id: rx_len
+      value: 48
+    - id: preamble_detect_bits
+      value: 16
+    - id: sync_timeout_us
+      value: 250000
+    - id: tx_power_dbm
+      value: 22
+- dir: host_to_coproc
+  host_ms: 100020
+  hex: 0703006da6
+  msg_type: get_rssi
+  seq: 3
+  fields:
+    radio: 0
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 8803030c000058b9
+  msg_type: error
+  seq: 3
+  fields:
+    cmd_seq: 3
+    detail: 0
+    code: not_receiving
+- dir: host_to_coproc
+  host_ms: 100021
+  hex: 07040065eb
+  msg_type: get_rssi
+  seq: 4
+  fields:
+    radio: 0
+- dir: coproc_to_host
+  host_ms: 100021
+  hex: 8804040c0000a5de
+  msg_type: error
+  seq: 4
+  fields:
+    cmd_seq: 4
+    detail: 0
+    code: not_receiving
+- dir: host_to_coproc
+  host_ms: 100022
+  hex: 070500bdf2
+  msg_type: get_rssi
+  seq: 5
+  fields:
+    radio: 0
+- dir: coproc_to_host
+  host_ms: 100022
+  hex: 8805050c00005ac9
+  msg_type: error
+  seq: 5
+  fields:
+    cmd_seq: 5
+    detail: 0
+    code: not_receiving
+- dir: host_to_coproc
+  host_ms: 100023
+  hex: 070600d5d8
+  msg_type: get_rssi
+  seq: 6
+  fields:
+    radio: 0
+- dir: coproc_to_host
+  host_ms: 100023
+  hex: 8806060c00005bf1
+  msg_type: error
+  seq: 6
+  fields:
+    cmd_seq: 6
+    detail: 0
+    code: not_receiving
+- dir: host_to_coproc
+  host_ms: 100024
+  hex: 060700f01fcb33093000ab18054011155533511225990050163427004030dcc100579607878c
+  msg_type: tx
+  seq: 7
+  fields:
+    radio: 0
+    freq_hz: 868950000
+    then_rx: true
+    preamble_bytes: 48
+    cca_threshold_dbm: -85
+    payload: 054011155533511225990050163427004030dcc100579607
+- dir: coproc_to_host
+  host_ms: 100040
+  hex: 830707001e40f605277df60500000000d817
+  msg_type: tx_done
+  seq: 7
+  fields:
+    cmd_seq: 7
+    radio: 0
+    t_main_start_us: 100024350
+    t_main_end_us: 100039975
+    strobe_sent: 0
+    strobe_late: 0
+- dir: coproc_to_host
+  host_ms: 100052
+  hex: c1080057aef605f01fcb33c4000030384014448966445554cd1e511225991155533429317f88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db0025acfb
+  msg_type: rx
+  seq: 8
+  fields:
+    radio: 0
+    t_us: 100052567
+    freq_hz: 868950000
+    rssi_dbm: -60
+    lqi: 0
+    crc: not_checked
+    payload: 384014448966445554cd1e511225991155533429317f88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db0025
+- dir: host_to_coproc
+  host_ms: 100052
+  hex: 060800f01fcb3301110016384091155533511225995e46304ce75256d31c417fff06d2
+  msg_type: tx
+  seq: 8
+  fields:
+    radio: 0
+    freq_hz: 868950000
+    then_rx: true
+    preamble_bytes: 17
+    payload: 384091155533511225995e46304ce75256d31c417fff
+- dir: coproc_to_host
+  host_ms: 100061
+  hex: 83090800aaaef605d8d0f60500000000cc39
+  msg_type: tx_done
+  seq: 9
+  fields:
+    cmd_seq: 8
+    radio: 0
+    t_main_start_us: 100052650
+    t_main_end_us: 100061400
+    strobe_sent: 0
+    strobe_late: 0
+- dir: coproc_to_host
+  host_ms: 100074
+  hex: c10a000802f705f01fcb33c400003038c014448966445554cd104010040100401004e933ff88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db00255097
+  msg_type: rx
+  seq: 10
+  fields:
+    radio: 0
+    t_us: 100073992
+    freq_hz: 868950000
+    rssi_dbm: -60
+    lqi: 0
+    crc: not_checked
+    payload: 38c014448966445554cd104010040100401004e933ff88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db0025

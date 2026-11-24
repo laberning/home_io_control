@@ -43,3 +43,41 @@ jobs:
             leak-*
             timeout-*
             oom-*
+
+  fuzz-bridle-codec:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: pip install --user pyyaml
+      - run: make fuzz-bridle-codec FUZZ_TIME=300
+      # Replay a finding with: ./build/fuzz/<binary> <downloaded-file>
+      - name: Upload crash/leak/timeout/oom artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-bridle-codec-findings
+          if-no-files-found: warn
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+            oom-*
+
+  fuzz-io2g4-unwrap:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: pip install --user pyyaml
+      - run: make fuzz-io2g4-unwrap FUZZ_TIME=300
+      # Replay a finding with: ./build/fuzz/<binary> <downloaded-file>
+      - name: Upload crash/leak/timeout/oom artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-io2g4-unwrap-findings
+          if-no-files-found: warn
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+            oom-*

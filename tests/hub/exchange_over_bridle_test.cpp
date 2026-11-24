@@ -21,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include "bridle_session_runs.h"
 #include "bridle_stand_in.h"
 #include "exchange_engine.h"
 #include "exchange_fixture.h"
@@ -98,13 +99,8 @@ template<class Kind> struct Rig {
 
 const uint8_t CHALLENGE[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
 
-/// The EXECUTE the exchange tests send: 100 % (closed) to the test device, to a low-power receiver (long wake-up) or an
-/// always-alive one.
-IoFrame execute_request(bool low_power) {
-  IoFrame request{};
-  create_execute_position(request, test::OWN_ID, test::DST_ID, low_power, 100);
-  return request;
-}
+/// The EXECUTE the exchange tests send, the one the session fixtures were recorded with.
+using bridle_runs::execute_request;
 
 IoFrame status_read(bool low_power = false) {
   IoFrame request{};
@@ -257,6 +253,7 @@ struct RecordedTxs {
 
 }  // namespace
 
+// Also the source of the session fixture bridle_exchange_execute_challenge (tests/corpus/sessions/).
 // No channel check precedes a 0x3D: the device listens for the answer on the request's channel for a few tens of
 // ms, and the request that opened the exchange was checked. The co-processor sees no `get_rssi` between the request's
 // `tx` and the answer's, and the answer's `tx` carries no check, while the request's did.
@@ -287,6 +284,7 @@ TEST(ExchangeOverBridle, NoChannelCheckPrecedesTheChallengeAnswerWhileTheRequest
   EXPECT_EQ(rig.engine.counters().lbt_retries, 0u);
 }
 
+// Source of the session fixture bridle_exchange_long_strobe.
 TEST(ExchangeOverBridle, TheStartFrameToALowPowerDeviceGetsTheLongTrainAndItsContinuationsNone) {
   Rig<OverBridle> rig;
   rig.challenge(CHALLENGE);
@@ -303,7 +301,23 @@ TEST(ExchangeOverBridle, TheStartFrameToALowPowerDeviceGetsTheLongTrainAndItsCon
   EXPECT_FALSE(txs.decoded[1].has_strobe) << "the challenge response continues an exchange: no wake-up";
 }
 
-// No strobe on the 868 MHz band: the wake-up is the preamble of the first try.
+// Source of the session fixture bridle_868_exchange_execute_challenge: the exchange to an always-alive device behind
+// the short preamble, the answer to the challenge a second send with no wake-up.
+TEST(ExchangeOverBridle868, ExecuteWithChallengeIsAnsweredAndTheStatusReplyEndsIt) {
+  Rig<OverBridle868> rig;
+  rig.challenge(CHALLENGE);
+  rig.final_reply();
+  IoFrame response{};
+  ASSERT_EQ(rig.engine.send_and_receive(execute_request(false), response, FREQ_CH2),
+            ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  const auto &configs = rig.radio->tx_configs();
+  ASSERT_EQ(configs.size(), 2u) << "the request and the answer to the challenge";
+  for (const RadioTxConfig &config : configs)
+    EXPECT_NE(config.wake, TxWake::LONG);
+}
+
+// Source of the session fixture bridle_868_exchange_long_preamble. No strobe on the 868 MHz band: the wake-up is the
+// preamble of the first try.
 TEST(ExchangeOverBridle868, TheStartFrameToALowPowerDeviceGoesOutBehindTheLongPreambleOnly) {
   Rig<OverBridle868> rig;
   rig.challenge(CHALLENGE);
