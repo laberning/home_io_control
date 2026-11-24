@@ -13,6 +13,7 @@
 /// component is brought up and driven over time.
 
 #include "hub_internal.h"
+#include "decisions_channel.h"
 #include "decisions_exchange.h"
 
 #include "proto_device_kinds.h"
@@ -28,6 +29,9 @@
 #include "tuning_registry.h"
 
 #include "esphome/core/helpers.h"
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -49,6 +53,9 @@ constexpr size_t ENROLLMENT_CLASS_HEX_BUFFER_SIZE = 8;
 /// budget (EXCHANGE_TOTAL_BUDGET_MS): a normal exchange blocks for a few hundred milliseconds and
 /// setup() for the radio init, so only a block longer than a whole exchange is worth a warning.
 constexpr uint8_t BLOCKING_WARNING_THRESHOLD_CS = 250;
+
+/// Room for the io channels the Wi-Fi hint names: up to three "2450 MHz" entries joined by " and ", and the terminator.
+constexpr size_t WIFI_HINT_CHANNELS_BUFFER_SIZE = 48;
 
 /// Random number for the periodic polls' jitter. ESPHome's random_uint32() on firmware, a settable
 /// value in host tests.
@@ -581,9 +588,54 @@ void IOHomeControlComponent::update_idle_loop_request_() {
   }
 }
 
+int32_t IOHomeControlComponent::wifi_channel() {
+#ifdef USE_WIFI
+  wifi::WiFiComponent *wifi_component = wifi::global_wifi_component;
+  if (wifi_component == nullptr || !wifi_component->is_connected())
+    return 0;
+  return wifi_component->get_wifi_channel();
+#else
+  return 0;
+#endif
+}
+
+uint32_t IOHomeControlComponent::wifi_centre_hz() { return decisions::wifi_channel_centre_hz(wifi_channel()); }
+
+bool IOHomeControlComponent::log_wifi_coexistence_hint_() {
+  const uint32_t centre_hz = wifi_centre_hz();
+  if (centre_hz == 0 || this->radio_ == nullptr)
+    return false;  // Wi-Fi not connected yet: look again on a later loop
+  this->wifi_hint_done_ = true;
+  const decisions::WifiCoexistence coexistence = decisions::wifi_coexistence(this->radio_->band(), centre_hz);
+  if (coexistence.given_up_count == 0)
+    return false;
+  char given_up[WIFI_HINT_CHANNELS_BUFFER_SIZE];
+  size_t used = 0;
+  for (size_t i = 0; i < coexistence.given_up_count; i++) {
+    const int written = snprintf(given_up + used, sizeof(given_up) - used, "%s%" PRIu32 " MHz", i == 0 ? "" : " and ",
+                                 coexistence.given_up_air_hz[i] / decisions::HZ_PER_MHZ);
+    if (written < 0 || static_cast<size_t>(written) >= sizeof(given_up) - used)
+      break;
+    used += static_cast<size_t>(written);
+  }
+  if (coexistence.has_clear_channel) {
+    ESP_LOGI(detail::TAG,
+             "Wi-Fi channel %" PRId32
+             " is close to io channel %s; requests use the other io channels. Wi-Fi channel %" PRId32 " or %" PRId32
+             " keeps %s in use",
+             wifi_channel(), given_up, coexistence.lowest_clear_channel, coexistence.highest_clear_channel, given_up);
+  } else {
+    ESP_LOGI(detail::TAG, "Wi-Fi channel %" PRId32 " is close to io channel %s; requests use the other io channels",
+             wifi_channel(), given_up);
+  }
+  return true;
+}
+
 void IOHomeControlComponent::loop() {
   if (!this->initialized_)
     return;
+  if (!this->wifi_hint_done_)
+    this->log_wifi_coexistence_hint_();
   // A driver that latches a failure after setup (a runtime BUSY timeout) short-circuits every later
   // command while the component keeps running. Say so once, when it happens: an error line, ESPHome's
   // warning status (which drives a configured status_led) and every device's Active Issue sensor,

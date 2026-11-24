@@ -69,6 +69,68 @@ TEST(DecisionsChannel, A2g4FrequencyExcludesNoChannelOfThe868Band) {
   EXPECT_EQ(decisions::request_channels(true, IO_868_BAND, 2437000000U), ChannelSet::only(FREQ_CH2));
 }
 
+// === The hub's Wi-Fi channel ===
+
+TEST(DecisionsWifiChannel, TheCentresOfChannels1To13AreOnThe5MHzRasterAndChannel14IsOffIt) {
+  for (int32_t channel = 1; channel <= 13; channel++)
+    EXPECT_EQ(decisions::wifi_channel_centre_hz(channel), (2407U + 5U * static_cast<uint32_t>(channel)) * 1000000U)
+        << channel;
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(1), 2412000000U);
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(6), 2437000000U);
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(13), 2472000000U);
+  EXPECT_EQ(decisions::wifi_channel_centre_hz(14), 2484000000U);
+}
+
+TEST(DecisionsWifiChannel, ZeroAndAnyNumberOutside1To14HaveNoCentre) {
+  for (const int32_t channel : {0, -1, 15, 36, 149})
+    EXPECT_EQ(decisions::wifi_channel_centre_hz(channel), 0U) << channel;
+}
+
+TEST(DecisionsWifiChannel, TheGuardIsInclusiveAndWithoutAFrequencyToAvoidNothingIsInside) {
+  EXPECT_TRUE(decisions::inside_wifi_guard(2450000000U, 2450000000U + decisions::WIFI_CHANNEL_GUARD_HZ));
+  EXPECT_FALSE(decisions::inside_wifi_guard(2450000000U, 2450000000U + decisions::WIFI_CHANNEL_GUARD_HZ + 1));
+  EXPECT_TRUE(decisions::inside_wifi_guard(2450000000U, 2450000000U - decisions::WIFI_CHANNEL_GUARD_HZ));
+  EXPECT_FALSE(decisions::inside_wifi_guard(2450000000U, 0));
+}
+
+TEST(DecisionsWifiChannel, ACoexistenceNamesTheChannelsGivenUpAndTheWifiChannelsThatGiveUpNone) {
+  // The invented band: channels at 2415, 2440 and 2465 MHz. Wi-Fi channel 6 (2437 MHz) sits 3 MHz from the middle one.
+  const IoBand band = test_bands::second_band();
+  const decisions::WifiCoexistence coexistence =
+      decisions::wifi_coexistence(band, decisions::wifi_channel_centre_hz(6));
+  ASSERT_EQ(coexistence.given_up_count, 1U);
+  EXPECT_EQ(coexistence.given_up_air_hz[0], test_bands::SECOND_BAND_CH2_HZ);
+  ASSERT_TRUE(coexistence.has_clear_channel);
+  // Channel 1 (2412 MHz) is 3 MHz from the 2415 MHz channel but 28 MHz from the one given up, so it gives that up no
+  // more.
+  EXPECT_EQ(coexistence.lowest_clear_channel, 1);
+  EXPECT_EQ(coexistence.highest_clear_channel, 13) << "2472 MHz is 32 MHz from 2440";
+}
+
+TEST(DecisionsWifiChannel, ACoexistenceListsEveryChannelTheGuardCoversInChannelOrder) {
+  // A centre between the invented band's channels 1 and 2 (2415 and 2440 MHz), 12.5 MHz from each.
+  const decisions::WifiCoexistence coexistence = decisions::wifi_coexistence(test_bands::second_band(), 2427500000U);
+  ASSERT_EQ(coexistence.given_up_count, 2U);
+  EXPECT_EQ(coexistence.given_up_air_hz[0], test_bands::SECOND_BAND_CH2_HZ) << "IO_CHANNELS order: channel 2 first";
+  EXPECT_EQ(coexistence.given_up_air_hz[1], test_bands::SECOND_BAND_CH1_HZ);
+}
+
+TEST(DecisionsWifiChannel, ACoexistenceIsEmptyWithoutWifiAndOnThe868Band) {
+  EXPECT_EQ(decisions::wifi_coexistence(test_bands::second_band(), 0).given_up_count, 0U);
+  for (int32_t channel = 0; channel <= 14; channel++) {
+    EXPECT_EQ(decisions::wifi_coexistence(IO_868_BAND, decisions::wifi_channel_centre_hz(channel)).given_up_count, 0U)
+        << channel;
+  }
+}
+
+TEST(DecisionsWifiChannel, ABandWhoseEveryChannelIsCoveredGivesNothingUpBecauseTheExclusionIsDropped) {
+  // The centre sits within 15 MHz of all three channels of a band that wide: request_channels() drops the exclusion
+  // (a request must have a channel), so the hint has nothing to say either.
+  IoBand narrow = test_bands::second_band();
+  narrow.air_hz = {2440000000U, 2437000000U, 2443000000U};
+  EXPECT_EQ(decisions::wifi_coexistence(narrow, 2440000000U).given_up_count, 0U);
+}
+
 TEST(DecisionsChannel, TheFirstCheckCanTakeAnyChannelOfTheSet) {
   std::set<uint32_t> seen;
   for (uint32_t random = 0; random < 3; random++)

@@ -356,13 +356,16 @@ INCLUDES := -Icomponents/home_io_control \
 # orchestration it gates need to be always-on for their host tests to have anything to link.
 # IOHOME_BRIDLE compiles the Bridle radio sources (no firmware configuration sets it yet). The Bridle
 # driver writes its trace through the held log, so IOHOME_HELD_LOG comes with it (log_frame.h).
+# USE_WIFI is what ESPHome defines in a build with the wifi component: the hub reads its Wi-Fi channel behind it
+# (tests/include/esphome/components/wifi/wifi_component.h is the stub).
 UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_CUSTOM_SERVICES \
 			 -DUSE_API_HOMEASSISTANT_SERVICES \
 			 -DIOHOME_LR1121_FIRMWARE_UPDATE \
 			 -DIOHOME_LR1121_BOOTLOADER_UPDATE \
 			 -DIOHOME_BRIDLE \
-			 -DIOHOME_HELD_LOG
+			 -DIOHOME_HELD_LOG \
+			 -DUSE_WIFI
 
 # Bridle: the generated headers of one Bridle release are committed (components/home_io_control/radio_bridle_enums.h,
 # tests/bridle/) and named by BRIDLE_VERSION; scripts/bridle-update.sh is the only thing that writes them. The Python

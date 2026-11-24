@@ -186,6 +186,8 @@ class IOHomeControlComponent : public Component,
         clear_moving_evidence(*dev);
     });
     this->exchange_engine_.set_overheard_frame_observer(this);
+    // Requests keep their channels away from the hub's own Wi-Fi channel (ADR 0132); 0 without Wi-Fi.
+    this->exchange_engine_.set_avoid_frequency_provider([]() { return wifi_centre_hz(); });
     // Channel access draws its channels and back-offs from ESPHome's random source (a settable value
     // in the host tests, like the poll jitter).
     this->exchange_engine_.set_random_source([]() { return random_uint32(); });
@@ -1505,6 +1507,23 @@ class IOHomeControlComponent : public Component,
   uint8_t tcxo_voltage_{DEFAULT_TCXO_VOLTAGE_SETTING_1P8V};  ///< SX1262/LR1121 TCXO voltage setting (default 1.8 V)
 
   // --- Runtime state ---
+  /// Primary channel of the Wi-Fi the hub is connected to, 0 when there is none (Wi-Fi not built in, not connected).
+  [[nodiscard]] static int32_t wifi_channel();
+
+  /// Centre frequency in Hz of the Wi-Fi channel the hub is connected on, 0 when there is no Wi-Fi (not built in, not
+  /// connected, channel unknown). The engine keeps the channels of a request away from it (ADR 0132).
+  [[nodiscard]] static uint32_t wifi_centre_hz();
+
+  /// Logs the Wi-Fi coexistence hint at most once, after Wi-Fi has connected: when the hub's Wi-Fi channel
+  /// takes channels of the radio's band out of the requests (decisions::wifi_coexistence()), one INFO line names
+  /// the io channels given up and the Wi-Fi channels that would keep them. The ESP sees only its primary 20 MHz
+  /// channel; an access point on 40 MHz is wider than the guard. A band the Wi-Fi is far from, 868 MHz included,
+  /// never produces the line.
+  /// @return true when the line was logged on this call.
+  bool log_wifi_coexistence_hint_();
+
+  bool wifi_hint_done_{false};  ///< The hint is evaluated until Wi-Fi has a channel, then never again.
+
   bool initialized_{false};
   bool busy_{false};
   /// millis() when the last pairing attempt ended; 0 before the first one (see queue_discover_and_pair()).

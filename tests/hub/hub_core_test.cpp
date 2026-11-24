@@ -3,6 +3,7 @@
 #include "radio_interface.h"
 #include "proto_frame.h"
 #include "esphome/core/component.h"
+#include "esphome/components/wifi/wifi_component.h"
 
 #include "bridle_stand_in.h"
 #include "fake_byte_stream.h"
@@ -169,6 +170,141 @@ TEST(HubCore, SetupReportsAMissingRequiredPinAsNoDriver) {
   EXPECT_TRUE(comp.is_failed());
   EXPECT_EQ(comp.radio_, nullptr);
   EXPECT_NE(comp.radio_failure_reason_.find("sx1276"), std::string::npos) << comp.radio_failure_reason_;
+}
+
+// === Wi-Fi coexistence: the engine's frequency to avoid and the boot hint ===
+
+namespace {
+/// Points the stubbed Wi-Fi singleton at a component on `channel` for the test's duration.
+struct WifiGuard {
+  esphome::wifi::WiFiComponent component;
+  esphome::wifi::WiFiComponent *saved = esphome::wifi::global_wifi_component;
+  explicit WifiGuard(int32_t channel, bool connected = true) {
+    component.connected_ = connected;
+    component.channel_ = channel;
+    esphome::wifi::global_wifi_component = &component;
+  }
+  ~WifiGuard() { esphome::wifi::global_wifi_component = saved; }
+};
+
+/// A radio that carries the protocol on the 2.4 GHz band of the Bridle driver (2425, 2450 and 2475 MHz).
+class Air2g4Radio : public MockRadio {
+ public:
+  Air2g4Radio() { this->set_band(esphome::home_io_control::bridle::IO_2G4_BAND); }
+};
+
+size_t info_lines_naming_wifi(const test::LogCapture &log) {
+  return static_cast<size_t>(std::count_if(log.lines().begin(), log.lines().end(), [](const auto &line) {
+    return line.level == 'I' && line.text.rfind("Wi-Fi channel", 0) == 0;
+  }));
+}
+}  // namespace
+
+TEST(HubWifi, TheHubGivesTheEngineTheCentreOfItsWifiChannelOrNothing) {
+  TestableHubComponent comp;
+  EXPECT_EQ(comp.wifi_centre_hz(), 0U) << "no Wi-Fi component";
+  {
+    WifiGuard wifi(6, /*connected=*/false);
+    EXPECT_EQ(comp.wifi_centre_hz(), 0U) << "not connected";
+  }
+  WifiGuard wifi(6);
+  EXPECT_EQ(comp.wifi_centre_hz(), 2437000000U);
+}
+
+TEST(HubWifi, TheEngineKeepsARequestOffTheChannelNearTheHubsWifi) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  WifiGuard wifi(8);  // 2447 MHz: 3 MHz from the 2450 MHz channel, 22 and 28 MHz from the others
+  const ChannelSet channels = comp.exchange_engine_.request_channels(false);
+  EXPECT_FALSE(channels.contains(FREQ_CH2));
+  EXPECT_EQ(channels.count(), 2U);
+}
+
+TEST(HubWifi, WithoutWifiTheEngineKeepsEveryChannel) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  EXPECT_EQ(comp.exchange_engine_.request_channels(false), ChannelSet::all());
+}
+
+TEST(HubWifi, TheHintNamesTheIoChannelGivenUpAndTheWifiChannelsThatGiveUpNoneOnce) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  WifiGuard wifi(8);
+  test::LogCapture log(/*with_text=*/true);
+
+  EXPECT_TRUE(comp.log_wifi_coexistence_hint_());
+  EXPECT_TRUE(comp.wifi_hint_done_);
+
+  ASSERT_EQ(info_lines_naming_wifi(log), 1U);
+  const auto line = std::find_if(log.lines().begin(), log.lines().end(),
+                                 [](const auto &l) { return l.text.rfind("Wi-Fi channel", 0) == 0; });
+  EXPECT_EQ(line->text,
+            "Wi-Fi channel 8 is close to io channel 2450 MHz; requests use the other io channels. Wi-Fi channel 1 or "
+            "13 keeps 2450 MHz in use");
+}
+
+TEST(HubWifi, TheHintNamesBothChannelsWhenTheGuardCoversTwo) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  WifiGuard wifi(6);  // 2437 MHz: 12 MHz from 2425 and 13 MHz from 2450
+  test::LogCapture log(/*with_text=*/true);
+
+  EXPECT_TRUE(comp.log_wifi_coexistence_hint_());
+
+  ASSERT_EQ(info_lines_naming_wifi(log), 1U);
+  EXPECT_TRUE(std::any_of(log.lines().begin(), log.lines().end(), [](const auto &l) {
+    return l.text.find("io channel 2450 MHz and 2425 MHz;") != std::string::npos;
+  })) << "channel 2 first, as IO_CHANNELS orders them";
+}
+
+TEST(HubWifi, TheHintWaitsForWifiToConnect) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  {
+    WifiGuard wifi(8, /*connected=*/false);
+    EXPECT_FALSE(comp.log_wifi_coexistence_hint_());
+    EXPECT_FALSE(comp.wifi_hint_done_);
+  }
+  EXPECT_FALSE(comp.log_wifi_coexistence_hint_()) << "no Wi-Fi component at all";
+  EXPECT_FALSE(comp.wifi_hint_done_);
+  WifiGuard wifi(8);
+  EXPECT_TRUE(comp.log_wifi_coexistence_hint_());
+}
+
+TEST(HubWifi, TheHintIsSilentAndNothingChangesOnThe868Band) {
+  TestableHubComponent comp;
+  MockRadio radio;  // the 868 MHz band
+  comp.radio_ = &radio;
+  for (int32_t channel = 1; channel <= 14; channel++) {
+    comp.wifi_hint_done_ = false;
+    WifiGuard wifi(channel);
+    test::LogCapture log(/*with_text=*/true);
+    EXPECT_FALSE(comp.log_wifi_coexistence_hint_()) << channel;
+    EXPECT_EQ(info_lines_naming_wifi(log), 0U) << channel;
+    EXPECT_EQ(comp.exchange_engine_.request_channels(false), ChannelSet::all()) << channel;
+    EXPECT_EQ(comp.exchange_engine_.request_channels(true), ChannelSet::only(FREQ_CH2)) << channel;
+  }
+}
+
+TEST(HubWifi, TheLoopEvaluatesTheHintUntilWifiHasAChannel) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  comp.initialized_ = true;
+  comp.loop();
+  EXPECT_FALSE(comp.wifi_hint_done_) << "no Wi-Fi yet: asked again on the next loop";
+  WifiGuard wifi(8);
+  test::LogCapture log(/*with_text=*/true);
+  comp.loop();
+  EXPECT_TRUE(comp.wifi_hint_done_);
+  comp.loop();
+  EXPECT_EQ(info_lines_naming_wifi(log), 1U) << "decided once, not on every loop";
+  comp.radio_ = nullptr;
 }
 
 // === A Bridle bridge: the composition root builds the driver over the configured UART ===
