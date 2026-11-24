@@ -463,11 +463,25 @@ $(HOST_TEST_BIN): $(HOST_OBJS)
 # Builds $(HOST_TEST_BIN) for the current HOST_VARIANT and runs it. Shared by unit-test and
 # unit-test-asan (invoked as a sub-make with HOST_VARIANT/HOST_EXTRA_FLAGS overridden on the
 # command line, which is what makes $(HOST_TEST_BIN) resolve to the right variant tree below).
+# The default variant also collects the Bridle traces its stand-ins write (bridle-trace-check lints
+# them); the sanitizer variant writes none.
+BRIDLE_TRACE_DIR := $(CURDIR)/build/bridle/traces
+
 host-run: $(HOST_TEST_BIN)
 	@echo "Running tests ($(HOST_VARIANT))..."
-	@UBSAN_OPTIONS=print_stacktrace=1 \
+	@if [ "$(HOST_VARIANT)" = default ]; then rm -rf $(BRIDLE_TRACE_DIR); fi
+	@$(if $(filter default,$(HOST_VARIANT)),HIOC_BRIDLE_TRACE_DIR=$(BRIDLE_TRACE_DIR)) UBSAN_OPTIONS=print_stacktrace=1 \
 		LSAN_OPTIONS=suppressions=$(CURDIR)/tests/asan/lsan.supp \
 		./$(HOST_TEST_BIN)
+
+# The session linter (Bridle specification section 12.1) over every trace the default unit-test run wrote:
+# a driver that breaks a rule of the spec fails here even when its C++ test passed.
+bridle-trace-check: unit-test tools
+	@echo "Linting the Bridle traces of the unit tests..."
+	@n=0; for f in $(BRIDLE_TRACE_DIR)/*.log; do \
+	  [ -e "$$f" ] || { echo "no traces in $(BRIDLE_TRACE_DIR)"; exit 1; }; \
+	  $(BRIDLE_TOOLS_BIN)/bridle-session check "$$f" || { echo "^ $$f"; exit 1; }; n=$$((n+1)); \
+	done; echo "bridle-trace-check: OK ($$n traces)"
 
 # Public entry point: corpus-gen runs first (ordering!), then a parallel sub-make builds/links.
 # Parallelism is scoped to this sub-make (not a global -j) so the docker/esphome targets in
@@ -534,7 +548,7 @@ doxygen:
 #   key-material-scan   -> key-material-scan
 #   private-path-check  -> private-path-check
 lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate bridle-check bridle-session-check docs-link-check corpus-citation-check docs-prose-check key-material-scan private-path-check
-test: unit-test unit-test-asan py-test firmware-test
+test: unit-test bridle-trace-check unit-test-asan py-test firmware-test
 check: lint test doxygen
 
 # Backward compatibility aliases (deprecated, use new names)
@@ -550,7 +564,7 @@ test-unit: unit-test
 		include-graph stub-sync \
 		docs-prose-check \
 		key-material-scan private-path-check \
-		fuzz-frame fuzz-soft-phy bridle-check bridle-session-check bridle-gen tools \
+		fuzz-frame fuzz-soft-phy bridle-check bridle-session-check bridle-trace-check bridle-gen tools \
 		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
 		unit-test unit-test-asan py-test host-run host-component-objs clean-host lint test check \
 		test-compile test-unit \
