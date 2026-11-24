@@ -339,6 +339,17 @@ class RadioDriver {
   /// @param tuning Current tuning configuration.
   virtual void apply_tuning(const TuningConfig &tuning) {}
 
+  /// @brief Whether this radio can carry @p tuning.
+  ///
+  /// The hub asks before it keeps a tuning value that the radio's own limits could make useless, at setup (after
+  /// @ref init) and again whenever a numeric value changes at runtime (no select option is a value a radio limits).
+  /// A radio that refuses logs why, naming the value and the limit; the
+  /// hub then fails setup, or at runtime restores the previous value and does not apply the new one. A radio whose
+  /// limits it cannot know before @ref init, or that has none, accepts. The default accepts everything.
+  /// @param tuning The tuning as it would be after the change.
+  /// @return true when the radio can carry it.
+  [[nodiscard]] virtual bool accepts_tuning(const TuningConfig &tuning) const { return true; }
+
   /// @brief Per-channel dwell for a rotating listen that does not name its own dwell.
   ///
   /// Every @ref ListenPolicy::ROTATE_ALL_CHANNELS or @ref ListenPolicy::ROTATE_SKIPPING_REQUEST

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <utility>
@@ -104,6 +105,15 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// Put the mock on another band (the default is the 868 MHz band).
   void set_band(const esphome::home_io_control::IoBand &band) { band_ = band; }
   [[nodiscard]] const esphome::home_io_control::IoBand &band() const override { return band_; }
+
+  /// Make the mock refuse every tuning (RadioDriver::accepts_tuning()), as a radio does for a value it cannot carry.
+  void set_refuses_tuning(bool refuses) { refuses_tuning_ = refuses; }
+  [[nodiscard]] bool accepts_tuning(const esphome::home_io_control::TuningConfig &tuning) const override {
+    checked_wake_ms_ = tuning.low_power_wake_ms;
+    return !refuses_tuning_;
+  }
+  /// The `low_power_wake_ms` of the last tuning accepts_tuning() was asked about; NaN before the first call.
+  [[nodiscard]] float checked_wake_ms() const { return checked_wake_ms_; }
 
   // RadioDriver interface
   bool init() override { return true; }
@@ -423,6 +433,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   int16_t rssi_default_{-120};
   int send_count_;
   esphome::home_io_control::IoBand band_;
+  bool refuses_tuning_{false};
+  mutable float checked_wake_ms_{std::numeric_limits<float>::quiet_NaN()};  // set by the const accepts_tuning()
   std::vector<uint32_t> wait_timeouts_;
   std::vector<uint32_t> freq_history_;
   std::vector<uint32_t> rssi_read_freqs_;

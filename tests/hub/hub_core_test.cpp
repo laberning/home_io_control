@@ -187,6 +187,35 @@ TEST(HubCore, SetupKeepsTheDriversOwnReasonWhenInitFails) {
       << "the reason must be copied out before the driver is deleted: " << comp.radio_failure_reason_;
 }
 
+// After the radio's init() the hub asks it whether it can carry the tuning (RadioDriver::accepts_tuning()); a
+// refusal fails setup before anything can reach the radio, and a wake-up is never shortened to fit.
+TEST(HubCore, SetupFailsAndStaysUninitializedWhenTheRadioRefusesTheTuning) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  radio.set_refuses_tuning(true);
+  comp.radio_ = &radio;
+
+  comp.start_initialized_radio_("Mock");
+
+  EXPECT_TRUE(comp.is_failed());
+  EXPECT_FALSE(comp.initialized_) << "no entity or action may reach a radio that refused the tuning";
+  comp.radio_ = nullptr;
+}
+
+TEST(HubCore, SetupAsksAboutTheConvertedLegacyWakeUpAndStartsWhenTheRadioAccepts) {
+  TestableHubComponent comp;
+  comp.tuning_.legacy_preamble_bytes.low_power_wake = 2048;  // 426.67 ms on a raw byte stream
+  MockRadio radio;
+  comp.radio_ = &radio;
+
+  comp.start_initialized_radio_("Mock");
+
+  EXPECT_FALSE(comp.is_failed());
+  EXPECT_TRUE(comp.initialized_);
+  EXPECT_NEAR(radio.checked_wake_ms(), 426.67F, 0.01F) << "the radio judges the wake-up it will be asked to send";
+  comp.radio_ = nullptr;
+}
+
 TEST(HubCore, DumpConfigAsksTheRadioForFrontEndBeforeChipDiagnostics) {
   TestableHubComponent comp;
   auto *radio = new SectionRecordingRadio();

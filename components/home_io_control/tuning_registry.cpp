@@ -19,7 +19,7 @@
 namespace esphome {
 namespace home_io_control {
 
-// === Numeric parameters (23) ===================================================
+// === Numeric parameters (24) ===================================================
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
@@ -36,6 +36,9 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
     {"lr1121_discovery_hop_slice_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.lr1121_discovery_hop_slice_ms); },
      [](TuningConfig &t, float v) { t.lr1121_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
+    // false: read live through the Bridle driver (RadioBridle::hop_dwell_ms()), never cached by apply_tuning().
+    {"io2g4_hop_dwell_ms", [](const TuningConfig &t) { return static_cast<float>(t.io2g4_hop_dwell_ms); },
+     [](TuningConfig &t, float v) { t.io2g4_hop_dwell_ms = static_cast<uint16_t>(v); }, false},
     // true: the response preamble is cached into the radio driver as bytes by apply_tuning(), so a
     // change must be re-applied there.
     {"response_preamble_ms", [](const TuningConfig &t) { return t.response_preamble_ms; },

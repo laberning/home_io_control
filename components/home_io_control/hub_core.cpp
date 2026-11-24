@@ -152,16 +152,26 @@ void IOHomeControlComponent::setup() {
   this->cache_lr1121_flash_verdict_();
 #endif
 
+  this->start_initialized_radio_(chip_name_for_log);
+}
+
+void IOHomeControlComponent::start_initialized_radio_(const char *chip_name) {
+  this->convert_legacy_preamble_bytes_();
+  if (!this->radio_->accepts_tuning(this->tuning_)) {
+    // The driver's log line names the value and the limit; a wake-up is never shortened without saying so.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — ESPHome's own LOG_STR() macro.
+    this->mark_failed(LOG_STR("The radio cannot carry the configured tuning (see the line above)"));
+    return;
+  }
   this->initialized_ = true;
   this->register_management_actions_();
   this->exchange_engine_.reset_hop_timestamp();
-  this->convert_legacy_preamble_bytes_();
   this->apply_tuning_to_radio_();
   if (this->tuning_.active) {
     std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
     ESP_LOGI(detail::TAG, "%s", snapshot.c_str());
   }
-  ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", chip_name_for_log, this->node_id_str_.c_str());
+  ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", chip_name, this->node_id_str_.c_str());
 }
 
 // See the declaration in hub_core.h for the full contract. `radio_type_` is one of "lr1121",
@@ -270,16 +280,22 @@ void IOHomeControlComponent::convert_legacy_preamble_bytes_() {
 /// configuration. Radio-affecting parameters are forwarded to the active driver
 /// immediately; the change is logged in YAML-compatible form so it can be copied
 /// back into the configuration file.
-void IOHomeControlComponent::update_tuning_number(const std::string &name, float value) {
+bool IOHomeControlComponent::update_tuning_number(const std::string &name, float value) {
   const TuningNumberParam *param = find_tuning_number(name);
   if (param == nullptr) {
     ESP_LOGW(detail::TAG, "Unknown tuning number parameter: %s", name.c_str());
-    return;
+    return true;
   }
+  const float previous = param->get(this->tuning_);
   param->set(this->tuning_, value);
+  if (this->radio_ != nullptr && !this->radio_->accepts_tuning(this->tuning_)) {
+    param->set(this->tuning_, previous);  // the driver has said why
+    return false;
+  }
   if (param->applies_to_radio)
     this->apply_tuning_to_radio_();
   ESP_LOGI(detail::TAG, "%s", tuning_update_log_line(name, format_tuning_number(value)).c_str());
+  return true;
 }
 
 /// Update a select tuning parameter from a Home Assistant `select` entity.

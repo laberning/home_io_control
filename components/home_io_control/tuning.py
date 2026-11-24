@@ -34,6 +34,7 @@ CONF_SX1262_DISCOVERY_HOP_SLICE_MS = "sx1262_discovery_hop_slice_ms"
 CONF_LR1121_RX_BANDWIDTH = "lr1121_rx_bandwidth"
 CONF_LR1121_POST_TX_SETTLE_US = "lr1121_post_tx_settle_us"
 CONF_LR1121_DISCOVERY_HOP_SLICE_MS = "lr1121_discovery_hop_slice_ms"
+CONF_IO2G4_HOP_DWELL_MS = "io2g4_hop_dwell_ms"
 CONF_RESPONSE_PREAMBLE_MS = "response_preamble_ms"
 CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS = "cold_broadcast_reply_preamble_ms"
 CONF_START_PREAMBLE_MS = "start_preamble_ms"
@@ -241,6 +242,7 @@ UI_NAMES = {
     CONF_LR1121_RX_BANDWIDTH: "Radio LR1121 RX Bandwidth (kHz)",
     CONF_LR1121_POST_TX_SETTLE_US: "Radio LR1121 Post-TX Settle",
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: "Radio LR1121 Discovery Hop Slice",
+    CONF_IO2G4_HOP_DWELL_MS: "Radio 2.4 GHz Hop Dwell",
     CONF_RESPONSE_PREAMBLE_MS: "Radio Response Preamble",
     CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS: "Radio Cold Broadcast Reply Preamble",
     CONF_START_PREAMBLE_MS: "Radio Start Preamble",
@@ -295,6 +297,8 @@ _NUMBER_PARAMS = {
     # a validated SX1262 value encodes protocol-side reality more than a chip quirk.
     CONF_LR1121_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),
+    # The 2.4 GHz counterpart; its floor is a single millisecond, the resolution of the loop that consumes it.
+    CONF_IO2G4_HOP_DWELL_MS: (1, 200, 1, "ms"),
     # Same (1.5, 70) floor/ceiling as the response preamble, for the same reasons. The default is
     # 20 ms (COLD_BROADCAST_REPLY_PREAMBLE_MS in proto_timing.h): above the ~13.9 ms preamble real
     # devices put on a discovery reply, so a hopping receiver catches this reply at least as reliably.

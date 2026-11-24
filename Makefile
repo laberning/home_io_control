@@ -327,7 +327,7 @@ COMPONENT_SRCS := $(wildcard components/home_io_control/*.cpp)
 # Test stubs (only global symbols — App, global_preferences, fnv1_hash) plus per-test isolation:
 # test_isolation.cpp resets test_scheduler's pending-timer registry and enforces the ManualClock
 # RAII rule between tests.
-STUB_SRCS := tests/stubs/stubs.cpp tests/support/test_isolation.cpp
+STUB_SRCS := tests/stubs/stubs.cpp tests/support/test_isolation.cpp tests/support/fake_coprocessor.cpp
 
 # All test files (*_test.cpp), one directory per layer under tests/ (proto/, radio/, hub/, platform/,
 # oneway/, tuning/, corpus/, sync/, harness/). tests/fuzz/ holds libFuzzer targets, built separately.
@@ -340,6 +340,7 @@ INCLUDES := -Icomponents/home_io_control \
             -Itests/include \
             -Itests/support \
             -Ibuild/corpus \
+            -Ibuild/bridle \
             -Itests/bridle \
             -Itests
 
@@ -364,9 +365,53 @@ UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DIOHOME_HELD_LOG
 
 # Bridle: the generated headers of one Bridle release are committed (components/home_io_control/radio_bridle_enums.h,
-# tests/bridle/) and named by BRIDLE_VERSION; scripts/bridle-update.sh is the only thing that writes them.
+# tests/bridle/) and named by BRIDLE_VERSION; scripts/bridle-update.sh is the only thing that writes them. The Python
+# tools (session linter, header generator for the recorded sessions) come from the release's wheel, pinned in
+# scripts/requirements-dev.txt, into a venv under build/tools/. While the release is not on GitHub, or the repository
+# is private, BRIDLE_WHEEL=<wheel from the Bridle checkout's `make release`> installs the same file (its hash must
+# equal BRIDLE_VERSION's); without it, the sibling checkout's ../bridle/dist/ is used when its wheel is that file.
+TOOLS_VENV := build/tools/venv
+BRIDLE_TOOLS_BIN := $(TOOLS_VENV)/bin
+BRIDLE_WHEEL ?=
+
+$(TOOLS_VENV)/.stamp: scripts/requirements-dev.txt BRIDLE_VERSION
+	@python3 -m venv --clear $(TOOLS_VENV)
+	@want=$$(sed -n 's/^wheel_sha256=//p' BRIDLE_VERSION); wheel="$(BRIDLE_WHEEL)"; \
+	if [ -n "$$wheel" ]; then \
+	  [ "$$(sha256sum "$$wheel" | cut -d' ' -f1)" = "$$want" ] || { echo "BRIDLE_WHEEL is not the wheel BRIDLE_VERSION names"; exit 1; }; \
+	else \
+	  for c in ../bridle/dist/bridle_protocol-*.whl; do \
+	    [ -f "$$c" ] && [ "$$(sha256sum "$$c" | cut -d' ' -f1)" = "$$want" ] && wheel="$$c"; \
+	  done; \
+	fi; \
+	if [ -n "$$wheel" ]; then \
+	  grep -v '^bridle-protocol @' scripts/requirements-dev.txt | $(TOOLS_VENV)/bin/pip install -q -r /dev/stdin "$$wheel"; \
+	else $(TOOLS_VENV)/bin/pip install -q -r scripts/requirements-dev.txt \
+	  || { echo "could not fetch the pinned wheel; a private release needs BRIDLE_WHEEL=<wheel>"; exit 1; }; fi
+	@touch $@
+
+tools: $(TOOLS_VENV)/.stamp
+
+# The committed headers and the wheel pin are the ones BRIDLE_VERSION names (no network).
 bridle-check:
 	@scripts/bridle-update.sh --check
+
+# The recorded sessions the playback tests replay (tests/corpus/sessions/), rendered into this repository's own
+# namespace.
+BRIDLE_GEN_DIR := build/bridle
+BRIDLE_SESSION_FILES := $(sort $(wildcard tests/corpus/sessions/*.yaml))
+
+$(BRIDLE_GEN_DIR)/sessions_generated.h: $(TOOLS_VENV)/.stamp $(BRIDLE_SESSION_FILES)
+	@mkdir -p $(BRIDLE_GEN_DIR)
+	@$(BRIDLE_TOOLS_BIN)/bridle-session gen-cpp $@ --namespace esphome::home_io_control::bridle $(BRIDLE_SESSION_FILES)
+
+bridle-gen: $(BRIDLE_GEN_DIR)/sessions_generated.h
+
+# The session linter (Bridle specification section 12.1) over the recorded session fixtures.
+bridle-session-check: tools
+	@echo "Linting the Bridle session fixtures..."
+	@$(BRIDLE_TOOLS_BIN)/bridle-session validate tests/corpus/sessions/*.yaml
+	@for f in tests/corpus/sessions/*.yaml; do $(BRIDLE_TOOLS_BIN)/bridle-session check "$$f" || exit 1; done
 
 # Regenerates build/corpus/corpus_generated.h from tests/corpus/captures/**/*.yaml.
 # see tests/corpus/README.md.
@@ -428,7 +473,7 @@ host-run: $(HOST_TEST_BIN)
 # Parallelism is scoped to this sub-make (not a global -j) so the docker/esphome targets in
 # this Makefile stay serial. After changing HOST_CXXFLAGS, run `make clean-host` — make does
 # not hash command lines, so flag-only changes don't invalidate existing objects.
-unit-test: corpus-gen
+unit-test: corpus-gen bridle-gen
 	@echo "Building Google Test unit tests for home_io_control (host-only)..."
 	@$(MAKE) --no-print-directory -j$(shell nproc) host-run
 
@@ -437,7 +482,7 @@ unit-test: corpus-gen
 # libgtest is fine to link against — ASan intercepts allocation globally.
 ASAN_HOST_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all -g -O1 -fno-omit-frame-pointer
 
-unit-test-asan: corpus-gen
+unit-test-asan: corpus-gen bridle-gen
 	@echo "Building Google Test unit tests for home_io_control (ASan/UBSan)..."
 	@$(MAKE) --no-print-directory -j$(shell nproc) \
 		HOST_VARIANT=asan HOST_EXTRA_FLAGS="$(ASAN_HOST_FLAGS)" host-run
@@ -483,11 +528,12 @@ doxygen:
 #   board-pinout-sync   -> board-pinout-sync
 #   corpus-validate     -> corpus-validate
 #   bridle-check        -> bridle-check
+#   bridle-session-check -> bridle-session-check
 #   docs-link-check     -> docs-link-check
 #   corpus-citation-check -> corpus-citation-check
 #   key-material-scan   -> key-material-scan
 #   private-path-check  -> private-path-check
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate bridle-check docs-link-check corpus-citation-check docs-prose-check key-material-scan private-path-check
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate bridle-check bridle-session-check docs-link-check corpus-citation-check docs-prose-check key-material-scan private-path-check
 test: unit-test unit-test-asan py-test firmware-test
 check: lint test doxygen
 
@@ -504,7 +550,7 @@ test-unit: unit-test
 		include-graph stub-sync \
 		docs-prose-check \
 		key-material-scan private-path-check \
-		fuzz-frame fuzz-soft-phy bridle-check \
+		fuzz-frame fuzz-soft-phy bridle-check bridle-session-check bridle-gen tools \
 		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
 		unit-test unit-test-asan py-test host-run host-component-objs clean-host lint test check \
 		test-compile test-unit \

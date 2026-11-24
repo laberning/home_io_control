@@ -268,7 +268,8 @@ class IOHomeControlComponent : public Component,
   /// Apply the tuning configuration generated from YAML / UI entities.
   void set_tuning_config(const TuningConfig &config) { this->tuning_ = config; }
   /// Receive a numeric tuning update from a HA `number` entity.
-  void update_tuning_number(const std::string &name, float value);
+  /// @return false when the radio cannot carry the value (RadioDriver::accepts_tuning()): the previous value stays.
+  bool update_tuning_number(const std::string &name, float value);
   /// Receive a select tuning update from a HA `select` entity.
   void update_tuning_select(const std::string &name, const std::string &value);
   /// Current value of a numeric tuning parameter, used to seed a HA `number` entity on boot.
@@ -1376,6 +1377,12 @@ class IOHomeControlComponent : public Component,
   void apply_tuning_to_radio_();
   /// @brief Convert the deprecated byte-denominated preamble keys to durations on this radio (ADR 0097).
   void convert_legacy_preamble_bytes_();
+  /// @brief The part of setup() that follows a successful radio init(): convert the legacy preamble keys, ask the
+  /// radio whether it can carry the tuning (RadioDriver::accepts_tuning()), and only then mark the hub initialized,
+  /// register the actions and apply the tuning. A refused tuning fails setup and leaves the hub uninitialized, so no
+  /// entity or action reaches a radio that would send a wake-up other than the one configured.
+  /// @param chip_name The chip's name for the start-up log line.
+  void start_initialized_radio_(const char *chip_name);
 
   // --- Management actions (the native API calls management_actions_ directly) ---
   /// Register hub-level Home Assistant actions; called from setup().

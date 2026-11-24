@@ -55,6 +55,7 @@ TEST(TuningRegistry, NumberTableContainsExactlyExpectedParameters) {
       "sx1262_discovery_hop_slice_ms",
       "lr1121_post_tx_settle_us",
       "lr1121_discovery_hop_slice_ms",
+      "io2g4_hop_dwell_ms",
       "cold_broadcast_reply_preamble_ms",
       "start_preamble_ms",
       "low_power_wake_ms",
@@ -97,8 +98,8 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
   EXPECT_EQ(select_param_names(), expected) << "select table drifted from the expected inventory";
 }
 
-TEST(TuningRegistry, TotalParameterCountIsThirtyEight) {
-  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 38u);
+TEST(TuningRegistry, TotalParameterCountIsThirtyNine) {
+  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 39u);
 }
 
 // ============================================================================

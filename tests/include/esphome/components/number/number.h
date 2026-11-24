@@ -18,7 +18,8 @@ class Number {
  public:
   virtual void setup() {}
   virtual void control(float value) = 0;
-  void publish_state(float value) {}
+  void publish_state(float value) { this->state = value; }
+  float state{0.0F};  // the last published value, as ESPHome's Number keeps it
   NumberTraits traits;
 };
 
