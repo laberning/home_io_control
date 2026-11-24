@@ -56,10 +56,20 @@ mkdir -p "$(dirname "$FILTERED_DB")"
 # link error further down (see scripts/check-build-cache.py for the full story).
 python3 "$SCRIPT_DIR/check-build-cache.py" --clean
 
-# Build inside Docker if compile_commands.json is missing or older than the config: a config edit can change
-# the build flags (the frame-log pass depends on its -D switch), and a database from before it would analyze
-# the old flags without a word. The touch marks a rebuild that left the database unchanged as current.
-if [ ! -f "$COMPILE_DB" ] || [ "$CONFIG_FILE" -nt "$COMPILE_DB" ]; then
+# Build inside Docker if compile_commands.json is missing or older than the config or the component's code
+# generation (components/home_io_control/*.py): either can change the build flags (the frame-log pass depends
+# on its -D switch, codegen sets others), and a database from before the change would analyze the old flags
+# without a word. The touch marks a rebuild that left the database unchanged as current.
+database_is_stale() {
+  [ ! -f "$COMPILE_DB" ] && return 0
+  [ "$CONFIG_FILE" -nt "$COMPILE_DB" ] && return 0
+  local codegen
+  for codegen in "$COMPONENT_DIR"/*.py; do
+    [ "$codegen" -nt "$COMPILE_DB" ] && return 0
+  done
+  return 1
+}
+if database_is_stale; then
   echo "==> Building $CONTAINER_CONFIG inside Docker..."
   docker compose run --rm esphome compile "$CONTAINER_CONFIG"
   # The database is root-owned (written through the container's bind mount), so touch it from there too.

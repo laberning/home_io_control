@@ -19,6 +19,7 @@
 #include <utility>
 
 #include "hub_operations_fixture.h"
+#include "log_capture.h"
 
 using namespace esphome::home_io_control;
 using namespace hub_operations_test;
@@ -1103,6 +1104,34 @@ TEST(HubOperations, ACoverThatAnswersTheSpeedBlockWithCodeFiveIsNotedOnce) {
   queue_execute_answer(radio, comp.node_id_, 0x2C);
   EXPECT_TRUE(comp.set_device_position("ABC123", 0));
   EXPECT_TRUE(comp.get_device("ABC123")->speed_block_warned) << "later refusals add nothing";
+}
+
+TEST(HubOperations, AnExecuteResultCodeWarnsOncePerDeviceAndCode) {
+  const IoFrame request = test::make_execute(50);  // codes 10 and 9 are never the speed block's code 5
+  IoDevice first;
+  IoDevice second;
+  test::LogCapture log;
+
+  detail::log_execute_result_code(first, "ABC123", request, 0x54);  // code 10
+  EXPECT_EQ(log.count('W'), 1u) << "the first answer with a code warns";
+
+  log.clear();
+  detail::log_execute_result_code(first, "ABC123", request, 0x54);
+  EXPECT_EQ(log.count('W'), 0u) << "the same code again does not warn";
+  EXPECT_EQ(log.count('D'), 1u) << "it is still logged, at DEBUG";
+
+  log.clear();
+  detail::log_execute_result_code(first, "ABC123", request, 0x4C);  // code 9
+  EXPECT_EQ(log.count('W'), 1u) << "another code on the same device warns again";
+
+  log.clear();
+  detail::log_execute_result_code(second, "DEF456", request, 0x54);
+  EXPECT_EQ(log.count('W'), 1u) << "another device warns on its own";
+
+  log.clear();
+  detail::log_execute_result_code(first, "ABC123", request, 0x04);  // code 0
+  EXPECT_EQ(log.lines().size(), 0u) << "code 0 logs nothing";
+  EXPECT_FALSE(first.speed_block_warned);
 }
 
 TEST(HubOperations, TheShortFrameAnsweredCleanlyLogsNothing) {

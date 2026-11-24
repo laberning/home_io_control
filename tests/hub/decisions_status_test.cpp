@@ -330,25 +330,48 @@ TEST(Decisions, HeaterModelNameIsOneReadableLine) {
 
 TEST(Decisions, AnExecuteReplyWithCodeZeroIsNotReported) {
   for (const uint8_t byte : {0x04, 0x05}) {
-    EXPECT_EQ(decisions::classify_execute_result_code(byte, true), decisions::ExecuteResultCodeReport::NONE);
-    EXPECT_EQ(decisions::classify_execute_result_code(byte, false), decisions::ExecuteResultCodeReport::NONE);
+    EXPECT_EQ(decisions::classify_execute_result_code(byte, true, 0), decisions::ExecuteResultCodeReport::NONE);
+    EXPECT_EQ(decisions::classify_execute_result_code(byte, false, 0), decisions::ExecuteResultCodeReport::NONE);
   }
 }
 
 TEST(Decisions, CodeFiveAfterTheSpeedBlockSaysTheDeviceHasNoSpeedSetting) {
-  EXPECT_EQ(decisions::classify_execute_result_code(0x2C, true),
+  EXPECT_EQ(decisions::classify_execute_result_code(0x2C, true, 0),
             decisions::ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN);
-  EXPECT_EQ(decisions::classify_execute_result_code(0x2D, true),
+  EXPECT_EQ(decisions::classify_execute_result_code(0x2D, true, 0),
             decisions::ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN);
 }
 
 TEST(Decisions, CodeFiveAfterTheShortFrameIsNotBlamedOnTheSpeedBlock) {
-  EXPECT_EQ(decisions::classify_execute_result_code(0x2C, false), decisions::ExecuteResultCodeReport::OTHER_CODE);
+  EXPECT_EQ(decisions::classify_execute_result_code(0x2C, false, 0), decisions::ExecuteResultCodeReport::OTHER_CODE);
+}
+
+TEST(Decisions, AnotherCodeWarnsTheFirstTimeAndIsRepeatedAfterwards) {
+  // 0x54: code 10 over state 4, the same code on every move.
+  const uint32_t code_ten = decisions::result_code_bit(10);
+  EXPECT_EQ(decisions::classify_execute_result_code(0x54, false, 0), decisions::ExecuteResultCodeReport::OTHER_CODE);
+  EXPECT_EQ(decisions::classify_execute_result_code(0x54, false, code_ten),
+            decisions::ExecuteResultCodeReport::OTHER_CODE_REPEATED);
+  EXPECT_EQ(decisions::classify_execute_result_code(0x48, false, code_ten),
+            decisions::ExecuteResultCodeReport::OTHER_CODE)
+      << "code 9 is not code 10";
+}
+
+TEST(Decisions, TheSpeedBlockCaseKeepsItsOwnOnceFlag) {
+  EXPECT_EQ(decisions::classify_execute_result_code(0x2C, true, decisions::result_code_bit(5)),
+            decisions::ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN);
+}
+
+TEST(Decisions, EachResultCodeHasItsOwnBit) {
+  for (uint8_t code = 0; code < 32; code++) {
+    for (uint8_t other = 0; other < 32; other++)
+      EXPECT_EQ(decisions::result_code_bit(code) == decisions::result_code_bit(other), code == other);
+  }
 }
 
 TEST(Decisions, EveryOtherNonZeroCodeIsReported) {
   for (const uint8_t byte : {0x48, 0x50, 0x08, 0xFC}) {
-    EXPECT_EQ(decisions::classify_execute_result_code(byte, true), decisions::ExecuteResultCodeReport::OTHER_CODE)
+    EXPECT_EQ(decisions::classify_execute_result_code(byte, true, 0), decisions::ExecuteResultCodeReport::OTHER_CODE)
         << static_cast<unsigned>(byte);
   }
 }

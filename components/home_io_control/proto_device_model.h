@@ -389,6 +389,10 @@ struct IoDevice {
   uint32_t last_result_at_ms{0};   ///< millis() timestamp of last_result_code, 0 when none recorded.
   bool speed_block_warned{false};  ///< The hub has logged, in this boot, that this device answered the speed
                                    ///< block with "parameter unknown". Run-time only, never persisted.
+  uint32_t reported_result_codes{0};          ///< The result codes other than the speed block's that this device has
+                                              ///< answered an EXECUTE with in this boot, one
+                                              ///< decisions::result_code_bit() each: the first warns, a repeat logs at
+                                              ///< DEBUG. Run-time only, never persisted.
   uint8_t last_commander[NODE_ID_SIZE]{};     ///< Node ID of the controller that last commanded this device, as
                                               ///< reported verbatim by the device in its own status payload. All
                                               ///< zeroes until a status reply carrying the record has been decoded

@@ -409,8 +409,10 @@ What to expect:
   answers with result code 5 (`PARAMETER_UNKNOWN`), the hub logs one warning per device and boot that
   it does not take a speed setting; remove `travel_speed:` or set it to `default`. Result codes 9
   (`PARAMETER_LIMITATION_ADJUSTMENT`) and 10 (`PARAMETER_INCOHERENCE_ADJUSTMENT`) and any other
-  non-zero code in the answer to a command are logged as warnings too. The Last Result Code and Active
-  Issue sensors keep reporting only results a device sent as an error.
+  non-zero code in the answer to a command log a warning the first time a device answers with that
+  code in a boot, and a DEBUG line each time after, so a device that answers every move alike does
+  not fill the log. The Last Result Code and Active Issue sensors keep reporting only results a device
+  sent as an error.
 - **The speeds were measured on one VELUX roof window** (issue #205,
   [ADR 0065](../adr/0065-a-covers-travel-speed-is-a-three-way-choice.md)). On a Somfy motor `fast`
   is what a Somfy hub sends for a normal move, and the motor answers it with result code 5.

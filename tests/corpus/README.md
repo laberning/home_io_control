@@ -73,7 +73,10 @@ Issue provenance is **not** in the name — it lives in `source.issue:` (find th
 `grep -rl 'issues/<n>' captures/`). Cite a capture — from code, docs, or another capture's
 `description:`/`note:` — as its full path `tests/corpus/captures/<phase>/<id>.yaml`;
 `validate.py` checks every such path (globs, `{a,b}` braces, comment-line-wrapped) resolves
-*and* points at the right phase directory. Bare `<id>.yaml` mentions are not gate-checked.
+*and* points at the right phase directory. A bare id (`somfy_awning_exchange_force_open_sx1276`)
+in any tracked file is checked by `make corpus-citation-check` (part of `make lint`): it must name
+a capture, or be the prefix of a family of captures; example ids in the tools' own help and
+self-tests are listed in `scripts/check-corpus-citations.py`.
 
 The C++ fixture header (`build/corpus/corpus_generated.h`) is a **build artifact**, generated
 by `scripts/corpus/build.py` automatically as part of `make unit-test` and git-ignored — never

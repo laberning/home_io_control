@@ -1,10 +1,10 @@
 id: somfy_izymo_dimmer_pairing_discover_confirm_ack_unanswered_sx1262
 description: >
-  The same Somfy Izymo dimmer as somfy_izymo_dimmer_pairing_discover_confirm_sx1262, with the
+  The same Somfy Izymo dimmer as somfy_izymo_dimmer_pairing_full_discover_confirm_sx1262, with the
   discover-confirm step in `send_with_ack` mode: the 0x2C carries CTRL1_ACK (`48 10`, the shape
   every captured hub sends to always-alive devices). The dimmer never answered it — three tries,
   1.5 s apart, no 0x2D and no other frame — while it answered `48 00` within 12–23 ms in every other
-  run. 0 of 6 tries across two runs; this is run E2-1. The step then continued to the key exchange,
+  run. 0 of 6 tries across two runs; this capture is one of them. The step then continued to the key exchange,
   which the dimmer accepted normally (0x3C/0x32/0x33 omitted: payloads masked by the frame logger), so
   pairing still succeeded after the ~4.85 s no-answer wait. This is why `send`, not `send_with_ack`,
   is the default (ADR 0039). Heltec V3 / SX1262 hub C0FFEE; t_ms are log line timestamps.

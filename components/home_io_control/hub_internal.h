@@ -480,15 +480,17 @@ inline void record_command_result(IoDevice &dev, const std::string &id, uint8_t 
 /// @brief Log the result code in the reply to an EXECUTE, when it is not 0.
 ///
 /// A device that does not take the speed block says so with code 5 on every move, so that case warns
-/// once per device and boot (IoDevice::speed_block_warned); every other non-zero code warns each time.
-/// Nothing is stored: the Last Result Code and Active Issue sensors keep the meaning of a 0xFE result.
-/// @param dev Device that replied (its warned flag is set).
+/// once per device and boot (IoDevice::speed_block_warned); every other non-zero code warns the first time
+/// the device answers with it and logs at DEBUG afterwards (IoDevice::reported_result_codes). The Last
+/// Result Code and Active Issue sensors keep the meaning of a 0xFE result.
+/// @param dev Device that replied (its warned flag or its reported codes are set).
 /// @param id Device ID (for the log line).
 /// @param request The EXECUTE the reply answers.
 /// @param status_byte Byte 0 of the reply's payload.
 inline void log_execute_result_code(IoDevice &dev, const std::string &id, const IoFrame &request, uint8_t status_byte) {
   const uint8_t code = result_code_of(status_byte);
-  switch (decisions::classify_execute_result_code(status_byte, execute_carries_speed_block(request))) {
+  switch (decisions::classify_execute_result_code(status_byte, execute_carries_speed_block(request),
+                                                  dev.reported_result_codes)) {
     case decisions::ExecuteResultCodeReport::NONE:
       return;
     case decisions::ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN:
@@ -501,7 +503,12 @@ inline void log_execute_result_code(IoDevice &dev, const std::string &id, const 
       }
       return;
     case decisions::ExecuteResultCodeReport::OTHER_CODE:
+      dev.reported_result_codes |= decisions::result_code_bit(code);
       ESP_LOGW(TAG, "Device %s: EXECUTE answered with result code %u %s (reply byte 0x%02X)", id.c_str(), code,
+               result_code_name(code), status_byte);
+      return;
+    case decisions::ExecuteResultCodeReport::OTHER_CODE_REPEATED:
+      ESP_LOGD(TAG, "Device %s: EXECUTE answered with result code %u %s (reply byte 0x%02X)", id.c_str(), code,
                result_code_name(code), status_byte);
       return;
   }

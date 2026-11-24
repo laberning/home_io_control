@@ -392,24 +392,40 @@ static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RA
 enum class ExecuteResultCodeReport : uint8_t {
   NONE,                 ///< Code 0: the command was taken without complaint.
   SPEED_BLOCK_UNKNOWN,  ///< Code 5 after a frame with the speed block: the device has no speed parameter.
-  OTHER_CODE,           ///< Any other non-zero code, logged with its name and number.
+  OTHER_CODE,           ///< Any other non-zero code, the first time this device answers with it: a warning.
+  OTHER_CODE_REPEATED,  ///< A non-zero code this device already answered with in this boot: logged at DEBUG.
 };
+
+/// A result code is the five bits above the execution state (error_resp_code()), 0..31, so each code has its own
+/// bit in a uint32_t.
+static constexpr uint8_t RESULT_CODE_MASK = 0x1F;
+static_assert(error_resp_code(UINT8_MAX) == RESULT_CODE_MASK, "every result code needs its own bit in a uint32_t");
+
+/// @brief The bit of a result code in a device's set of codes already reported (IoDevice::reported_result_codes).
+/// @param code A result code, 0..31 (result_code_of()).
+[[nodiscard]] constexpr uint32_t result_code_bit(uint8_t code) { return uint32_t{1} << (code & RESULT_CODE_MASK); }
 
 /// @brief Classify the result code of a reply to an EXECUTE.
 ///
 /// The state in the same byte is unaffected: a device that answers `2C` (code 5, state 4) is running the
 /// move. Code 5 after the 6-byte form names a parameter the request did not carry, so it is not
-/// attributed to the speed block.
+/// attributed to the speed block. A device that answers every move with the same code would otherwise
+/// warn on every command, so each other code warns the first time a device answers with it in a boot and
+/// is logged at DEBUG afterwards, per device and code, as the speed-block case warns once.
 /// @param status_byte Byte 0 of the reply's payload.
 /// @param request_had_speed_block True when the EXECUTE carried functional parameter 1
 ///        (execute_carries_speed_block()).
+/// @param reported_codes The device's codes already reported in this boot, one result_code_bit() each.
 [[nodiscard]] inline ExecuteResultCodeReport classify_execute_result_code(uint8_t status_byte,
-                                                                          bool request_had_speed_block) {
+                                                                          bool request_had_speed_block,
+                                                                          uint32_t reported_codes) {
   const uint8_t code = result_code_of(status_byte);
   if (code == 0)
     return ExecuteResultCodeReport::NONE;
   if (code == error_resp_code(RESULT_PARAMETER_UNKNOWN) && request_had_speed_block)
     return ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN;
+  if ((reported_codes & result_code_bit(code)) != 0)
+    return ExecuteResultCodeReport::OTHER_CODE_REPEATED;
   return ExecuteResultCodeReport::OTHER_CODE;
 }
 

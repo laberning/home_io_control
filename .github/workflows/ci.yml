@@ -83,6 +83,12 @@ jobs:
       - uses: actions/checkout@v7
       - run: make docs-link-check
 
+  corpus-citation-check:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: make corpus-citation-check
+
   key-material-scan:
     runs-on: ubuntu-26.04
     steps:

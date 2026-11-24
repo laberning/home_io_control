@@ -57,7 +57,9 @@ profile is a parameter most devices do not have.
 5. **The hub reads the result code of the answer to a command** (bits 7 to 3 of byte 0, above the
    execution state of ADR 0079). Code 5 after a frame that carried the profile logs one warning
    per device and boot that the device takes no speed setting; any other non-zero code logs a
-   warning too. Nothing else changes: the Last Result Code and Active Issue sensors keep ADR
+   warning the first time a device answers with it in a boot and at DEBUG afterwards, per device and
+   code, so a device that answers every move with the same code does not warn on every command.
+   Nothing else changes: the Last Result Code and Active Issue sensors keep ADR
    0049's meaning.
 
 ## Consequences

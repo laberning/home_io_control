@@ -212,6 +212,12 @@ docs-link-check:
 	@python3 scripts/check-docs-links.py
 	@python3 scripts/check_docs_links_test.py
 
+# Cross-file check: every corpus capture id cited in a tracked file names a capture that exists.
+corpus-citation-check:
+	@echo "Checking corpus capture citations..."
+	@python3 scripts/check-corpus-citations.py
+	@python3 scripts/check_corpus_citations_test.py
+
 # Prose gate for the two writing rules a link checker cannot see: naming a local-only
 # path as the source of a fact, and narrating this repo's own history.
 # See scripts/check-docs-prose.py.
@@ -463,9 +469,10 @@ doxygen:
 #   board-pinout-sync   -> board-pinout-sync
 #   corpus-validate     -> corpus-validate
 #   docs-link-check     -> docs-link-check
+#   corpus-citation-check -> corpus-citation-check
 #   key-material-scan   -> key-material-scan
 #   private-path-check  -> private-path-check
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan private-path-check
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate docs-link-check corpus-citation-check docs-prose-check key-material-scan private-path-check
 test: unit-test unit-test-asan py-test firmware-test
 check: lint test doxygen
 
@@ -478,7 +485,7 @@ test-unit: unit-test
 
 .PHONY: dashboard \
 		format format-check yamllint clang-tidy tidy tuning-sync corpus-validate corpus-gen \
-		docs-link-check \
+		docs-link-check corpus-citation-check \
 		include-graph stub-sync \
 		docs-prose-check \
 		key-material-scan private-path-check \
