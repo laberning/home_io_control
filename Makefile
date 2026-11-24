@@ -348,11 +348,13 @@ INCLUDES := -Icomponents/home_io_control \
 # IOHOME_LR1121_BOOTLOADER_UPDATE is the same story one level down: normally only set when a
 # `bootloader:` sub-block is configured, but the 0x81xx primitives and the three-stage
 # orchestration it gates need to be always-on for their host tests to have anything to link.
+# IOHOME_BRIDLE compiles the Bridle radio sources (no firmware configuration sets it yet).
 UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_CUSTOM_SERVICES \
 			 -DUSE_API_HOMEASSISTANT_SERVICES \
 			 -DIOHOME_LR1121_FIRMWARE_UPDATE \
-			 -DIOHOME_LR1121_BOOTLOADER_UPDATE
+			 -DIOHOME_LR1121_BOOTLOADER_UPDATE \
+			 -DIOHOME_BRIDLE
 
 # Regenerates build/corpus/corpus_generated.h from tests/corpus/captures/**/*.yaml.
 # see tests/corpus/README.md.

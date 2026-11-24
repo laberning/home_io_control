@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -113,6 +114,33 @@ class SpiAccess {
   /// Read one byte (MISO only, MOSI driven with 0).
   /// @return Byte received.
   virtual uint8_t spi_read() = 0;
+};
+
+/// @brief Abstract byte-stream interface for radios reached over a serial link.
+///
+/// The counterpart of @ref SpiAccess for a radio behind a UART (or any reliable, in-order byte
+/// stream): the driver reads and writes bytes without depending on the ESPHome UART framework,
+/// and host tests replace the link with a scripted double. The component that owns the link
+/// implements it.
+/// @ingroup hioc_radio
+class ByteStreamAccess {
+ public:
+  /// The line rate of the Bridle UART the spec fixes (§2.1), in baud.
+  static constexpr uint32_t DEFAULT_BAUD_RATE = 1000000;
+
+  virtual ~ByteStreamAccess() = default;
+  /// Bytes that can be read now without waiting.
+  [[nodiscard]] virtual size_t available() = 0;
+  /// Read up to `max` of the bytes that are available; never waits.
+  /// @return Bytes copied into `buf` (0 when none are available).
+  virtual size_t read(uint8_t *buf, size_t max) = 0;
+  /// Queue `n` bytes for sending. May return before they have left the link; see @ref flush.
+  virtual void write(const uint8_t *buf, size_t n) = 0;
+  /// Block until every queued byte has left the link.
+  virtual void flush() = 0;
+  /// The link's line rate in baud (8N1: ten bit times a byte). A driver derives the UART time of
+  /// its commands from it. @ref DEFAULT_BAUD_RATE unless the stream knows better.
+  [[nodiscard]] virtual uint32_t baud_rate() const { return DEFAULT_BAUD_RATE; }
 };
 
 /// Configuration for transmitting a packet: carrier frequency, preamble length, wake-up level and
