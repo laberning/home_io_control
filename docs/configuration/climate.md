@@ -9,7 +9,7 @@ preset and target does on the heater, is on
 
 > [!NOTE]
 > Confirmed on hardware: the [Atlantic AGILIA IO](../devices/atlantic-agilia-io.md) radiator, the
-> [Atlantic Adelis](../devices/atlantic-adelis.md) towel dryer, the [Sauter Hekla](../devices/sauter-hekla.md),
+> [Atlantic Adelis](../devices/atlantic-adelis.md) and Sauter Alutu towel dryers, the [Sauter Hekla](../devices/sauter-hekla.md),
 > the Thermor EMOTION 3 H and a [Thermor pilot-wire interface](../devices/thermor-pilot-wire-interface.md).
 > Untested: the heating temperature interface and the generic heat pump, which have not run on
 > hardware yet. **If you own a heater that is not on this list, please try it and report what
@@ -338,8 +338,9 @@ Many electric heaters count the energy they have used, in whole kilowatt-hours, 
 their display. The optional `energy:` block shows that counter in Home Assistant, so the heater
 appears in the energy dashboard. The total matches the display of two Sauter Tahual radiators
 ([pull request 238](https://github.com/laberning/home_io_control/pull/238), corpus capture
-`sauter_tahual_probe_energy_register`) and reads correctly on three Sauter Hekla heaters
-([issue #222](https://github.com/laberning/home_io_control/issues/222)).
+`sauter_tahual_probe_energy_register`), reads correctly on three Sauter Hekla heaters
+([issue #222](https://github.com/laberning/home_io_control/issues/222)), and matches the display of two
+Sauter Alutu towel dryers ([issue #262](https://github.com/laberning/home_io_control/issues/262)).
 
 ```yaml
 climate:
@@ -367,10 +368,11 @@ climate:
   helper.
 
 > [!NOTE]
-> Experimental except on a Sauter Tahual and a Sauter Hekla. Two Thermor EMOTION 3 H radiators
+> Experimental except on a Sauter Tahual, a Sauter Hekla and a Sauter Alutu. Two Thermor EMOTION 3 H radiators
 > ([issue #228](https://github.com/laberning/home_io_control/issues/228)) and two Atlantic Adelis towel
 > dryers ([issue #202](https://github.com/laberning/home_io_control/issues/202)) answer the register, but
-> nobody has compared their total with the display. A vendor app
+> nobody has compared their total with the display; neither has the owner of a Thermor Symphonik towel dryer
+> ([issue #263](https://github.com/laberning/home_io_control/issues/263)). A vendor app
 > may show a different total than the heater's own counter. Please compare yours and report the result.
 
 ## Boost and drying times

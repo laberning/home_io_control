@@ -102,8 +102,8 @@ keys. Platform-specific options are documented on each platform's own page.
 - `io_model` (Optional): The product model, for products that report the same type and subtype but
   need different handling. The radio does not carry the model, so the hub cannot learn it: you
   declare it, together with `io_device_type` and `io_subtype`. Five models exist. Three sit under
-  `io_device_type: electrical_heater`. With `io_subtype: 1`: `towel_dryer`, for an
-  [Atlantic Adelis](../devices/atlantic-adelis.md) towel dryer, and `heater_with_light`, for a heater
+  `io_device_type: electrical_heater`. With `io_subtype: 1`: `towel_dryer`, for a towel dryer
+  such as the [Atlantic Adelis](../devices/atlantic-adelis.md), and `heater_with_light`, for a heater
   with a [night light](climate.md#heaters-with-a-night-light) such as the Sauter Hekla. With
   `io_subtype: 0`: `pilot_wire_interface`, for an
   [interface for pilot-wire heaters](../heating.md#level-heaters-and-pilot-wire-interfaces). Two sit under

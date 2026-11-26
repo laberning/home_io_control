@@ -671,6 +671,12 @@ A bench run on a Somfy Sunea io awning, with each result read back over two-way,
 `timed` (35.5 s open, 38 s close) the stop went on the air 19.1 s after the close, and the awning rested at 50 and 51 %
 in three runs. With `frame` one position frame moved it to 50 %. See [Somfy Sunea IO](../devices/somfy-sunea-io.md).
 
+VELUX owners report `timed` working too (issue #74). On roller shutters behind a KUX 110 with a KLI 310 (SX1276,
+`manufacturer: velux`, 40 s travel times), the cover with `set_position: timed` and `follows:` the KLI works and takes
+the place of a `time_based` cover and its automation. On an FSC PK10 solar pleated blind (Heltec V4.2,
+`low_power: true`), 50 % from fully open showed 48 % and the blind stopped a little past the middle; a press on its KLI
+moved the cover's position.
+
 `set_position:` without `open_duration:` and `close_duration:` is a configuration error: without travel times there
 is nothing to work a stop out from. Without them the slider has no values between the ends and a value goes out as
 open or close, whichever end it is nearer, and 50 % opens. The `time_based` recipe in

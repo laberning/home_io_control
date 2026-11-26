@@ -102,9 +102,10 @@ cover:
 io's answers to the sun level and battery level requests (`somfy_rs100_probe_subscribe_event_*`).
 
 Five mains RS100 IO roller shutters on a LilyGO T-Beam v1.2 / SX1276 cover the always-alive rows
-(pull request #258).
+(pull request #258); two more run on a Heltec V3 / SX1262 with linked remotes, no `low_power:` and a
+2 s status poll (issue #261).
 
-Field reports: issues #16, #45, #156 and #187.
+Field reports: issues #16, #45, #156, #187 and #261.
 
 ## See also
 

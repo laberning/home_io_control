@@ -80,6 +80,7 @@ Someone running the board says it works. It has not been tested here.
 | Board | Radio | `spi:` pins | `home_io_control:` pins | Settings | Report |
 |-------|-------|-------------|-------------------------|----------|--------|
 | Heltec WiFi LoRa32 V4.2 | SX1262 | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | `tcxo_voltage: 1_8V`, `fem: gc1109` and the FEM pins. [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) | 1W only: a VELUX FSC solar pleated blind (issue #74) |
+| Heemol LoRa V3 (a Heltec V3 clone, ESP32-S3) | SX1262 | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | `tcxo_voltage: 1_8V`. Same pins as the Heltec V3 | Two Sauter Alutu towel dryers, two-way (issue #262) |
 | Heltec Wireless Paper V1.2 | SX1262 | Not reported | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | `tcxo_voltage: 1_8V` | 1W only: two VELUX roof windows (issue #249) |
 | LilyGO T-ETH-Elite (ESP32-S3) + LoRa shield SX1276 | SX1276 | `clk_pin: 10`, `mosi_pin: 11`, `miso_pin: 9` | `cs_pin: 40`, `rst_pin: 46`, `dio0_pin: 8` | See the notes below | Key extraction from a VELUX KLF 200 (issue #195) |
 | LilyGO LoRa32 V1.3 SX1276 | SX1276 | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | | |

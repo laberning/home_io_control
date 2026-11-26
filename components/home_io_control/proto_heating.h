@@ -66,8 +66,9 @@ enum class DeviceRegister : uint8_t {
   PRESENCE,               ///< Register 0x0110, read/write: someone is in the room (1) or not (0). A controller
                           ///< writes it to tell the heater; a Sauter Hekla reports there whether its own
                           ///< detection sees someone (issue #222), 0 with nobody in the room and 1 while
-                          ///< someone walks around it, with its occupancy detection on.
-                          ///< \todo Confirm on another heater that the register reports detected presence.
+                          ///< someone walks around it, with its occupancy detection on. Two Thermor EMOTION
+                          ///< 3 H radiators report presence there too (issue #228); their detection lasts a
+                          ///< short time, sometimes a single poll.
   OPEN_WINDOW_DETECTION,  ///< Register 0x0106, read/write: open-window detection on (1) or off (0).
   SETPOINT_BLOCK,         ///< Register 0x0130, read: the comfort/eco/auto setpoint block. Logged, never decoded.
   ROOM_TEMPERATURE,       ///< Register 0x0115, read-only: measured room temperature, signed hundredths of a degree.

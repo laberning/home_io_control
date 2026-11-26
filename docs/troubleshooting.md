@@ -160,8 +160,8 @@ preamble while it believes the device is awake
   off, every `stop` goes out with the wake-up preamble and none lands mid-travel.
 - A mid-travel `stop` does not land on every attempt, so press stop again if the device keeps
   moving. This is how a VELUX SSL solar roller shutter stops mid-travel.
-- The VELUX MSU solar awning screen has no confirmed mid-travel stop yet; stop it with its own
-  remote (see [VELUX INTEGRA](devices/velux-integra.md)).
+- On the VELUX MSU solar awning screen one owner reports that a mid-travel `stop` works (issue #95);
+  if it does not land, press stop again or use its own remote (see [VELUX INTEGRA](devices/velux-integra.md)).
 
 ## 1W commands do nothing
 

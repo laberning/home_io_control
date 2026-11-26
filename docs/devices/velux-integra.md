@@ -17,14 +17,14 @@ and hubs that make good key sources, the wired bridges, and the products control
 | KLF 200 gateway | 📣 Reported as a key-extraction source (one reporter) — use **SEARCH FOR PRODUCTS**, and repeat it while armed if it finds nothing |
 | KIG 300 hub | ⚠️ Partial — one extraction succeeded, one stalled |
 | Devices behind an extracted key | ✅ Confirmed, with `low_power: true` |
-| MSU 100100 solar awning screen | ⚠️ Partial — open and close work; `stop` has no effect while it moves |
+| MSU 100100 solar awning screen | ⚠️ Partial — open and close work; `stop` mid-travel reported to work by one owner (issue #95); how reliably is not known yet |
 | SSL solar roller shutter | ⚠️ Partial — Discover & Pair, open, close, position and status work; `stop` reaches it mid-travel, but not on every attempt |
 | SSL solar roller shutter behind a KLR 200 key | 📣 Reported (one reporter, two shutters, Heltec V4.3) — registered to the KLR 200 from its KLI 110, then found by Scan Paired Devices; open, close, `stop` mid-travel, position and status, with no motor reset |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
-| SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false` |
+| SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false`. A one-way cover with a `timed` slider is reported on shutters behind a KUX 110 (issue #74) |
 | SML electric roller shutter, two-way | 📣 Reported (one reporter) — Discover & Pair after Gear, with a short discovery preamble; open, close, stop mid-travel, set position and status |
-| Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true` |
-| FSC solar pleated blind, 1W enrollment + control | 📣 Reported (one reporter) — reset, pair the KLI, Gear, wait for the ready sequence, then Enroll; `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true`. Discover & Pair got no answer |
+| Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true`. Four more blinds on a Heltec V4.3 (issue #57); one enrolled only after a full reset of the blind |
+| FSC solar pleated blind, 1W enrollment + control | 📣 Reported (one reporter) — reset, pair the KLI, Gear, wait for the ready sequence, then Enroll; `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true`. Discover & Pair got no answer. A one-way cover with a `timed` slider showed 48 % for 50 % (issue #74) |
 
 ## Onboarding routes
 
@@ -220,9 +220,9 @@ moves the window to its predefined air-exchange opening rather than fully open.
   attempts, so a silent shutter holds it for about 3.2 s. The default wake-up is 515 ms
   ([ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)); if commands to a resting shutter
   still often need a second press, try `600` or longer in
-  [`low_power_wake_ms`](../configuration/tuning.md#low_power_wake_ms). There is no
-  such result for the MSU solar awning screen, so expect a mid-travel `stop` to do nothing there
-  and use the product's own wall remote.
+  [`low_power_wake_ms`](../configuration/tuning.md#low_power_wake_ms). One owner
+  reports that `stop` also lands mid-travel on the MSU solar awning screen (issue #95), with no
+  log yet; if it does not land, press stop again or use the product's own wall remote.
 - **1W enrollment is a Gear press on the existing KLI, not a button on the product.** Press the
   Gear button ("open for registration") on the KLI that already drives the product for about
   1 second. Not the Pair button: that one is for a *new* control, which the hub's Enroll button
@@ -345,7 +345,7 @@ One more capture holds five type 4/1 windows answering keyed roll-calls, receive
 receiver (issue #242).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter, KLI 312 blind and FSC pleated blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
-screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #57 (mains-wired roller shutters), #230 (SML two-way pairing, shutters queued on one KUX 110), #240 (two SSL shutters behind a KLR 200 key), #241 (identify on a type 4/1 window), #242 (KLR 100 Copy system, five type 4/1 windows), #249 (CVP roof windows behind a KLI 311).
+screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #57 (mains-wired roller shutters, four KLI 312 blinds over 1W), #230 (SML two-way pairing, shutters queued on one KUX 110), #240 (two SSL shutters behind a KLR 200 key), #241 (identify on a type 4/1 window), #242 (KLR 100 Copy system, five type 4/1 windows), #249 (CVP roof windows behind a KLI 311).
 
 ## See also
 

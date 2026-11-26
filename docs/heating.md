@@ -81,7 +81,7 @@ Which kind your product is:
 |---|---|
 | [Atlantic AGILIA IO](devices/atlantic-agilia-io.md), Thermor EMOTION 3 H | Radiator with a setpoint |
 | [Sauter Hekla](devices/sauter-hekla.md) | Radiator with a setpoint and a night light |
-| [Atlantic Adelis](devices/atlantic-adelis.md) | Towel dryer |
+| [Atlantic Adelis](devices/atlantic-adelis.md), Sauter Alutu, Thermor Symphonik | Towel dryer |
 | [Thermor Interface Cozytouch for pilot-wire heaters](devices/thermor-pilot-wire-interface.md) | Pilot-wire interface |
 | [Atlantic Calypso Connecté](devices/atlantic-calypso.md) | Heat-pump water heater |
 | [Atlantic Explorer V4](devices/atlantic-explorer-v4.md) | Heat-pump water heater, declared with `io_model: explorer_v4` |
@@ -149,7 +149,8 @@ target.
 ## Towel dryers
 
 An electric towel dryer with a display, declared with `io_model: towel_dryer`: the
-[Atlantic Adelis](devices/atlantic-adelis.md). Boost and drying are timed runs on top of the mode,
+[Atlantic Adelis](devices/atlantic-adelis.md), the Sauter Alutu (issue #262) and the Thermor
+Symphonik (issue #263). Boost and drying are timed runs on top of the mode,
 so they are presets, and the mode underneath stays as it was.
 
 | Towel dryer display | Mode | Preset | What a target sets |
@@ -162,6 +163,7 @@ so they are presets, and the mode underneath stays as it was.
 
 - Select `boost` or `Drying` to start a run, and `none` to end the one that runs. Both run for the
   duration set on the dryer's display.
+- A dryer in `off` ignores boost and drying, so set `heat` or `auto` first (Sauter Alutu, issue #262).
 - A boost started on the dryer itself shows as the `boost` preset and `heating` at the next poll.
 - The target runs from 7.0 °C to the dryer's own maximum (28.0 °C until it reports one) in steps of
   0.5 °C. While PROG runs with no boost or drying on top, the card shows the temperature the dryer
