@@ -528,9 +528,13 @@ async def create_companion(
     ``config``. The entity joins the parent's ESPHome sub-device, is registered as a component and
     bound to the hub (``set_parent``, ``set_device_id``). ``new_entity`` is the platform's
     ``new_<kind>()`` coroutine and receives ``new_kwargs`` (the select's options).
+
+    The parent's sub-device is copied in before the schema runs: the schema includes ESPHome's
+    duplicate-name check, which counts a name once per sub-device, so a companion checked without
+    it would collide with the same companion of a nameless entity on another sub-device.
     """
     entity_config = schema.extend(cv.COMPONENT_SCHEMA)(
-        {CONF_ID: config[id_key], CONF_NAME: name, **(overrides or {})}
+        inherit_esphome_device({CONF_ID: config[id_key], CONF_NAME: name, **(overrides or {})}, config)
     )
     return await _bind_companion(config, parent, new_entity, entity_config, **new_kwargs)
 

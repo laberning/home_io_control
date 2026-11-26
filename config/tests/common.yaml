@@ -14,14 +14,18 @@ esphome:
   # deep-merging) — silence the resulting "already defined" noise since that's expected here.
   merge_warnings: false
   # Exercises the device_id: sub-device path (companion sensors/buttons inheriting their parent's
-  # ESPHome device) on "Test Cover"/"Test Window Cover"/"Test Light" below. "Test Silent Cover"/
-  # "Test Dimmable Light"/"Test Switch" deliberately have no device_id:, so both branches compile.
+  # ESPHome device) on "Test Cover"/"Test Window Cover"/"Test Light" and test_nameless_cover below.
+  # "Test Silent Cover"/"Test Dimmable Light"/"Test Switch" deliberately have no device_id:, so both
+  # branches compile.
   devices:
     - id: dev_cover
       name: "Test Cover Device"
       relation: via
     - id: dev_light
       name: "Test Light Device"
+      relation: via
+    - id: dev_cover_2
+      name: "Test Cover Device 2"
       relation: via
 
 # Minimal esp32 config; framework (arduino/esp-idf) set in platform-specific files
@@ -180,6 +184,16 @@ cover:
     # `status_refresh_interval:` adds no entity, only the schedule; the covers above omit it, so this
     # compiles both branches of the setter.
     status_refresh_interval: 15min
+  # A second nameless cover on its own sub-device, as the docs advise for grouping entities: its
+  # companions carry the same bare names as "Test Window Cover"'s ("Favorite Position", ...), which
+  # ESPHome allows only because each set sits on a different sub-device.
+  - platform: home_io_control
+    device_id: dev_cover_2
+    id: test_nameless_cover
+    name: ""
+    io_device_id: "FEEB31"
+    device_class: shutter
+    io_device_type: "roller_shutter"
 
 light:
   - platform: home_io_control
