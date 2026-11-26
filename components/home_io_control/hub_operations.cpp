@@ -466,6 +466,43 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
       });
 }
 
+bool IOHomeControlComponent::set_device_position_automatic(const std::string &device_id, uint8_t position) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return false;
+  const uint32_t result_at_before = dev->last_result_at_ms;
+  const bool accepted = this->run_execute_operation_(
+      device_id, {"automatic position", false},
+      [](const IoDevice &d) { return detail::known_device_matches_entity_class(d, DeviceCapabilityClass::COVER); },
+      "cover entity",
+      [this, position](IoFrame &request, const IoDevice &d) {
+        return create_execute_position_automatic(request, this->node_id_, d.node_id, d.low_power, position,
+                                                 sends_speed_block(d), d.travel_speed == TravelSpeed::SILENT);
+      });
+  this->record_manual_mode_(device_id, accepted, result_at_before);
+  return accepted;
+}
+
+void IOHomeControlComponent::record_manual_mode_(const std::string &device_id, bool accepted,
+                                                 uint32_t result_at_before) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return;
+  ManualMode mode = ManualMode::UNKNOWN;
+  if (accepted) {
+    mode = ManualMode::AUTO;
+  } else if (dev->last_result_at_ms != result_at_before && is_priority_lock_result(dev->last_result_code)) {
+    mode = ManualMode::MANUAL;
+  } else {
+    return;  // No answer, or a refusal for another reason: what the motor's lock is stays as it was.
+  }
+  if (mode != dev->manual_mode) {
+    ESP_LOGI(detail::TAG, "Device %s: manual mode %s", device_id.c_str(), mode == ManualMode::MANUAL ? "on" : "off");
+  }
+  dev->manual_mode = mode;
+  this->notify_device_update_(device_id);
+}
+
 bool IOHomeControlComponent::set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
   char action[EXECUTE_ACTION_BUF_SIZE];
   snprintf(action, sizeof(action), "tilt=%u%%", tilt_percent);
@@ -958,6 +995,14 @@ bool IOHomeControlComponent::queue_device_command(const std::string &device_id, 
   return true;
 }
 
+bool IOHomeControlComponent::queue_set_device_position_automatic(const std::string &device_id, uint8_t position) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (!this->initialized_ || dev == nullptr || queue_guard_rejects(this, device_id, QUEUE_GUARD_COVER))
+    return false;
+  this->op_queue_.enqueue_set_position_automatic(device_id, position);
+  return true;
+}
+
 void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
   if (queue_guard_rejects(this, device_id, QUEUE_GUARD_TILT)) {
     // Withdraw the entity's optimistic prediction — see queue_set_device_position().
@@ -1113,6 +1158,9 @@ void IOHomeControlComponent::process_pending_operation_() {
   switch (operation.type) {
     case PendingOperationType::SET_POSITION:
       this->set_device_position(operation.device_id, operation.position);
+      break;
+    case PendingOperationType::SET_POSITION_AUTOMATIC:
+      this->set_device_position_automatic(operation.device_id, operation.position);
       break;
     case PendingOperationType::SET_TILT:
       this->set_device_tilt(operation.device_id, operation.position);

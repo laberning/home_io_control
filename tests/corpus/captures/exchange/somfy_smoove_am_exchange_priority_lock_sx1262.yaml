@@ -1,0 +1,103 @@
+id: somfy_smoove_am_exchange_priority_lock_sx1262
+description: >
+  The hub's execute_priority probe (a STOP, main parameter D2) sent three times to a Somfy roller
+  shutter motor wired to a Smoove Uno io A/M switch. With the switch on A, the STOP at ACEI 0xE7
+  (level 7) is taken (PRIVATE_RESP). With the switch on M, the same STOP at level 7 is refused with
+  ERROR_RESP FE 38 (PRIORITY_LOCKED), and the STOP at ACEI 0x47 (level 2) is taken. The status
+  payload of both PRIVATE_RESP replies is identical, so the lock shows only in the answer to a
+  level-7 command. Three complete authenticated exchanges, one per probe.
+source:
+  device: "Somfy roller shutter motor behind a Smoove Uno io A/M switch"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-11-26
+  origin: own-hardware
+  issue: "https://github.com/laberning/home_io_control/pull/264"
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868250000
+    hex: "4E 00 7A 38 D1 90 DF DD 00 01 E7 D2 00 00 00"
+    crc: absent
+    note: "EXECUTE STOP at ACEI 0xE7 (level 7), switch on A, START"
+  - dir: rx
+    t_ms: 9
+    freq: 868250000
+    hex: "0E 00 90 DF DD 7A 38 D1 3C 10 B5 79 F9 76 4E"
+    crc: absent
+    note: "challenge request"
+  - dir: tx
+    t_ms: 12
+    freq: 868250000
+    hex: "0E 20 7A 38 D1 90 DF DD 3D CA E7 01 56 E3 2C"
+    crc: absent
+    note: "challenge response (re-keyed under the corpus key)"
+  - dir: rx
+    t_ms: 23
+    freq: 868250000
+    hex: "96 00 90 DF DD 7A 38 D1 04 05 80 D2 00 F7 FF 00 00 90 DF DD 01 00 00"
+    crc: absent
+    note: "PRIVATE_RESP: taken on A, END"
+  - dir: tx
+    t_ms: 36555
+    freq: 869850000
+    hex: "4E 00 7A 38 D1 90 DF DD 00 01 E7 D2 00 00 00"
+    crc: absent
+    note: "EXECUTE STOP at ACEI 0xE7 (level 7), switch on M, START"
+  - dir: rx
+    t_ms: 36561
+    freq: 869850000
+    hex: "0E 00 90 DF DD 7A 38 D1 3C CE 71 BF F1 67 2F"
+    crc: absent
+    note: "challenge request"
+  - dir: tx
+    t_ms: 36564
+    freq: 869850000
+    hex: "0E 20 7A 38 D1 90 DF DD 3D 11 EA A7 E9 9A 18"
+    crc: absent
+    note: "challenge response (re-keyed under the corpus key)"
+  - dir: rx
+    t_ms: 36570
+    freq: 869850000
+    hex: "89 00 90 DF DD 7A 38 D1 FE 38"
+    crc: absent
+    note: "ERROR_RESP, result=0x38 (PRIORITY_LOCKED): refused on M, END"
+  - dir: tx
+    t_ms: 86328
+    freq: 868950000
+    hex: "4E 00 7A 38 D1 90 DF DD 00 01 47 D2 00 00 00"
+    crc: absent
+    note: "EXECUTE STOP at ACEI 0x47 (level 2), switch on M, START"
+  - dir: rx
+    t_ms: 86329
+    freq: 868950000
+    hex: "0E 00 90 DF DD 7A 38 D1 3C 03 96 A9 03 15 75"
+    crc: absent
+    note: "challenge request"
+  - dir: tx
+    t_ms: 86332
+    freq: 868950000
+    hex: "0E 20 7A 38 D1 90 DF DD 3D D7 7D A6 BD 71 4E"
+    crc: absent
+    note: "challenge response (re-keyed under the corpus key)"
+  - dir: rx
+    t_ms: 86337
+    freq: 868950000
+    hex: "96 00 90 DF DD 7A 38 D1 04 05 80 D2 00 F7 FF 00 00 90 DF DD 01 00 00"
+    crc: absent
+    note: "PRIVATE_RESP: taken on M at level 2, END"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: ACCEPT}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w, classification: ACCEPT}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: ACCEPT}

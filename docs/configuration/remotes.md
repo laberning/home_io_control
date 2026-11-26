@@ -202,8 +202,12 @@ What to know:
 
 - **Only the flip carries the state.** The switch's up and down presses are the same in A and in M, so a flip the
   hub did not hear stays wrong until the next flip.
+- **The cover's status does not show it.** A status read of a cover is the same in A and in M.
 - **A wired switch sends nothing.** A Smoove Uno io wired to the motor puts no frame on the air, so the hub cannot
   hear its flips.
+- **The motor knows.** On M the motor refuses a command at automation priority, and with `manual_mode: true` a
+  cover's [Manual mode](cover.md#manual-mode) sensor follows both the motor's answers and the flips of a switch in
+  its `linked_remotes`.
 
 Evidence: `tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_auto_sx1262.yaml`,
 `tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_manual_sx1262.yaml`,

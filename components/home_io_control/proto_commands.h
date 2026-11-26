@@ -143,6 +143,48 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
                                    bool force_open_priority = false);
 
+/// @brief Lowest ACEI level create_execute_stop_at_priority() frames. Levels 0 and 1 are the
+/// protection levels a wind or rain sensor locks a device at; a probe never claims them.
+static constexpr uint8_t PRIORITY_PROBE_MIN_LEVEL = ACEI_LEVEL_USER_HIGH;
+/// @brief ACEI bits below the level that create_execute_stop_at_priority() sends: valid, extended field 3,
+/// service 0. A TaHoma's commands to a cover carry exactly these, at level 2 (`0x47`) and at level 7 (`0xE7`).
+static constexpr uint8_t PRIORITY_PROBE_ACEI_LOW_BITS = 0x07;
+
+/// @brief Build a STOP EXECUTE (0x00) at a chosen ACEI priority level, for the `execute_priority` probe.
+///
+/// A Somfy motor following an A/M switch on M refuses the hub's STOP at level 7 with RESULT_PRIORITY_LOCKED
+/// (`ERROR_RESP FE 38`) and takes it at level 2; on A it takes both. A STOP at a chosen level asks a resting cover
+/// that question without moving it.
+/// @param f Output frame.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param low_power True if the target is battery/solar-powered.
+/// @param level ACEI priority level, PRIORITY_PROBE_MIN_LEVEL (2) to ACEI_LEVEL_AUTO_DEFAULT (7).
+/// @return true on success; false for a level outside that range.
+bool create_execute_stop_at_priority(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t level);
+
+/// @brief ACEI byte of a command sent at automation priority: level 7 (auto_default), low bits as a TaHoma sends
+/// them (`0xE7`). A motor whose wired A/M switch is on M refuses it with PRIORITY_LOCKED (`FE 38`) and takes the
+/// hub's normal level-3 commands.
+static constexpr uint8_t AUTOMATIC_EXECUTE_ACEI =
+    (ACEI_LEVEL_AUTO_DEFAULT << ACEI_LEVEL_SHIFT) | PRIORITY_PROBE_ACEI_LOW_BITS;
+
+/// @brief Build a position EXECUTE (0x00) at automation priority (AUTOMATIC_EXECUTE_ACEI).
+///
+/// The same two shapes as a normal position move, with only the ACEI byte changed: the 8-byte form of
+/// create_execute_position() for a device that takes the speed block, else the 6-byte main-parameter form of
+/// create_execute_main_parameter().
+/// @param f Output frame.
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
+/// @param low_power True if the target is battery/solar-powered.
+/// @param position Target position 0..100 (IO scale: 0 = open, 100 = closed).
+/// @param speed_block True for a device that takes the speed block (sends_speed_block()).
+/// @param silent True for the silent travel profile (only with `speed_block`).
+/// @return true on success; false for a position above 100.
+bool create_execute_position_automatic(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                       uint8_t position, bool speed_block, bool silent);
+
 /// @brief Does an EXECUTE frame carry the speed block, functional parameter 1 (the 8-byte position form
 /// of create_execute_position() and create_force_open())?
 /// @param f Outbound frame.

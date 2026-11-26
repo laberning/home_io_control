@@ -15,6 +15,7 @@ namespace home_io_control {
 static const char *const TAG_COMMAND_BUTTON = "home_io_control.cover_command_button";
 static const char *const TAG_SILENT = "home_io_control.cover.silent";
 static const char *const TAG_TRAVEL_SPEED = "home_io_control.cover.travel_speed";
+static const char *const TAG_MANUAL_MODE = "home_io_control.cover.manual_mode";
 
 void IOHomeCoverCommandButton::press_action() {
   if (this->device_port_ == nullptr) {
@@ -85,6 +86,19 @@ void IOHomeCoverTravelSpeedSelect::control(const std::string &value) {
 void IOHomeCoverTravelSpeedSelect::dump_config() {
   ESP_LOGCONFIG(TAG_TRAVEL_SPEED, "IO-Homecontrol Travel Speed:");
   ESP_LOGCONFIG(TAG_TRAVEL_SPEED, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeCoverManualModeBinarySensor::setup() {
+  // Fed by the answers to set_position_automatic and by heard flips of a linked A/M switch; the sensor sends nothing.
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    if (dev.manual_mode != ManualMode::UNKNOWN)
+      this->publish_state(dev.manual_mode == ManualMode::MANUAL);
+  });
+}
+
+void IOHomeCoverManualModeBinarySensor::dump_config() {
+  ESP_LOGCONFIG(TAG_MANUAL_MODE, "IO-Homecontrol Manual Mode:");
+  ESP_LOGCONFIG(TAG_MANUAL_MODE, "  Device ID: %s", this->device_id_.c_str());
 }
 
 }  // namespace home_io_control

@@ -639,6 +639,13 @@ class IOHomeControlComponent : public Component,
   ///         features do not accept the value (an intermediate position on a device without
   ///         device_feature::LEVELS): nothing is sent and the optimistic target is withdrawn.
   bool set_device_position(const std::string &device_id, uint8_t position);
+  /// Send a position move at automation priority (AUTOMATIC_EXECUTE_ACEI) and record the motor's answer in
+  /// IoDevice::manual_mode: taken is AUTO, refused with PRIORITY_LOCKED is MANUAL. A refusal withdraws nothing on
+  /// the device and shows on the Active Issue sensor, like any refused command.
+  /// @param device_id Target device ID.
+  /// @param position Desired position, 0–100 (IO scale: 0 = open).
+  /// @return true if the device took the command; false otherwise.
+  bool set_device_position_automatic(const std::string &device_id, uint8_t position);
   /// Send a tilt command to a tilt‑capable cover.
   /// @param device_id Target device ID.
   /// @param tilt_percent Desired tilt (0–100).
@@ -792,6 +799,7 @@ class IOHomeControlComponent : public Component,
   /// @return true if the hub is initialized, the device is registered, and the command matches
   ///         its capability class (so the command was enqueued); false otherwise.
   bool queue_device_command(const std::string &device_id, CoverCommand cmd) override;
+  bool queue_set_device_position_automatic(const std::string &device_id, uint8_t position) override;
   /// @brief Queue an async tilt update; returns immediately, executed in loop().
   ///
   /// If a pending SET_POSITION operation for the same device is already in the queue, the two are
@@ -1308,6 +1316,17 @@ class IOHomeControlComponent : public Component,
   /// @return true if device acknowledged; false otherwise, including a named position the device's
   ///         features lack (nothing is sent).
   bool execute_device_command_(const std::string &device_id, CoverCommand cmd);
+  /// Record the answer to a command at automation priority in IoDevice::manual_mode and notify subscribers.
+  /// @param device_id Target device ID.
+  /// @param accepted True when the device took the command.
+  /// @param result_at_before IoDevice::last_result_at_ms before the exchange, so a refusal recorded by this
+  ///        exchange is told apart from an older one.
+  void record_manual_mode_(const std::string &device_id, bool accepted, uint32_t result_at_before);
+  /// Set the manual mode of the covers a heard A/M switch flip reaches (its `linked_remotes` covers) to the flip's
+  /// state. Does nothing for a frame that is not an A/M report.
+  /// @param info The decoded 1W frame.
+  /// @param devices The covers the sender is linked to.
+  void apply_mode_switch_(const OneWayFrameInfo &info, const std::vector<std::string> &devices);
   /// Shared bookkeeping for every 1W transmit: mark the radio busy for the duration of `send`,
   /// then record it as 1W activity so background polls back off for it exactly as they do for a
   /// remote's burst — the radio is equally busy either way. Every 1W execute must go through this;

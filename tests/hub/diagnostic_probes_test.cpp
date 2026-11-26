@@ -131,7 +131,7 @@ TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
             "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, "
             "status_fp_high, limitation, "
-            "subscribe_event, unsubscribe_event, read_object, register_00, or register_01)");
+            "subscribe_event, unsubscribe_event, read_object, register_00, register_01, or execute_priority)");
   EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
                                            "not by looping until this flag stops it";
 }
@@ -615,7 +615,7 @@ TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
             "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, "
             "status_fp_high, limitation, "
-            "subscribe_event, unsubscribe_event, read_object, register_00, or register_01)");
+            "subscribe_event, unsubscribe_event, read_object, register_00, register_01, or execute_priority)");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an invalid probe name must not enter the per-index loop at all: " << result.message;
 }
@@ -1667,4 +1667,66 @@ TEST(DiagnosticProbesSeam, ReplyGoesOnlyToTheInjectedCallsAndLeavesTheRecordAlon
   EXPECT_EQ(rig.recorded_replies[0].cmd, CMD_PRIVATE_RESP);
   EXPECT_FLOAT_EQ(dev->position, 42.0F) << "with no hub behind it, nothing applies the reply to the record";
   EXPECT_TRUE(result.decoded.empty()) << "the recorder said it was no event report, so no event header";
+}
+
+// --- execute_priority: a STOP at a chosen ACEI level ---
+
+TEST(HubManagement, ProbeDeviceExecutePriorityLevelSevenSendsTheTahomaAutomationByte) {
+  // A TaHoma's automation-level command carried ACEI 0xE7; a Somfy motor behind a Smoove Uno io on M
+  // refused it with ERROR_RESP FE 05. The probe sends a STOP with that byte and reports the answer raw.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, 0x05)));
+
+  const auto result = component.management_actions_.probe_device("ABC123", "execute_priority", "7");
+  ASSERT_TRUE(result.success) << result.message;
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_EQ(sent_frame_bytes(radio, 0), (std::vector<uint8_t>{0x4E, 0x00, 0xAB, 0xC1, 0x23, 0xC0, 0xFF, 0xEE, 0x00,
+                                                              0x01, 0xE7, 0xD2, 0x00, 0x00, 0x00}));
+  EXPECT_EQ(result.response_cmd, CMD_ERROR_RESP);
+  EXPECT_NE(result.response_hex.find("FE 05"), std::string::npos) << result.response_hex;
+}
+
+TEST(HubManagement, ProbeDeviceExecutePriorityLevelTwoSendsTheTahomaUserByte) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_private_function_reply(component.node_id_)));
+
+  ASSERT_TRUE(component.management_actions_.probe_device("ABC123", "execute_priority", "2").success);
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_EQ(sent_frame_bytes(radio, 0), (std::vector<uint8_t>{0x4E, 0x00, 0xAB, 0xC1, 0x23, 0xC0, 0xFF, 0xEE, 0x00,
+                                                              0x01, 0x47, 0xD2, 0x00, 0x00, 0x00}));
+}
+
+TEST(HubManagement, ProbeDeviceExecutePriorityRejectsProtectionLevelsAndOutOfRangeWithoutTransmitting) {
+  // Levels 0 and 1 are where wind and rain sensors lock a device; a probe never claims them.
+  for (const char *index : {"0", "1", "8", "0xE7"}) {
+    SCOPED_TRACE(index);
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+
+    const auto result = component.management_actions_.probe_device("ABC123", "execute_priority", index);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.message, "probe \"execute_priority\" takes ACEI priority level 2 (user_high) to 7 "
+                              "(auto_default); 0 and 1 are protection levels");
+    EXPECT_TRUE(radio.get_sent_data().empty());
+  }
+}
+
+TEST(HubManagement, ProbeSweepRefusesExecutePriority) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.management_actions_.probe_sweep("ABC123", "execute_priority", "2", "7");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "probe \"execute_priority\" cannot be swept; use probe_device");
+  EXPECT_TRUE(radio.get_sent_data().empty());
 }

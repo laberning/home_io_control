@@ -647,6 +647,15 @@ static constexpr uint8_t RESULT_LIMITATION_BY_MYSELF = 0xEC;           ///< Para
 static constexpr uint8_t RESULT_LIMITATION_BY_AUTOMATIC_CYCLE = 0xED;  ///< Parameter limited by an automatic cycle.
 static constexpr uint8_t RESULT_LIMITATION_BY_EMERGENCY = 0xEE;        ///< Parameter limited by an emergency.
 
+/// @brief Is this result byte a refusal because the command's priority is too low? The packed form
+/// (RESULT_PRIORITY_LOCKED, `FE 38`: what a Somfy motor following an A/M switch on M answered the hub's level-7
+/// command with, tests/corpus/captures/exchange/somfy_smoove_am_exchange_priority_lock_sx1262.yaml) or the
+/// run-status form (RESULT_PRIORITY_LEVEL_LOCKED).
+/// @param result Byte 0 of a CMD_ERROR_RESP payload.
+constexpr bool is_priority_lock_result(uint8_t result) {
+  return result == RESULT_PRIORITY_LOCKED || result == RESULT_PRIORITY_LEVEL_LOCKED;
+}
+
 // ============================================================================
 // Position and Status Wire Constants
 // ============================================================================
@@ -986,7 +995,9 @@ static constexpr uint8_t ONEWAY_SEQUENCE_SIZE = 2;
 /// ordinary up/down presses carry neither the trailer nor the state
 /// (tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_auto_sx1262.yaml,
 /// tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_manual_sx1262.yaml,
-/// tests/corpus/captures/oneway/somfy_smoove_am_oneway_open_in_both_modes_sx1262.yaml).
+/// tests/corpus/captures/oneway/somfy_smoove_am_oneway_open_in_both_modes_sx1262.yaml). The motor's status reply
+/// is the same in both modes, but the motor keeps the lock: on M it refuses a level-7 command with
+/// RESULT_PRIORITY_LOCKED (see AUTOMATIC_EXECUTE_ACEI in proto_commands.h).
 /// @{
 static constexpr uint8_t ONEWAY_MODE_SWITCH_ACEI_SERVICE = 3;  ///< ACEI service type of an A/M report.
 static constexpr uint8_t ONEWAY_MODE_SWITCH_PARAM_LEN = 9;     ///< originator, ACEI, MP(2), FPI1, FPI2, FF, state, FF.

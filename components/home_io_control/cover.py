@@ -13,7 +13,7 @@
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import button, cover, select, switch
+from esphome.components import binary_sensor, button, cover, select, switch
 from esphome.const import (
     CONF_DEVICE_CLASS,
     CONF_DISABLED_BY_DEFAULT,
@@ -59,6 +59,8 @@ CONF_TRAVEL_SPEED_SELECT_ID = "_travel_speed_select_id"
 CONF_OPTIMISTIC_STATE = "optimistic_state"
 CONF_STATUS_REFRESH_INTERVAL = "status_refresh_interval"
 CONF_BATTERY = "battery"
+CONF_MANUAL_MODE = "manual_mode"
+CONF_MANUAL_MODE_SENSOR_ID = "_manual_mode_sensor_id"
 
 # Internal config keys for the cover-only companion button IDs (injected by post-validator).
 CONF_FAVORITE_BUTTON_ID = "_favorite_button_id"
@@ -74,6 +76,9 @@ IOHomeCoverTravelSpeedSelect = home_io_control_ns.class_(
     "IOHomeCoverTravelSpeedSelect", select.Select, cg.Component
 )
 TravelSpeed = home_io_control_ns.enum("TravelSpeed", is_class=True)
+IOHomeCoverManualModeBinarySensor = home_io_control_ns.class_(
+    "IOHomeCoverManualModeBinarySensor", binary_sensor.BinarySensor, cg.Component
+)
 
 # The `travel_speed:` values, which are also the select's options in this order. The names are the
 # ones travel_speed_name() publishes in C++, so the select's state reads back as a valid YAML value.
@@ -132,6 +137,16 @@ def _require_travel_speed_kind(config):
     return config
 
 
+def manual_mode_sensor_name(config):
+    """Derive the manual mode sensor name from the parent cover name."""
+    return companion_entity_name(config, "Manual Mode")
+
+
+def _wants_manual_mode_sensor(config):
+    """`manual_mode: true` generates the sensor; `false` and an absent key do not."""
+    return config.get(CONF_MANUAL_MODE, False)
+
+
 def silent_switch_name(config):
     """Derive the silent-operation switch name from the parent cover name."""
     return companion_entity_name(config, "Silent Operation")
@@ -159,6 +174,13 @@ COVER_COMPANIONS = (
     # Travel speed select: likewise only with `travel_speed:`, the three-way form of the same
     # setting. The two keys are exclusive, so a cover has one entity or the other.
     (CONF_TRAVEL_SPEED_SELECT_ID, "travel_speed_select", IOHomeCoverTravelSpeedSelect, CONF_TRAVEL_SPEED),
+    # Manual mode sensor: only with `manual_mode: true`, for a motor that follows an A/M switch.
+    (
+        CONF_MANUAL_MODE_SENSOR_ID,
+        "manual_mode_sensor",
+        IOHomeCoverManualModeBinarySensor,
+        _wants_manual_mode_sensor,
+    ),
 )
 
 
@@ -203,6 +225,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(reading_poll_interval_schema(COVER_PLATFORM))
     .extend({cv.Optional(CONF_STATUS_REFRESH_INTERVAL): validate_status_refresh_interval})
     .extend({cv.Optional(CONF_BATTERY): cv.boolean})
+    .extend({cv.Optional(CONF_MANUAL_MODE): cv.boolean})
     .extend({cv.Optional(CONF_OPTIMISTIC_STATE, default=True): cv.boolean})
     .extend(cv.COMPONENT_SCHEMA),
     validate_device_model,
@@ -261,6 +284,16 @@ async def to_code(config):
             id_key=CONF_TRAVEL_SPEED_SELECT_ID,
             name=travel_speed_select_name(config),
             options=list(TRAVEL_SPEEDS),
+        )
+
+    if CONF_MANUAL_MODE_SENSOR_ID in config:
+        await create_companion(
+            config,
+            parent,
+            schema=binary_sensor.binary_sensor_schema(IOHomeCoverManualModeBinarySensor),
+            new_entity=binary_sensor.new_binary_sensor,
+            id_key=CONF_MANUAL_MODE_SENSOR_ID,
+            name=manual_mode_sensor_name(config),
         )
 
     # The opt-in readings: their entities, then their schedules (rain, sun level and battery level are read on one).

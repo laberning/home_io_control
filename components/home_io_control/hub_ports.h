@@ -152,6 +152,13 @@ class HubDevicePort {
   /// @param position Target position (0-100).
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position) = 0;
 
+  /// @brief Queue a position move at automation priority (level 7). A motor whose wired A/M switch is on M
+  /// refuses it (PRIORITY_LOCKED), and the answer sets the device's IoDevice::manual_mode.
+  /// @param device_id Hexadecimal node ID string.
+  /// @param position Target position (0-100, IO scale: 0 = open).
+  /// @return True when queued: the hub is running and the device is a declared cover.
+  virtual bool queue_set_device_position_automatic(const std::string &device_id, uint8_t position) = 0;
+
   /// @brief Queue a tilt move. A position move queued for the same device is merged into one exchange.
   /// @param device_id Hexadecimal node ID string.
   /// @param tilt_percent Target tilt (0-100).
