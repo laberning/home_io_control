@@ -48,7 +48,8 @@ match.
 | **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | Corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
 | **OXIMO io**, **OXIMO 50 io** (wired) roller shutter motors | `roller_shutter` | ✅ Confirmed | Two-way pairing | Open, close, stop, position. Two motors on one Heltec V2 / SX1276 hub, issue #178. The OXIMO 50 io advertises a 5 ms turnaround and drops the exchange when the hub answers its challenge even 5 ms late |
 | **Oximo 40 Solar tubular motor** | `roller_shutter` | 🔍 Traffic captured only | — | `low_power: true`. Corpus `somfy_oximo40_statuspoll_sx1262`, issue #45 |
-| **RS100 IO / RS100 Solar** | `vertical_exterior_awning` / `roller_shutter` | ⚠️ Partial | Discover & Pair; retry if the key exchange stalls | `low_power: true`. One motor runs on 1W only (issue #187). One held by a TaHoma was paired by address in its power-cycle learn window ([pull request #257](https://github.com/laberning/home_io_control/pull/257)). [Somfy RS100 IO](devices/somfy-rs100.md) |
+| **RS100 IO** (mains) | `roller_shutter` | ✅ Confirmed | [Pairing by address](pairing.md#pairing-a-device-by-address); Discover & Pair got no answer | No `low_power:`, and a short `status_poll_interval`. Five motors on a LilyGO T-Beam v1.2 / SX1276. [Somfy RS100 IO](devices/somfy-rs100.md) |
+| **RS100 Solar** | `vertical_exterior_awning` / `roller_shutter` | ⚠️ Partial | Discover & Pair; retry if the key exchange stalls | `low_power: true`. One motor runs on 1W only (issue #187). [Somfy RS100 IO](devices/somfy-rs100.md) |
 | **Sonesse 40 io** (interior blind motor) | `vertical_interior_blind` | 📣 Reported | Discover & Pair | Commands and status reads without a failed exchange in a logged session. Heltec V4.3, issue #196 |
 | **J406 IO shutter motor**, also "J406io Protect" | `exterior_venetian_blind` | ✅ Confirmed | Discover & Pair | Enumerates as `0x11`. Corpus `somfy_j406_discovery_1w_overheard` |
 | **Exterior venetian blinds** (ten units, model not given) | `exterior_venetian_blind` | 📣 Reported | Key extraction from a TaHoma Switch | Open, close, stop, position and tilt; their Somfy io remotes and a Situo 1 io Pure II as `linked_remotes`. LilyGO T3 V2.1 / SX1276, issue #244 |
@@ -72,7 +73,9 @@ is inside the tube rather than by the name on the awning.
 
 `low_power: true` on the solar Somfy motors is a reasoned starting point rather than a confirmed
 setting: the option is meant for battery and solar actuators, and it is confirmed on VELUX hardware
-through issue #87, but no RS100 or Oximo report has compared it against `false` on the same motor.
+through issue #87, but no Oximo report has compared it against `false` on the same motor. A mains
+RS100 IO is the other case: it reports `power_save=always_alive` in the roll-call and answers worse
+with the flag set, so set the option from what the roll-call reports rather than from the model name.
 Over 1W the same applies: a battery or solar one-way device needs `low_power: true`. Without it the
 hub sends four short copies, which a mains-powered receiver obeys and a sleeping one misses
 ([ADR 0122](adr/0122-an-unset-one-way-low-power-sends-four-short-copies.md),
