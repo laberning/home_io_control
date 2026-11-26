@@ -52,8 +52,6 @@ void init_request(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_p
 
 // === Command payload templates ===
 
-/// The protocol uses 0-100 for percentage-style position inputs before encoding them on wire.
-constexpr uint8_t POSITION_PERCENT_MAX = 100;
 /// Byte 0 in execute-family payloads identifies a user-originated remote action.
 /// Uses the public ORIGINATOR_USER_REMOTE constant from proto_frame.h.
 constexpr uint8_t EXECUTE_ORIGINATOR = ORIGINATOR_USER_REMOTE;

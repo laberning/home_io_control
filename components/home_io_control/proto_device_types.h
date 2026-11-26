@@ -280,7 +280,7 @@ constexpr bool device_accepts_main_parameter(DeviceFeatures features, uint16_t m
 constexpr uint16_t position_main_parameter(uint8_t position) {
   if (position == POS_STOP)
     return MAIN_PARAMETER_STOP;
-  if (position > POSITION_WIRE_MAX / POSITION_WIRE_SCALE)
+  if (position > POSITION_PERCENT_MAX)
     return MAIN_PARAMETER_INVALID;
   return main_parameter_of(static_cast<uint8_t>(POSITION_WIRE_SCALE * position));
 }

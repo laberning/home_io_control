@@ -723,6 +723,8 @@ static constexpr uint8_t POSITION_WIRE_SCALE = 2;
 /// @brief Highest doubled-position wire value: 100% * POSITION_WIRE_SCALE. A main byte at or
 /// below this is an ordinary position; above it, one of the POS_* special codes.
 static constexpr uint8_t POSITION_WIRE_MAX = 200;
+/// Highest percent position the IO scale takes, the fully-closed end.
+static constexpr uint8_t POSITION_PERCENT_MAX = POSITION_WIRE_MAX / POSITION_WIRE_SCALE;
 
 /// Status byte flags in CMD_PRIVATE_RESP and CMD_STATUS_UPDATE.
 static constexpr uint8_t STATUS_STOPPED = 0x01;   ///< Byte 0 bit 0: device is not moving
