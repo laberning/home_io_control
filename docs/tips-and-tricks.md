@@ -5,8 +5,8 @@ Things that are not required to get running, but make the result nicer to live w
 
 ## Grouping entities into Home Assistant devices
 
-The cover, light, switch and lock platforms accept ESPHome's own `device_id:` key. It
-groups an entity, and every companion entity it generates, under its own Home Assistant device
+The cover, light, switch, lock, fan, climate, water heater and sensor platforms accept ESPHome's own
+`device_id:` key. It groups an entity, and every companion entity it has, under its own Home Assistant device
 instead of everything landing on the one physical ESPHome node. This is unrelated to
 `io_device_id:`, the device's radio address: `device_id:` is purely a Home Assistant grouping.
 
@@ -32,6 +32,7 @@ cover:
   and later require the key; on an older ESPHome, leave the `relation:` line out.
 - Every companion entity the platform generates — the favorite, ventilation, partial and pedestrian buttons (the last two are disabled by default, the pedestrian one is experimental), the silent
   operation switch, the travel speed select, the rain sensor and the diagnostic sensors — inherits the parent entity's sub-device.
+- Companions you declare in the YAML, such as `energy:`, `night_light:`, `heating_source:` and `boost:`, follow the parent entity too. Set `device_id:` on such a block to put it on another sub-device. Two such blocks with the same name, such as two `energy:` sensors both called "Energy", need to sit on different sub-devices, so give each parent its own.
 - **Give the entity an empty name.** Home Assistant displays an entity as
   `<device name> <entity name>`, so a device and an entity both called "Patio Awning" show up as
   "Patio Awning Patio Awning", and every companion gets that prefix too. `name: ""` is ESPHome's

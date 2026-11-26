@@ -1,0 +1,28 @@
+# expect-error: Duplicate sensor entity
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+esphome:
+  devices:
+    - id: dev_a
+      name: "Device A"
+      relation: via
+
+water_heater:
+  - platform: home_io_control
+    id: entity_1
+    name: ""
+    device_id: dev_a
+    io_device_id: "FEEB29"
+    io_device_type: domestic_hot_water
+    energy:
+      name: "Energy"
+  - platform: home_io_control
+    id: entity_2
+    name: ""
+    device_id: dev_a
+    io_device_id: "FEEB2A"
+    io_device_type: domestic_hot_water
+    energy:
+      name: "Energy"

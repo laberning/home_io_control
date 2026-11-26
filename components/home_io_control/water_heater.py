@@ -22,11 +22,13 @@ from esphome.components import switch, text_sensor, water_heater
 from esphome.const import CONF_ID
 
 from . import home_io_control_ns
+from .hub_validators import inherit_device_into_nested
 from .platform_common import (
     WATER_HEATER_PLATFORM,
     create_companion_sensors,
     create_user_companion,
     inject_companion_sensor_ids,
+    nested_companion_keys,
     platform_schema_extension,
     reading_keys_schema,
     reading_keys_to_code,
@@ -83,6 +85,8 @@ def _inject_companion_ids(config):
 
 
 CONFIG_SCHEMA = cv.All(
+    # First: the nested blocks need the sub-device before their schemas' duplicate-name check runs.
+    inherit_device_into_nested(nested_companion_keys(WATER_HEATER_PLATFORM, (CONF_HEATING_SOURCE, CONF_BOOST))),
     water_heater.water_heater_schema(IOHomeWaterHeater)
     .extend(platform_schema_extension())
     .extend(

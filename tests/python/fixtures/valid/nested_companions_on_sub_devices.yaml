@@ -1,0 +1,82 @@
+# expect: valid
+# Nameless entities on their own ESPHome sub-devices, each with nested companion blocks of the same names
+# (a reading key, heating_source:, boost:, night_light:): every block is checked on its parent's sub-device,
+# and a block's own device_id: wins.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+esphome:
+  devices:
+    - id: dev_a
+      name: "Device A"
+      relation: via
+    - id: dev_b
+      name: "Device B"
+      relation: via
+    - id: dev_c
+      name: "Device C"
+      relation: via
+
+water_heater:
+  - platform: home_io_control
+    id: entity_1
+    name: ""
+    device_id: dev_a
+    io_device_id: "FEEB29"
+    io_device_type: domestic_hot_water
+    energy:
+      name: "Energy"
+    heating_source:
+      name: "Heating Source"
+    boost:
+      name: "Boost"
+  - platform: home_io_control
+    id: entity_2
+    name: ""
+    device_id: dev_b
+    io_device_id: "FEEB2A"
+    io_device_type: domestic_hot_water
+    energy:
+      name: "Energy"
+    heating_source:
+      name: "Heating Source"
+    boost:
+      name: "Boost"
+  # A block with a sub-device of its own keeps it: on its parent's dev_a this "Energy" would repeat the first water
+  # heater's, so the fixture is valid only if dev_c is kept.
+  - platform: home_io_control
+    id: entity_3
+    name: "Third Hot Water"
+    device_id: dev_a
+    io_device_id: "FEEB2B"
+    io_device_type: domestic_hot_water
+    energy:
+      name: "Energy"
+      device_id: dev_c
+
+climate:
+  - platform: home_io_control
+    id: entity_4
+    name: ""
+    device_id: dev_a
+    io_device_id: "FEEB2C"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    io_model: heater_with_light
+    energy:
+      name: "Heater Energy"
+    night_light:
+      name: "Night Light"
+  - platform: home_io_control
+    id: entity_5
+    name: ""
+    device_id: dev_b
+    io_device_id: "FEEB2D"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    io_model: heater_with_light
+    energy:
+      name: "Heater Energy"
+    night_light:
+      name: "Night Light"

@@ -507,13 +507,12 @@ async def wire_device_binding(var, parent, config):
                 cg.add(parent.add_linked_remote(remote_id, config[CONF_IO_DEVICE_ID]))
 
 
-async def _bind_companion(config, parent, new_entity, entity_config, **new_kwargs):
+async def _bind_companion(parent, io_device_id, new_entity, entity_config, **new_kwargs):
     """Create, register and bind one companion from its validated config; return the entity."""
-    inherit_esphome_device(entity_config, config)
     entity = await new_entity(entity_config, **new_kwargs)
     await cg.register_component(entity, entity_config)
     cg.add(entity.set_parent(parent))
-    cg.add(entity.set_device_id(config[CONF_IO_DEVICE_ID]))
+    cg.add(entity.set_device_id(io_device_id))
     return entity
 
 
@@ -536,7 +535,7 @@ async def create_companion(
     entity_config = schema.extend(cv.COMPONENT_SCHEMA)(
         inherit_esphome_device({CONF_ID: config[id_key], CONF_NAME: name, **(overrides or {})}, config)
     )
-    return await _bind_companion(config, parent, new_entity, entity_config, **new_kwargs)
+    return await _bind_companion(parent, config[CONF_IO_DEVICE_ID], new_entity, entity_config, **new_kwargs)
 
 
 async def create_user_companion(config, parent, *, new_entity, entity_config):
@@ -544,9 +543,11 @@ async def create_user_companion(config, parent, *, new_entity, entity_config):
 
     For opt-in companions declared as nested schemas of the platform (the water heater's energy
     sensor, ...): they carry their own ID, name and options, so only the shared binding of
-    create_companion() applies. A sub-device the companion sets itself is kept.
+    create_companion() applies. Its ESPHome sub-device is already in ``entity_config``: the platform's
+    inherit_device_into_nested() pre-validator copied the parent's (or the block's own was kept), so the
+    duplicate-name check saw it.
     """
-    return await _bind_companion(config, parent, new_entity, entity_config)
+    return await _bind_companion(parent, config[CONF_IO_DEVICE_ID], new_entity, entity_config)
 
 
 # === Device readings ===
@@ -672,6 +673,13 @@ def _reading_entity_schema(entry):
             entity_category=ENTITY_CATEGORY_CONFIG,
         )
     return schema.extend(cv.COMPONENT_SCHEMA)
+
+
+def nested_companion_keys(platform, extra=()):
+    """The YAML keys of a platform's nested companion blocks: its reading keys (the mirror's, so a new reading
+    is covered without code here) plus the platform's own nested keys `extra`. The input of the platform's
+    inherit_device_into_nested() pre-validator."""
+    return tuple(entry["key"] for _, entry in _reading_keys(platform)) + tuple(extra)
 
 
 def reading_keys_schema(platform):

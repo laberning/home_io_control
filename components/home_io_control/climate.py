@@ -26,14 +26,14 @@ from esphome.const import (
 )
 
 from . import home_io_control_ns
-from .hub_validators import INSTANT_LIGHT_TRANSITION
+from .hub_validators import INSTANT_LIGHT_TRANSITION, inherit_device_into_nested
 from .platform_common import (
     CLIMATE_PLATFORM,
     declared_has_feature,
     create_companion_sensors,
-    inherit_esphome_device,
     inject_companion_sensor_ids,
     inject_reading_companion_ids,
+    nested_companion_keys,
     platform_schema_extension,
     reading_companions_to_code,
     reading_keys_schema,
@@ -117,6 +117,8 @@ def _validate_temperature_range(config):
 
 
 CONFIG_SCHEMA = cv.All(
+    # First: the nested blocks need the sub-device before their schemas' duplicate-name check runs.
+    inherit_device_into_nested(nested_companion_keys(CLIMATE_PLATFORM, (CONF_NIGHT_LIGHT,))),
     climate.climate_schema(IOHomeClimate)
     .extend(platform_schema_extension())
     .extend(
@@ -168,7 +170,6 @@ async def to_code(config):
 
     if CONF_NIGHT_LIGHT in config:
         night_light_config = config[CONF_NIGHT_LIGHT]
-        inherit_esphome_device(night_light_config, config)
         night_light = cg.new_Pvariable(night_light_config[CONF_OUTPUT_ID])
         await cg.register_component(night_light, night_light_config)
         await light.register_light(night_light, night_light_config)
