@@ -306,6 +306,26 @@ firmware-test-groups-check:
 	done; \
 	exit $$status
 
+# Compile test against the oldest ESPHome the component supports (ADR 0134), read from
+# MIN_ESPHOME_VERSION in hub_names.py so the version lives in one place. Runs on a copy of the test
+# configs in build/esphome-minimum/, with its own PlatformIO cache, so the main build cache keeps
+# the pinned version's toolchain. The copy drops the keys the test configs use that the minimum
+# ESPHome does not know yet: `relation:` on a sub-device and `merge_warnings:` (both newer than
+# the minimum, neither changes what the component compiles). One config: it covers every platform.
+ESPHOME_MIN_VERSION := $(shell sed -n 's/^MIN_ESPHOME_VERSION = (\([0-9]*\), \([0-9]*\), \([0-9]*\))$$/\1.\2.\3/p' components/home_io_control/hub_names.py)
+ESPHOME_MIN_DIR := build/esphome-minimum
+ESPHOME_MIN_CONFIG := test-esp32-esp-idf.yaml
+
+firmware-test-minimum:
+	@test -n "$(ESPHOME_MIN_VERSION)" || { echo "ERROR: MIN_ESPHOME_VERSION not found in hub_names.py"; exit 1; }
+	@echo "Compiling config/tests/$(ESPHOME_MIN_CONFIG) against ESPHome $(ESPHOME_MIN_VERSION)"
+	@mkdir -p $(ESPHOME_MIN_DIR)/tests
+	@cp config/tests/*.yaml $(ESPHOME_MIN_DIR)/tests/
+	@sed -i -E '/^[[:space:]]*(relation|merge_warnings):/d' $(ESPHOME_MIN_DIR)/tests/*.yaml
+	@docker run --rm -v "$(CURDIR)/$(ESPHOME_MIN_DIR):/config" -v "$(CURDIR)/components:/config/components" \
+		-e PLATFORMIO_CORE_DIR=/config/.pio ghcr.io/esphome/esphome:$(ESPHOME_MIN_VERSION) \
+		compile "/config/tests/$(ESPHOME_MIN_CONFIG)"
+
 # Compile test for the LR1121 firmware-update + bootloader-rewrite features. Separate from
 # firmware-test because it fetches two images from GitHub. Without it, IOHOME_LR1121_FIRMWARE_UPDATE
 # and IOHOME_LR1121_BOOTLOADER_UPDATE are only ever compiled by the x86-64 host unit-test build --
@@ -490,7 +510,7 @@ test-unit: unit-test
 		docs-prose-check \
 		key-material-scan private-path-check \
 		fuzz-frame fuzz-soft-phy \
-		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
+		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check firmware-test-minimum \
 		unit-test unit-test-asan py-test host-run host-component-objs clean-host lint test check \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

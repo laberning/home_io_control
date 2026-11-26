@@ -45,6 +45,9 @@ make unit-test
 # Compile all platform configurations (firmware test)
 make firmware-test
 
+# Compile one configuration against the oldest supported ESPHome (ADR 0134; runs weekly in CI)
+make firmware-test-minimum
+
 # Codegen tests: validators and accept/reject YAML fixtures, run in the ESPHome container.
 # Every function that raises cv.Invalid needs a covering case, or this fails and names it.
 make py-test

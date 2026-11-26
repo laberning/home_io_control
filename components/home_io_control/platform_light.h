@@ -139,9 +139,10 @@ class LightWriteGate {
   /// False while a transition runs (only its end, written once it is over, is sent), once for the boot write,
   /// and for the write that echoes the published reading. The expected echo is cleared by every call, so it
   /// swallows at most one write.
-  /// @param state The LightState being written.
+  /// @param state The LightState being written. Not const: ESPHome before 2026.9 declares
+  ///        LightState::is_transformer_active() without const, and the component builds on those versions too.
   /// @return true when the values go to the device.
-  [[nodiscard]] bool should_send(const light::LightState *state) {
+  [[nodiscard]] bool should_send(light::LightState *state) {
     this->see_(state);
     const std::optional<LightReading> echo = std::exchange(this->expected_echo_, std::nullopt);
     if (state->is_transformer_active())

@@ -199,6 +199,10 @@ ALLOWED_DEVIATIONS = {
         "ESPHome takes `const LogString *` (LOG_STR()); on host LOG_STR() resolves to a plain string, "
         "so the stub takes that instead of modelling the PROGMEM plumbing"
     ),
+    ("LightState", "bool is_transformer_active()"): (
+        "ESPHome before 2026.9 declares it without const and the component still builds there; the "
+        "non-const stub makes the host build fail on a call through a const LightState (issue #74)"
+    ),
 }
 
 # === Declaration extraction ===

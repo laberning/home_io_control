@@ -128,6 +128,9 @@ CONF_LR1121_FIRMWARE_UPDATE = "lr1121_firmware_update"
 CONF_LR1121_BOOTLOADER = "bootloader"
 CONF_CHECKSUM_MD5 = "checksum_md5"
 CONF_TARGET_VERSION = "target_version"
+# The oldest ESPHome the component builds with (ADR 0134): the hub's schema rejects an older one with a message naming
+# it, and `make firmware-test-minimum` compiles against it.
+MIN_ESPHOME_VERSION = (2026, 6, 0)
 MIN_STATUS_POLL_INTERVAL_MS = 500
 # Shortest poll interval of a cover's scheduled reading (rain, sun level, battery level): the `min_interval_ms` of
 # their DEVICE_READINGS rows.

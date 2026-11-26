@@ -63,7 +63,7 @@ from .hub_validators import (
     kind_is_experimental,
     type_offers_feature,
     validate_device_model_name,
-    validate_system_key,
+    validate_sensitive_system_key,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -311,7 +311,7 @@ def platform_schema_extension():
         # (ADR 0053). Same validator as the hub's system_key; `!secret` works as for any string.
         # cv.sensitive, as on the hub and the 1W controllers, so `esphome config` and the
         # dashboard mask the key instead of printing it.
-        cv.Optional(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
+        cv.Optional(CONF_SYSTEM_KEY): validate_sensitive_system_key,
     }
 
 

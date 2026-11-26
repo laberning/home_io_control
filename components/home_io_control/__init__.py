@@ -45,6 +45,7 @@ from .hub_names import (
     IOHomeAcceptForeignPairingSwitch,
     IOHomeControlComponent,
     IOHomeRecoverOneWayKeySwitch,
+    MIN_ESPHOME_VERSION,
 )
 from .hub_validators import (
     FEM_PROFILES,
@@ -56,7 +57,7 @@ from .hub_validators import (
     validate_radio_transport,
     validate_device_id,
     validate_node_id,
-    validate_system_key,
+    validate_sensitive_system_key,
 )
 from .lr1121_update_codegen import (
     LR1121_FIRMWARE_UPDATE_SCHEMA,
@@ -122,6 +123,8 @@ FINAL_VALIDATE_SCHEMA = final_validate
 
 
 CONFIG_SCHEMA = cv.All(
+    # First, so an ESPHome older than the component supports gets one message naming the minimum (ADR 0134).
+    cv.require_esphome_version(*MIN_ESPHOME_VERSION),
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(IOHomeControlComponent),
@@ -132,7 +135,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DIO1_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_BUSY_PIN): pins.internal_gpio_input_pin_schema,
             cv.Required(CONF_NODE_ID): validate_node_id,
-            cv.Required(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
+            cv.Required(CONF_SYSTEM_KEY): validate_sensitive_system_key,
             cv.Optional(CONF_TX_POWER, default=17): cv.int_range(min=0, max=22),
             cv.Optional(CONF_PA_PIN, default="BOOST"): cv.enum(
                 PA_PIN_OPTIONS, upper=True

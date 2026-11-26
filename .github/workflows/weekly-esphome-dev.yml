@@ -1,4 +1,4 @@
-name: Weekly (ESPHome pre-release channels)
+name: Weekly (ESPHome pre-release channels and the minimum version)
 
 on:
   schedule:
@@ -41,6 +41,35 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           marker="Weekly build failed against the ESPHome ${{ matrix.channel }} channel"
+          existing=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --search "in:title \"$marker\"" --json number --jq '.[0].number')
+          if [ -z "$existing" ]; then
+            gh issue create --repo "${{ github.repository }}" \
+              --title "$marker" \
+              --body "First seen $(date -u +%Y-%m-%d). See the run for details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            gh issue comment "$existing" --repo "${{ github.repository }}" \
+              --body "Still failing as of $(date -u +%Y-%m-%d): ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+  minimum:
+    # The other end: the oldest ESPHome the component supports (ADR 0134, MIN_ESPHOME_VERSION in
+    # hub_names.py). Catches a change that starts using something newer, which the pinned image and
+    # the pre-release channels cannot see.
+    name: Compile a test config against the minimum ESPHome version
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: firmware-test-minimum
+        run: make firmware-test-minimum
+
+      - name: Open an issue on failure
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          marker="Weekly build failed against the minimum ESPHome version"
           existing=$(gh issue list --repo "${{ github.repository }}" --state open \
             --search "in:title \"$marker\"" --json number --jq '.[0].number')
           if [ -z "$existing" ]; then

@@ -89,7 +89,7 @@ from .hub_validators import (
     validate_device_type,
     validate_manufacturer,
     validate_node_id,
-    validate_system_key,
+    validate_sensitive_system_key,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,6 +105,15 @@ ONEWAY_COMMANDS = {
     "vent": OneWayButtonAction.VENT,
     "favorite": OneWayButtonAction.FAVORITE,
 }
+
+
+def _light_has_gamma_table():
+    """Whether this ESPHome builds a brightness light's gamma as a GammaTable component.
+
+    ESPHome 2026.9 added it, with a `gamma_table_id` key in the light schema; an older ESPHome computes the gamma
+    inside the light and knows neither. The component builds on both (issue #74).
+    """
+    return hasattr(light_component, "GammaTable")
 
 
 # A 1W controller identity. 1W is class-addressed — a command goes to a device *class*, never to
@@ -164,7 +173,7 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # Optional and inherits the hub's key when omitted. cv.sensitive matches the hub's own
         # system_key handling (the hub schema in __init__.py) so the value is redacted from
         # ESPHome's config dump; without it a per-identity key would leak into logs verbatim.
-        cv.Optional(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
+        cv.Optional(CONF_SYSTEM_KEY): validate_sensitive_system_key,
         # No default here -- see validate_oneway_controllers() for why: it must become required,
         # not silently 0, whenever enrollment: true actually puts this byte on air. Named or raw
         # hex, same "known name, else escape hatch" shape as io_device_type below.
@@ -729,7 +738,7 @@ def _inject_identity_entity_ids(identity):
             is_declaration=True,
             type=light_component.LightState,
         )
-        if identity.get(CONF_DIMMABLE):
+        if identity.get(CONF_DIMMABLE) and _light_has_gamma_table():
             identity[CONF_LIGHT_GAMMA_TABLE_ID] = ID(
                 f"{identity_id}_light_gamma_table",
                 is_declaration=True,
@@ -989,9 +998,10 @@ async def create_oneway_controller_entities(identity, var):
             # The device fades by itself; an ESPHome transition would send a stream of commands, so the default is
             # the two-way light's.
             light_schema = light_schema.extend(INSTANT_LIGHT_TRANSITION)
+        if CONF_LIGHT_GAMMA_TABLE_ID in identity:
             # A brightness light gets a gamma table whose ID the pipeline would generate for a `light:` entry; this
-            # one is built here, so it passes the ID declared at validation. The output ignores gamma (it sends the
-            # linear value).
+            # one is built here, so it passes the ID declared at validation (only where ESPHome has gamma tables,
+            # see _light_has_gamma_table()). The output ignores gamma (it sends the linear value).
             light_values[light_component.CONF_GAMMA_TABLE_ID] = identity[CONF_LIGHT_GAMMA_TABLE_ID]
         light_config = light_schema(light_values)
         light_entity = cg.new_Pvariable(light_config[CONF_OUTPUT_ID])

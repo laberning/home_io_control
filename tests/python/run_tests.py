@@ -139,6 +139,22 @@ def system_key_is_sixteen_hex_bytes():
     expect_invalid(v.validate_system_key, key[:-1] + "Z", "valid hexadecimal")
 
 
+@case()
+def hub_schema_names_the_minimum_esphome_version_on_an_older_one():
+    import esphome.config_validation as cv
+
+    package = import_component()
+    year, month, patch = package.MIN_ESPHOME_VERSION
+    version_check = package.CONFIG_SCHEMA.validators[0]
+    assert version_check({}) == {}, "the pinned ESPHome is at least the minimum"
+    real = cv.ESPHOME_VERSION
+    cv.ESPHOME_VERSION = f"{year}.{month - 1}.9" if month > 1 else f"{year - 1}.12.9"
+    try:
+        expect_invalid(version_check, {}, f"{year}.{month}.{patch}")
+    finally:
+        cv.ESPHOME_VERSION = real
+
+
 @case("hub_validators.validate_device_id")
 def device_id_is_three_hex_bytes():
     from esphome.components.home_io_control import hub_validators as v
@@ -753,6 +769,29 @@ def oneway_light_entity_id_is_declared_at_validation_time():
     o._inject_identity_entity_ids(identity)
     assert identity[n.CONF_LIGHT_GAMMA_TABLE_ID].id == "lamp_light_gamma_table", "a brightness light's gamma table"
     assert identity[n.CONF_LIGHT_GAMMA_TABLE_ID].is_declaration
+
+
+@case()
+def oneway_dimmable_light_declares_no_gamma_table_on_an_esphome_without_them():
+    # ESPHome before 2026.9 has no light.GammaTable and no gamma_table_id key (issue #74).
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    identity = {
+        "id": "lamp",
+        n.CONF_COMMANDS: ["open"],
+        n.CONF_ENROLLMENT: False,
+        n.CONF_LIGHT: "Lamp",
+        n.CONF_DIMMABLE: True,
+    }
+    real = o._light_has_gamma_table
+    o._light_has_gamma_table = lambda: False
+    try:
+        o._inject_identity_entity_ids(identity)
+    finally:
+        o._light_has_gamma_table = real
+    assert n.CONF_LIGHT_STATE_ID in identity, "the light itself is still declared"
+    assert n.CONF_LIGHT_GAMMA_TABLE_ID not in identity, "no gamma table where ESPHome has none"
 
 
 @case()
@@ -1772,9 +1811,9 @@ def every_key_holding_a_secret_is_masked_in_the_config_dump():
         assert isinstance(validator, cv.SensitiveValidator), f"{label}: system_key is not cv.sensitive"
         assert isinstance(validator(key), SensitiveStr), label
 
-    # The hub schema is a cv.All() chain; its first member holds the keys.
+    # The hub schema is a cv.All() chain: the ESPHome version check, then the schema that holds the keys.
     import esphome.components.home_io_control as hub
-    hub_schema = hub.CONFIG_SCHEMA.validators[0].schema
+    hub_schema = hub.CONFIG_SCHEMA.validators[1].schema
     assert isinstance(validator_for(hub_schema, n.CONF_SYSTEM_KEY), cv.SensitiveValidator), "hub"
 
 

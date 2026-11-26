@@ -148,6 +148,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0088](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md) | The sun level is shown in lux at 100 lux per step (amends 0064; amended by 0107) | `Sun level` keeps its entity and gains `lx` / `illuminance`, value × 100; the factor is an estimate from issue #156's readings against daylight figures until a lux meter confirms it |
 | [0065](0065-a-covers-travel-speed-is-a-three-way-choice.md) | A cover's travel speed is a three-way choice (amended by 0069, 0085) | `travel_speed:` `default` / `silent` / `fast` with a select; `default` sends the 6-byte frame a VELUX pad sends; without the key nothing changes; `silent:` stays as the two-way form |
 | [0069](0069-a-config-key-is-retired-in-two-stages.md) | A config key is retired in two stages (amended by 0109) | Warn with the exact replacement, then a config error about two months later; `silent:` enters the warning stage, amending 0065 |
+| [0134](0134-the-component-supports-esphome-2026-6-and-newer.md) | The component supports ESPHome 2026.6 and newer | `MIN_ESPHOME_VERSION` (2026.6.0, the first with `cv.sensitive()`) is checked first by the hub's schema; the modules import on an older ESPHome so that message shows; `make firmware-test-minimum` compiles one test config against it weekly; a newer API is guarded or raises the minimum deliberately |
 
 ### Security
 
@@ -310,6 +311,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0131: An overheard status frame stamps link health and nothing else](0131-an-overheard-status-frame-stamps-link-health-and-nothing-else.md)
 - [ADR 0132: A radio describes its band and the hub's rules read it](0132-a-radio-describes-its-band-and-the-hubs-rules-read-it.md)
 - [ADR 0133: Pairing and the key pull open their sessions through channel access](0133-pairing-and-the-key-pull-open-their-sessions-through-channel-access.md)
+- [ADR 0134: The component supports ESPHome 2026.6 and newer](0134-the-component-supports-esphome-2026-6-and-newer.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

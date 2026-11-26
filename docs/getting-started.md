@@ -10,7 +10,9 @@ You need three things:
 
 - **A supported board.** An ESP32 with an SX1276, SX1262 or LR1121 radio at 868 MHz. If you have
   not bought one yet see [Hardware](hardware.md) for some recommendations.
-- **A working ESPHome setup**, with Home Assistant already adopting ESPHome devices. If ESPHome is
+- **A working ESPHome setup**, version 2026.6.0 or newer, with Home Assistant already adopting
+  ESPHome devices. An older ESPHome stops at the config check with a message naming the version to
+  update to ([ADR 0134](adr/0134-the-component-supports-esphome-2026-6-and-newer.md)). If ESPHome is
   new to you, follow [their getting-started guide](https://esphome.io/guides/getting_started_hassio.html)
   first and come back once you can flash a blank node.
 - **An IO-Homecontrol device within radio range**, and either a way to put it into pairing mode or

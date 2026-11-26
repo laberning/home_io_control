@@ -98,8 +98,10 @@ class LightState {
   }
 
   // Mirrors the real LightState::is_transformer_active(): true while a transition or flash writes its intermediate
-  // values. test_transformer_active_ lets a test stand in for a transition in progress.
-  bool is_transformer_active() const { return this->test_transformer_active_; }
+  // values. test_transformer_active_ lets a test stand in for a transition in progress. Not const, as ESPHome before
+  // 2026.9 declares it (2026.9 added the const): the host build then fails on a call through a const LightState, which
+  // would not compile on those versions (issue #74).
+  bool is_transformer_active() { return this->test_transformer_active_; }
   bool test_transformer_active_{false};
 
   Call make_call() { return Call(this); }

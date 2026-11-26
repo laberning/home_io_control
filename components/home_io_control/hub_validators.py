@@ -775,6 +775,14 @@ def validate_system_key(value):
     return value
 
 
+# The system key as a schema takes it: validated, and masked by `esphome config` and the dashboard (cv.sensitive).
+# ESPHome before 2026.6.0 has no cv.sensitive; there the plain validator stands in, so the component's modules still
+# import and the hub schema's version check (MIN_ESPHOME_VERSION) reports the minimum instead of an AttributeError.
+validate_sensitive_system_key = (
+    cv.sensitive(validate_system_key) if hasattr(cv, "sensitive") else validate_system_key
+)
+
+
 def declared_device_entries(full_config):
     """Yield (domain, entry, owner name) for every `platform: home_io_control` entry of a device-bound domain.
 
