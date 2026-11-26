@@ -162,6 +162,42 @@ def companion_joins_its_parents_sub_device_unless_it_names_its_own():
     assert v.inherit_esphome_device({}, {}) == {}
 
 
+@case()
+def nested_companion_blocks_inherit_the_parents_sub_device_before_validation():
+    """The pre-validator copies the parent's raw `device_id:` into each listed nested block that has none, keeps a
+    block's own, leaves the config alone without a parent sub-device, skips a value that is no mapping, and never
+    changes the raw config in place."""
+    from esphome.const import CONF_DEVICE_ID
+    from esphome.components.home_io_control import hub_validators as v
+
+    inherit = v.inherit_device_into_nested(("energy", "boost", "night_light"))
+    raw = {CONF_DEVICE_ID: "dev_a", "energy": {"name": "E"}, "boost": {CONF_DEVICE_ID: "dev_own"}, "night_light": None}
+    got = inherit(raw)
+    assert got["energy"] == {"name": "E", CONF_DEVICE_ID: "dev_a"}, got
+    assert got["boost"] == {CONF_DEVICE_ID: "dev_own"}, "a block's own device_id wins"
+    assert got["night_light"] is None, "a value that is no mapping is skipped"
+    assert "heating_source" not in got, "a key that is absent stays absent"
+    assert raw["energy"] == {"name": "E"}, "the raw config is not changed"
+
+    no_parent = {"energy": {"name": "E"}}
+    assert inherit(no_parent) == {"energy": {"name": "E"}}, "no parent sub-device, no change"
+
+
+@case()
+def nested_companion_keys_are_the_mirrors_reading_keys_plus_the_platforms_own():
+    """One list per platform: the reading keys of the mirror (so a new reading is covered without code) plus the
+    platform's extras."""
+    from esphome.components.home_io_control import platform_common as pc
+
+    water_heater_keys = pc.nested_companion_keys(pc.WATER_HEATER_PLATFORM, ("heating_source", "boost"))
+    assert {"energy", "heat_pump_running", "electric_backup_running"} <= set(water_heater_keys), water_heater_keys
+    assert water_heater_keys[-2:] == ("heating_source", "boost"), water_heater_keys
+    for platform in (pc.CLIMATE_PLATFORM, pc.WATER_HEATER_PLATFORM, pc.SENSOR_PLATFORM):
+        assert set(pc.nested_companion_keys(platform)) == {
+            entry["key"] for _, entry in pc._reading_keys(platform)
+        }, platform
+
+
 @case("hub_validators.validate_device_type")
 def device_type_takes_a_name_or_a_byte():
     from esphome.components.home_io_control import hub_validators as v
@@ -968,7 +1004,7 @@ def the_water_heaters_reading_keys_need_a_water_heater_and_are_not_a_heaters():
     assert pc.validate_reading_keys(heater_only, platform=pc.WATER_HEATER_PLATFORM) is heater_only
     assert pc.validate_reading_keys({**water_heater, "heat_pump_running": {}}, platform=pc.CLIMATE_PLATFORM)
     # The schema builds the generic reading entities from the mirror.
-    entries = {str(key): validator for key, validator in wh.CONFIG_SCHEMA.validators[0].schema.items()}
+    entries = {str(key): validator for key, validator in wh.CONFIG_SCHEMA.validators[1].schema.items()}
     for key, entity_class in (
         ("energy", "IOHomeDeviceReadingSensor"),
         ("heat_pump_running", "IOHomeDeviceReadingBinarySensor"),
@@ -1145,7 +1181,7 @@ def the_sensor_platform_never_offers_a_heater_companion_or_status_reading():
     assert not offered & heater_keys, offered
     assert offered == data_object_keys, offered
     assert not pc._reading_companions(pc.SENSOR_PLATFORM)
-    schema_keys = {str(key) for key in sensor_platform.CONFIG_SCHEMA.validators[0].schema}
+    schema_keys = {str(key) for key in sensor_platform.CONFIG_SCHEMA.validators[1].schema}
     assert not schema_keys & heater_keys, schema_keys
     assert "heating_level" not in schema_keys
 
@@ -1241,7 +1277,7 @@ def the_water_heater_offers_its_companion_keys_with_their_home_assistant_metadat
     sensor and boost switch with no metadata of their own."""
     from esphome.components.home_io_control import water_heater as wh
 
-    entries = {str(key): validator for key, validator in wh.CONFIG_SCHEMA.validators[0].schema.items()}
+    entries = {str(key): validator for key, validator in wh.CONFIG_SCHEMA.validators[1].schema.items()}
     expected = {
         "energy": {
             "unit_of_measurement": "kWh",
@@ -1510,7 +1546,7 @@ def cover_opt_in_entities_are_created_with_their_names_ids_and_home_assistant_me
 
     created = {}
 
-    async def capture(config, parent, new_entity, entity_config, **new_kwargs):
+    async def capture(parent, io_device_id, new_entity, entity_config, **new_kwargs):
         created[entity_config[CONF_ID].id] = (new_entity.__name__, entity_config)
         return mock.MagicMock()
 
@@ -1608,13 +1644,14 @@ def nameless_entities_on_different_sub_devices_get_companions_with_the_same_name
 
     bound = []
 
-    async def capture(config, parent, new_entity, entity_config, **new_kwargs):
+    async def capture(parent, io_device_id, new_entity, entity_config, **new_kwargs):
         bound.append(entity_config)
 
     def nameless_cover(cover_id, device):
         return {
             CONF_ID: ID(cover_id, is_declaration=True),
             CONF_NAME: "",
+            "io_device_id": "FEEB1E",
             CONF_DEVICE_ID: ID(device, is_declaration=False, type=Device),
             "_favorite_button_id": ID(f"{cover_id}_favorite_button", is_declaration=True),
         }

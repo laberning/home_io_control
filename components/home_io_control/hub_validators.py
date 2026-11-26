@@ -13,6 +13,7 @@
 ## FEM_TX_POWER_MAX_QUIET mirror C++ tables; the ``tests/sync/`` host tests and
 ## ``make yaml-emitter-sync`` read them from this file by name.
 
+import copy
 import logging
 
 import esphome.codegen as cg
@@ -819,12 +820,45 @@ def inherit_esphome_device(companion_config, parent_config):
     parent configs carry a `device_id:` schema slot, since those entities aren't attached to a
     single cover/light/switch/lock to inherit one from. `device_id:` grouping is scoped to the
     device-bound platforms; hub-level entities always live on ESPHome's main device.
+
+    Companions the user declares as nested blocks of the parent get the sub-device earlier, in
+    validation, from inherit_device_into_nested(): their entity schema's duplicate-name check has
+    to see it. This function serves the companions the code generates.
     """
     if CONF_DEVICE_ID in companion_config:
         return companion_config
     if (esphome_device_id := parent_config.get(CONF_DEVICE_ID)) is not None:
         companion_config[CONF_DEVICE_ID] = esphome_device_id
     return companion_config
+
+
+def inherit_device_into_nested(keys):
+    """Pre-validator factory: give the nested companion blocks `keys` of a platform entry its sub-device.
+
+    Each of `keys` whose raw value is a mapping without a `device_id:` of its own gets a copy of the
+    parent's raw `device_id:` (the sub-device's id string; ESPHome's `use_id` resolves it later, as for
+    any entity). It runs first in the platform's `cv.All`, before the nested entity schemas and their
+    duplicate-name check, which counts a name once per sub-device: a nested block checked without its
+    parent's sub-device would collide with the same-named block of a parent on another sub-device, and
+    miss a real duplicate on one sub-device. A block's own `device_id:` wins. A parent without a
+    `device_id:` and a value that is not a mapping leave the config unchanged; it raises nothing.
+    The raw config is copied, never changed in place.
+    """
+
+    def validator(config):
+        parent_device = config.get(CONF_DEVICE_ID)
+        if parent_device is None:
+            return config
+        result = copy.copy(config)
+        for key in keys:
+            block = config.get(key)
+            if isinstance(block, dict) and CONF_DEVICE_ID not in block:
+                block = copy.copy(block)
+                block[CONF_DEVICE_ID] = parent_device
+                result[key] = block
+        return result
+
+    return validator
 
 
 def validate_linked_remote_entry(value):

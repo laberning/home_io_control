@@ -16,7 +16,8 @@ esphome:
   # Exercises the device_id: sub-device path (companion sensors/buttons inheriting their parent's
   # ESPHome device) on "Test Cover"/"Test Window Cover"/"Test Light" and test_nameless_cover below.
   # "Test Silent Cover"/"Test Dimmable Light"/"Test Switch" deliberately have no device_id:, so both
-  # branches compile.
+  # branches compile. "Test Heater With Light" and "Test Hot Water" sit on sub-devices too, so their
+  # nested companions (night light, energy, heating source, boost, ...) compile on one.
   devices:
     - id: dev_cover
       name: "Test Cover Device"
@@ -26,6 +27,12 @@ esphome:
       relation: via
     - id: dev_cover_2
       name: "Test Cover Device 2"
+      relation: via
+    - id: dev_heater
+      name: "Test Heater Device"
+      relation: via
+    - id: dev_hot_water
+      name: "Test Hot Water Device"
       relation: via
 
 # Minimal esp32 config; framework (arduino/esp-idf) set in platform-specific files
@@ -254,6 +261,7 @@ climate:
   # A heater with a night light: io_model adds the light's registers, night_light: its light entity.
   - platform: home_io_control
     name: "Test Heater With Light"
+    device_id: dev_heater
     io_device_id: "FEEB2A"
     io_device_type: "electrical_heater"
     io_subtype: 1
@@ -309,6 +317,7 @@ water_heater:
   # with every opt-in companion (ADR 0068).
   - platform: home_io_control
     name: "Test Hot Water"
+    device_id: dev_hot_water
     io_device_id: "FEEB29"
     io_device_type: "domestic_hot_water"
     energy:

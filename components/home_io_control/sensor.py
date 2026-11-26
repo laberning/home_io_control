@@ -17,11 +17,12 @@ from esphome.components import sensor
 from esphome.const import CONF_ID, CONF_INTERNAL, CONF_UPDATE_INTERVAL
 
 from . import home_io_control_ns
-from .hub_validators import validate_device_reading_interval
+from .hub_validators import inherit_device_into_nested, validate_device_reading_interval
 from .platform_common import (
     SENSOR_PLATFORM,
     create_companion_sensors,
     inject_companion_sensor_ids,
+    nested_companion_keys,
     platform_schema_extension,
     reading_keys_schema,
     reading_keys_to_code,
@@ -50,6 +51,8 @@ def _hide_declaration_entity(config):
 def _config_schema():
     """The platform schema. A function so a test can build it after changing the reading mirror."""
     return cv.All(
+        # First: the nested blocks need the sub-device before their schemas' duplicate-name check runs.
+        inherit_device_into_nested(nested_companion_keys(SENSOR_PLATFORM)),
         sensor.sensor_schema(IOHomeDeviceSensor)
         .extend(platform_schema_extension())
         .extend(
