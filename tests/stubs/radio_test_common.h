@@ -125,9 +125,9 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     // same reason as the post-send retune below. A busy result sends and records nothing.
     if (tx_config.cca_threshold_dbm.has_value()) {
       current_freq_ = tx_config.freq_hz;
-      const int16_t level = this->read_rssi();
-      if (level >= *tx_config.cca_threshold_dbm)
-        return TxResult::channel_busy(level);
+      const std::optional<int16_t> level = this->read_rssi();
+      if (level.has_value() && *level >= *tx_config.cca_threshold_dbm)
+        return TxResult::channel_busy(*level);
     }
     TxResult result = TxResult::ok();
     if (!tx_results_.empty()) {
@@ -233,14 +233,16 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     call_log_.push_back(CallKind::kHop);
     current_freq_ = freq_hz;
   }
-  int16_t read_rssi() override {
+  std::optional<int16_t> read_rssi() override {
     rssi_read_freqs_.push_back(current_freq_);
+    if (!rssi_available_ || rssi_read_freqs_.size() > rssi_available_reads_)
+      return std::nullopt;
     if (rssi_queue_.empty()) {
       // A level scripted for this channel wins over the default: a busy channel next to free ones.
       const auto scripted = channel_rssi_.find(current_freq_);
       return scripted != channel_rssi_.end() ? scripted->second : rssi_default_;
     }
-    int16_t val = rssi_queue_.front();
+    std::optional<int16_t> val = rssi_queue_.front();
     rssi_queue_.pop_front();
     return val;
   }
@@ -345,6 +347,14 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void queue_tx_result(bool success) { tx_results_.push_back(success); }
   /// Queue the next RSSI reading: a send's clear-channel check or a direct read_rssi() pops it.
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
+  /// Queue the next reading as one the radio could not give (a bridge that answers busy or not at all).
+  void queue_no_reading() { rssi_queue_.push_back(std::nullopt); }
+  /// Whether the radio gives readings at all: false makes every read_rssi() and clear-channel check come
+  /// back without one, whatever is queued or set.
+  void set_rssi_available(bool available) { rssi_available_ = available; }
+  /// The radio gives its first @p reads readings and none after: a co-processor that stops answering in the
+  /// middle of an exchange.
+  void set_rssi_available_reads(size_t reads) { rssi_available_reads_ = reads; }
   /// RSSI reading once the queue is empty (default -120 dBm: clear).
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
   /// RSSI reading on one channel once the queue is empty, taking precedence over the default for
@@ -425,7 +435,9 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::deque<RxQueueEntry> rx_queue_;
   std::function<void()> on_send_;     ///< See set_on_send().
   std::function<void()> on_deliver_;  ///< See set_on_deliver().
-  std::deque<int16_t> rssi_queue_;
+  std::deque<std::optional<int16_t>> rssi_queue_;
+  bool rssi_available_{true};
+  size_t rssi_available_reads_{SIZE_MAX};
   std::map<uint32_t, int16_t> channel_rssi_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
   SendTimeline timeline_;  ///< Every send's bytes and start time; owns the timed-release rule.

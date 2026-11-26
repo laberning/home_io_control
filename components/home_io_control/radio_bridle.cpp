@@ -179,12 +179,9 @@ void RadioBridle::route_reply_(const Message &m, const uint8_t *msg, size_t len,
     this->pending_count_ = 0;  // a reboot drops every command it had not answered
     return;
   }
-  if (const auto *fault = std::get_if<Error>(&m.body); fault != nullptr && seq == 0) {
-    // A radio fault outside a transmission answers no command; the radio is idle after it, so the
-    // configuration is gone as far as the host can tell (spec §2.2).
-    HELD_LOGW("the co-processor reports a radio fault (error %u, detail %u); resyncing",
-              static_cast<unsigned>(fault->code), fault->detail);
-    this->begin_resync_("radio fault", false);
+  if (const auto *fault = std::get_if<Error>(&m.body);
+      fault != nullptr && (seq == 0 || fault->code == ErrorCode::RADIO_FAULT)) {
+    this->on_radio_fault_(*fault, msg, len, seq);
     return;
   }
   if (const auto *refusal = std::get_if<Error>(&m.body);
@@ -207,12 +204,7 @@ void RadioBridle::route_reply_(const Message &m, const uint8_t *msg, size_t len,
     this->on_awaited_reply_(m, msg, len);
   } else if (mine && std::holds_alternative<Error>(m.body)) {
     const auto &e = std::get<Error>(m.body);
-    this->last_error_code_ = e.code;
-    this->last_error_detail_ = e.detail_dbm();
-    this->await_errored_ = true;
-    std::memcpy(this->reply_, msg, len);
-    this->reply_len_ = len;
-    this->await_done_ = true;
+    this->end_await_with_error_(e, msg, len);
     if (e.code == ErrorCode::NOT_CONFIGURED)
       this->begin_resync_("radio not configured", false);
   } else if (!mine && this->on_pending_reply_(m, seq)) {
@@ -221,6 +213,26 @@ void RadioBridle::route_reply_(const Message &m, const uint8_t *msg, size_t len,
     this->stale_replies_++;
     HELD_LOGD("unmatched reply 0x%02X for command %u", msg[0], seq);
   }
+}
+
+void RadioBridle::on_radio_fault_(const Error &fault, const uint8_t *msg, size_t len, uint8_t seq) {
+  // A radio fault leaves the radio idle, so the configuration is gone as far as the host can tell, and resets the
+  // co-processor with the same strength unsolicited (`cmd_seq` 0) or answering a command, in time or after the wait
+  // for it ended (spec §2.2, §7). The one place that decides it.
+  HELD_LOGW("the co-processor reports a radio fault (error %u, detail %u%s); resyncing",
+            static_cast<unsigned>(fault.code), fault.detail, seq == 0 ? "" : ", answering a command");
+  if (this->awaiting_ && seq == this->await_seq_)  // the waiting caller sees the refusal before the link goes
+    this->end_await_with_error_(fault, msg, len);
+  this->begin_resync_("radio fault", false);
+}
+
+void RadioBridle::end_await_with_error_(const Error &error, const uint8_t *msg, size_t len) {
+  this->last_error_code_ = error.code;
+  this->last_error_detail_ = error.detail_dbm();
+  this->await_errored_ = true;
+  std::memcpy(this->reply_, msg, len);
+  this->reply_len_ = len;
+  this->await_done_ = true;
 }
 
 void RadioBridle::on_awaited_reply_(const Message &m, const uint8_t *msg, size_t len) {
@@ -330,6 +342,8 @@ uint8_t RadioBridle::send_pending_(const Body &body, PendingKind kind) {
     return 0;
   this->pending_[this->pending_count_++] = PendingCommand{seq, kind, millis()};
   this->newest_receive_cmd_ = seq;
+  this->refused_cmd_ = 0;  // only a later reply can refuse this one
+  this->reading_cmd_ = 0;  // ids wrap: an old check's id must not name a later command (retune_ sets it anew)
   return seq;
 }
 
@@ -369,16 +383,27 @@ void RadioBridle::on_pending_refused_(const PendingCommand &cmd, const Error &er
     this->begin_resync_("radio not configured", false);
     return;
   }
-  // Undo the optimistic state only when nothing newer has changed the radio since.
-  if (cmd.seq != this->newest_receive_cmd_)
+  this->refused_cmd_ = cmd.seq;  // read_rssi() gives no reading while the newest command is a refused one
+  // Undo the optimistic state only when nothing newer has changed the radio since. While a `tx` is awaited the
+  // newest command is the `tx`; if it is refused too, its restore puts back `tx_restore_`, so the undo goes there.
+  bool *scanning = nullptr;
+  bool *rx_on = nullptr;
+  if (cmd.seq == this->newest_receive_cmd_) {
+    scanning = &this->scanning_;
+    rx_on = &this->rx_on_;
+  } else if (this->tx_restore_active_ && cmd.seq == this->tx_restore_.newest_receive_cmd) {
+    scanning = &this->tx_restore_.scanning;
+    rx_on = &this->tx_restore_.rx_on;
+  } else {
     return;
+  }
   if (cmd.kind == PendingKind::RX_SCAN) {
-    this->scanning_ = false;
-    this->rx_on_ = false;
+    *scanning = false;
+    *rx_on = false;
     this->scan_refused_ = true;
     this->scan_refused_ms_ = millis();
   } else if (cmd.kind == PendingKind::RX_ON) {
-    this->rx_on_ = false;
+    *rx_on = false;
     this->rx_refused_ = true;
     this->rx_refused_ms_ = millis();
   }
@@ -656,14 +681,10 @@ uint32_t RadioBridle::tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) cons
 }
 
 TxResult RadioBridle::send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) {
-  TxResult const result = this->transmit_(data, len, tx_config);
-  // RadioDriver::send_packet() promises a running receiver whatever the result (issue #228: a failed send that left
-  // the radio idle froze the hub's listening). A `tx` that was sent or refused for a busy channel leaves the radio
-  // in receive by its `then_rx`; any other failure leaves it in a state the host cannot tell, so it is told to
-  // receive. A lost link is configured again by its resync, and the next wait restores the receiver.
-  if (result.status == TxResult::Status::FAILED && this->link_running())
-    this->set_mode_rx();
-  return result;
+  // A `tx` that was sent or refused for a busy channel leaves the radio in receive by its `then_rx`. Any other
+  // refusal has changed nothing (spec §2.2): the radio listens or scans as before, and transmit_() has put the
+  // driver's own state back. A lost link is configured again by its resync, and the next wait restores the receiver.
+  return this->transmit_(data, len, tx_config);
 }
 
 TxResult RadioBridle::transmit_(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) {
@@ -690,15 +711,23 @@ TxResult RadioBridle::transmit_(const uint8_t *data, uint8_t len, const RadioTxC
     tx.cca_threshold_dbm = static_cast<int8_t>(std::clamp<int16_t>(*tx_config.cca_threshold_dbm, INT8_MIN, INT8_MAX));
   }
   uint8_t const seq = this->send_command_(tx);
+  if (seq == 0)
+    return TxResult::failed();
+  // What a refusal puts back: a refused command changes nothing, `channel_busy` excepted (spec §2.2).
+  // An unawaited rx_on/rx_scan refused during the wait below is undone in this record (on_pending_refused_).
+  this->tx_restore_ = RadioState{this->current_freq_, this->scanning_, this->rx_on_, this->newest_receive_cmd_};
+  this->tx_restore_active_ = true;
   this->newest_receive_cmd_ = seq;  // a refusal of an earlier rx_on/rx_scan/idle no longer describes the radio
-  // tx.freq_hz becomes the radio's frequency and a scan ends (spec §3.1), whatever the outcome.
+  this->refused_cmd_ = 0;
+  this->reading_cmd_ = 0;  // the next channel check retunes again
+  // tx.freq_hz becomes the radio's frequency and a scan ends (spec §3.1), once the co-processor takes the command.
   this->current_freq_ = tx_config.freq_hz;
   this->scanning_ = false;
   this->rx_on_ = tx.then_rx;
-  if (seq == 0)
-    return TxResult::failed();
   uint32_t const limit_ms = (this->tx_air_time_us(len, tx_config) / 1000) + TX_DONE_MARGIN_MS;
-  switch (this->await_(seq, MsgType::TX_DONE, limit_ms)) {
+  Wait const waited = this->await_(seq, MsgType::TX_DONE, limit_ms);
+  this->tx_restore_active_ = false;
+  switch (waited) {
     case Wait::REPLIED:
       // The frame is on air: the line the SPI drivers write before their transmit (log_frame.h), written once the
       // co-processor has sent it, since its own channel check can still refuse the `tx`.
@@ -715,13 +744,17 @@ TxResult RadioBridle::transmit_(const uint8_t *data, uint8_t len, const RadioTxC
           HELD_LOGW("tx refused: error %u detail %u", static_cast<unsigned>(e->code), e->detail);
         }
       }
+      // A refusal that did not reset the link changed nothing: the radio is where it was before the command.
+      if (this->link_running()) {
+        this->current_freq_ = this->tx_restore_.freq_hz;
+        this->scanning_ = this->tx_restore_.scanning;
+        this->rx_on_ = this->tx_restore_.rx_on;
+        this->newest_receive_cmd_ = this->tx_restore_.newest_receive_cmd;
+      }
       return TxResult::failed();
     }
     case Wait::TIMEOUT:
-      if (!this->link_running())  // the wait ended because the link went down: that is already being handled
-        return TxResult::failed();
-      HELD_LOGW("no tx_done within %" PRIu32 " ms", limit_ms);
-      this->begin_resync_("no tx_done", false);
+      this->on_no_reply_("no tx_done", limit_ms);
       return TxResult::failed();
   }
   return TxResult::failed();
@@ -821,9 +854,13 @@ bool RadioBridle::pop_packet_(RadioRxPacket &packet) {
 void RadioBridle::ensure_rx_() {
   if (!this->link_running() || this->rx_on_ || this->scanning_)
     return;
-  if (this->rx_refused_ && millis() - this->rx_refused_ms_ < SCAN_RETRY_MS)
-    return;  // a refused rx_on is not repeated at once
+  if (this->rx_retry_held_())
+    return;
   this->set_mode_rx();
+}
+
+bool RadioBridle::rx_retry_held_() const {
+  return this->rx_refused_ && millis() - this->rx_refused_ms_ < SCAN_RETRY_MS;
 }
 
 bool RadioBridle::check_for_packet(RadioRxPacket &packet) {
@@ -849,18 +886,44 @@ bool RadioBridle::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
   return false;
 }
 
-int16_t RadioBridle::read_rssi() {
-  if (!this->link_running())
-    return RSSI_NONE_DBM;
+std::optional<int16_t> RadioBridle::read_rssi() {
+  // A reading during a scan is of the frequency the scan is on, which the host cannot attribute to a channel (spec
+  // §3.1): there is none to give. The channel check retunes first, which ends the scan.
+  if (!this->link_running() || this->scanning_)
+    return std::nullopt;
+  // An idle radio answers `not_receiving`: ask it to receive. The reading follows right behind, as it does behind
+  // any retune, and the co-processor holds its reply until the receiver listens.
+  this->ensure_rx_();
+  if (!this->rx_on_)
+    return std::nullopt;
   uint8_t const seq = this->send_command_(GetRssi{this->radio_});
-  if (this->await_(seq, MsgType::RSSI, RSSI_TIMEOUT_MS) != Wait::REPLIED)
-    return RSSI_NONE_DBM;  // not_receiving, busy or no answer: no value, and no reason to resync
+  Wait const wait = this->await_(seq, MsgType::RSSI, ACK_TIMEOUT_MS);
+  if (wait == Wait::TIMEOUT) {
+    // A command without a reply, handled as every other one is: the link is lost and resyncs (spec §7). The
+    // co-processor answers a reading in a few ms, so a missing reply is a command or reply the link lost.
+    this->rssi_no_reply_++;
+    this->on_no_reply_("no rssi", ACK_TIMEOUT_MS);
+    return std::nullopt;
+  }
+  if (wait == Wait::ERROR) {
+    // `busy` is the radio's own transmission, its turn back to receive, or a retune waiting behind a frame in
+    // progress; a fault has already reset the link. None of them is a reading, and none is asked again.
+    (this->last_error_code_ == ErrorCode::BUSY ? this->rssi_busy_ : this->rssi_refused_)++;
+    return std::nullopt;
+  }
+  // The one place of the rule: a retune the co-processor refused changes nothing (spec §2.2), so the reading that
+  // follows is of the channel the radio stayed on. Replies come in command order, so the refusal has been taken in
+  // by now, whether the retune was forced or not and whichever caller asked (ADR 0134).
+  if (this->newest_receive_cmd_ != 0 && this->refused_cmd_ == this->newest_receive_cmd_) {
+    this->rssi_refused_++;
+    return std::nullopt;
+  }
   Message m;
   if (decode_message(this->reply_, this->reply_len_, m) == DecodeStatus::OK) {
     if (const auto *r = std::get_if<Rssi>(&m.body))
       return r->rssi_dbm;
   }
-  return RSSI_NONE_DBM;
+  return std::nullopt;
 }
 
 bool RadioBridle::is_sync_detected() {
@@ -880,17 +943,28 @@ bool RadioBridle::reception_in_progress() {
 
 // === Tuning and modes ===
 
-void RadioBridle::change_frequency(uint32_t freq_hz) {
+void RadioBridle::change_frequency(uint32_t freq_hz) { this->retune_(freq_hz, /*force=*/false); }
+
+void RadioBridle::retune_for_reading(uint32_t freq_hz) { this->retune_(freq_hz, /*force=*/true); }
+
+void RadioBridle::retune_(uint32_t freq_hz, bool force) {
   bool const changed = freq_hz != this->current_freq_;
   this->current_freq_ = freq_hz;
   // An idle radio only records the frequency: the next receive starts on it. A receiving or scanning one
-  // retunes with `rx_on`, which also ends a scan (even one on this frequency).
-  if (!this->link_running() || !(this->rx_on_ || this->scanning_) || (!changed && !this->scanning_))
+  // retunes with `rx_on`, which also ends a scan (even one on this frequency). An unchanged frequency sends none,
+  // except a forced one: it also replaces an earlier retune that waits behind a frame (spec §2.2). A forced one
+  // also starts an idle receiver, so that a channel check's readings follow its own retune and need no second one;
+  // not while a refused `rx_on` is held off.
+  bool const receiving = this->rx_on_ || this->scanning_;
+  if (!this->link_running() || (!receiving && (!force || this->rx_retry_held_())) ||
+      (!changed && !this->scanning_ && !force))
     return;
   RxOn rx_on;
   rx_on.radio = this->radio_;
   rx_on.freq_hz = this->phy_.band().air_hz_of(freq_hz);
-  this->send_pending_(rx_on, PendingKind::RX_ON);  // answered with an ack that is only matched, never awaited
+  rx_on.force = force;
+  uint8_t const seq = this->send_pending_(rx_on, PendingKind::RX_ON);  // its ack is only matched, never awaited
+  this->reading_cmd_ = force ? seq : 0;
   this->scanning_ = false;
   this->rx_on_ = true;
 }
@@ -996,6 +1070,13 @@ void RadioBridle::begin_resync_(const char *why, bool skip_reset) {
   } else {
     this->set_link_(Link::WAIT_RESET, why);
   }
+}
+
+void RadioBridle::on_no_reply_(const char *why, uint32_t waited_ms) {
+  if (!this->link_running())
+    return;
+  HELD_LOGW("%s within %" PRIu32 " ms", why, waited_ms);
+  this->begin_resync_(why, false);
 }
 
 void RadioBridle::attempt_failed_(const char *why) {
@@ -1227,6 +1308,9 @@ void RadioBridle::dump_debug() {
                 ", header mismatch %" PRIu32 ", bad CRC %" PRIu32 ", too short %" PRIu32,
                 this->dropped_before_tx_done_, this->fifo_overflows_, this->oversize_dropped_, this->header_mismatches_,
                 this->bad_crc_frames_, this->short_frames_);
+  ESP_LOGCONFIG(TAG,
+                "    Readings the co-processor did not give: busy %" PRIu32 ", no reply %" PRIu32 ", refused %" PRIu32,
+                this->rssi_busy_, this->rssi_no_reply_, this->rssi_refused_);
   ESP_LOGCONFIG(TAG,
                 "    Late strobe frames: %" PRIu32 ", stale replies: %" PRIu32
                 ", errors to unawaited commands: %" PRIu32 ", log events: %" PRIu32,

@@ -6,10 +6,10 @@
 
 ## Context
 
-[Bridle ADR 0001](https://github.com/laberning/bridle/blob/bridle-v0.6.0/docs/adr/0001-one-protocol-for-every-band-radios-offer-phy-profiles.md) made the band a PHY
+[Bridle ADR 0001](https://github.com/laberning/bridle/blob/bridle-v0.8.0/docs/adr/0001-one-protocol-for-every-band-radios-offer-phy-profiles.md) made the band a PHY
 profile and [ADR 0047](0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md)
 put it behind `BridlePhy`. The second profile, `gfsk_raw`, carries 868 MHz io-homecontrol on an
-SX1262 behind a co-processor ([Bridle ADR 0003](https://github.com/laberning/bridle/blob/bridle-v0.6.0/docs/adr/0003-a-profile-states-what-every-radio-of-it-does.md)). A `gfsk_raw` radio has no framing and no CRC: it sends a
+SX1262 behind a co-processor ([Bridle ADR 0003](https://github.com/laberning/bridle/blob/bridle-v0.8.0/docs/adr/0003-a-profile-states-what-every-radio-of-it-does.md)). A `gfsk_raw` radio has no framing and no CRC: it sends a
 preamble, a sync word and the bytes it is given, and receives exactly `rx_len` bytes behind the
 sync word. The io frame coding is therefore the host's to do.
 
@@ -75,7 +75,11 @@ sync word. The io frame coding is therefore the host's to do.
   a one-hour idle run showed no resync, no link timeout, no radio fault and no receive overflow.
 - **Values the bench set.** The receiver's preamble detector is 16 bits (8 bits reports a false
   preamble about four times a second on a quiet bench), the sync timeout is 250 ms (20 ms loses 22
-  of 60 wake-up frames in the idle scan), and the co-processor's clear-channel settle is 113 µs.
+  of 60 wake-up frames in the idle scan). The clear-channel settle after a retune is the co-processor's own:
+  it holds its reply to a `get_rssi` until the receiver listens on the new frequency (specification §3.1), so the
+  hub adds none ([ADR 0134](0134-a-radio-may-have-no-reading-and-an-attempt-without-one-fails.md)); the reply bound
+  of a `gfsk_raw` radio is 1100 µs. A preamble held for the 250 ms sync timeout would keep an unforced retune
+  waiting, so the channel check's retune is forced ([ADR 0134](0134-a-radio-may-have-no-reading-and-an-attempt-without-one-fails.md)).
 - **No real io-homecontrol device has been addressed through the bridge yet.** The SX1262 board
   with the Wio module stays listed as not validated in [Hardware](../hardware.md) until a real device has
   answered.

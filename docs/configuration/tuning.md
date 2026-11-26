@@ -643,6 +643,13 @@ remote's long wake-up on that channel can finish. In the worst case a command to
 therefore blocks the hub for several seconds on a nearly always busy channel
 ([ADR 0096](../adr/0096-the-hubs-requests-take-a-free-channel-and-are-never-forced-onto-a-busy-one.md)).
 
+A radio co-processor (`radio_type: bridle`) takes each reading on request, and it can fail to give one:
+it is busy with its own transmission, it does not answer (the link then restarts), or it refused to tune to the channel.
+The hub then judges the channel neither free nor busy. It sends nothing in that attempt, logs
+`No reading of the channel (last on … Hz) for cmd=…: nothing sent` and goes on with the next attempt.
+The bridge's debug dump counts the readings it did not get (`busy`, `no reply`, `refused`)
+([ADR 0134](../adr/0134-a-radio-may-have-no-reading-and-an-attempt-without-one-fails.md)).
+
 With `lbt_force_when_busy: true` the hub does not give up after that time: it measures all three
 channels and sends on the quietest one (a `low_power:` device stays on channel 2). The send can
 collide with the traffic that kept the channel busy, and a missing answer after it says nothing about
@@ -666,7 +673,7 @@ is still busy
 ([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)); they leave out a channel the
 band's channel set excludes. When the idle receiver is on
 another channel, the radio first retunes to the channel being measured and waits about a millisecond
-for the reading to settle. The threshold applies to the signal level at the antenna: on a board with
+for the reading to settle; on a bridge the co-processor does that wait before it answers. The threshold applies to the signal level at the antenna: on a board with
 a front-end module the amplifier's gain is removed from the reading first (see
 [Hardware](../hardware.md)), so the same value means the same on every board.
 

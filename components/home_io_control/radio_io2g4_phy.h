@@ -88,13 +88,6 @@ static constexpr IoBand IO_2G4_BAND{
     .late_answer_warn_ms = IO2G4_LATE_ANSWER_WARN_MS,
 };
 
-/// Wait the hub adds after a retune before a `get_rssi` describes the new channel: none. The co-processor owns the
-/// receiver's ramp-up: it answers a `get_rssi` with a reading of the channel it was commanded to and waits out its own
-/// ramp-up before it samples. The hub knows no ramp-up figure for a radio behind the bridge, so it adds no wait.
-/// \todo The closing bench run compares clear-channel readings taken right after a retune with readings taken on a
-/// settled channel; a difference would mean the co-processor's wait is too short.
-static constexpr uint32_t IO2G4_CCA_SETTLE_US = 0;
-
 // === Airtime (IEEE 802.15.4 O-QPSK, 250 kb/s) ===
 
 /// One byte on air: 8 bits at 250 kb/s.
@@ -174,8 +167,6 @@ class Io2g4Phy : public BridlePhy {
 
   /// `tuning.io2g4_hop_dwell_ms`.
   [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override { return tuning.io2g4_hop_dwell_ms; }
-  /// `IO2G4_CCA_SETTLE_US`: none, the co-processor waits for the receiver itself.
-  [[nodiscard]] uint32_t cca_settle_us() const override { return IO2G4_CCA_SETTLE_US; }
   /// False: a wake-up is a strobe.
   [[nodiscard]] bool wake_up_is_preamble() const override { return false; }
   /// 8: 802.15.4 has one fixed preamble, so no frame of this band depends on the value.

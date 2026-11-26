@@ -88,6 +88,8 @@ void FakeCoprocessor::reset_state_() {
   event_mask_ = 0;  // every boot clears it (spec §4)
   counter_ = 0;
   tx_busy_until_us_ = 0;
+  preamble_held_until_us_ = 0;
+  deferred_freq_hz_.reset();
   pending_.clear();
 }
 
@@ -118,8 +120,8 @@ void FakeCoprocessor::skip_event_counter(uint8_t n) {
   insert_(std::move(p));
 }
 
-void FakeCoprocessor::reject_next(MsgType type, ErrorCode code, uint16_t detail, int radio) {
-  rejections_.push_back({static_cast<uint8_t>(type), code, detail, radio});
+void FakeCoprocessor::reject_next(MsgType type, ErrorCode code, uint16_t detail, int radio, uint64_t delay_us) {
+  rejections_.push_back({static_cast<uint8_t>(type), code, detail, radio, delay_us});
 }
 
 void FakeCoprocessor::inject_rx(uint32_t freq_hz, const std::vector<uint8_t> &payload, CrcState crc, uint64_t delay_us,
@@ -162,6 +164,18 @@ void FakeCoprocessor::inject_rx_abort(uint32_t freq_hz, RxAbortReason reason, ui
   abort.freq_hz = freq_hz;
   abort.reason = reason;
   queue_(abort, now_us() + delay_us);
+}
+
+void FakeCoprocessor::hold_preamble(uint64_t duration_us) {
+  preamble_held_until_us_ = now_us() + duration_us;
+  inject_frame_start(radios_.at(0).freq_hz, FrameStage::PREAMBLE);
+}
+
+void FakeCoprocessor::settle_preamble_hold_() {
+  if (deferred_freq_hz_.has_value() && now_us() >= preamble_held_until_us_) {
+    radios_.at(0).freq_hz = *deferred_freq_hz_;
+    deferred_freq_hz_.reset();
+  }
 }
 
 void FakeCoprocessor::inject_log(LogLevel level, const std::string &text, uint64_t delay_us) {
@@ -331,13 +345,13 @@ void FakeCoprocessor::queue_(const Body &body, uint64_t due_us) {
   insert_(std::move(p));
 }
 
-void FakeCoprocessor::error_(uint8_t cmd_seq, ErrorCode code, uint16_t detail) {
+void FakeCoprocessor::error_(uint8_t cmd_seq, ErrorCode code, uint16_t detail, uint64_t delay_us) {
   errors_sent_[static_cast<uint8_t>(code) & 0x0F]++;
   Error e;
   e.cmd_seq = cmd_seq;
   e.code = code;
   e.detail = detail;
-  queue_(e, now_us());
+  queue_(e, now_us() + delay_us);
 }
 
 bool FakeCoprocessor::resolve_scenario_reply_(const Pending &event, uint8_t &seq) const {
@@ -451,13 +465,16 @@ void FakeCoprocessor::on_host_bytes_(const uint8_t *data, size_t n) {
       error_(rec.seq, ErrorCode::UNKNOWN_TYPE);
     } else if (decode_message(rec.message.data(), rec.message.size(), msg) != DecodeStatus::OK) {
       error_(rec.seq, ErrorCode::BAD_LENGTH);
+    } else if (const auto *rx_on = std::get_if<RxOn>(&msg.body);
+               rx_on != nullptr && refused_rx_on_hz_.has_value() && rx_on->freq_hz == *refused_rx_on_hz_) {
+      error_(rec.seq, refused_rx_on_code_, 0);
     } else if (auto reject = std::find_if(rejections_.begin(), rejections_.end(),
                                           [&](const Rejection &r) {
                                             return r.type == rec.type && (r.radio < 0 || (rec.message.size() > 2 &&
                                                                                           rec.message[2] == r.radio));
                                           });
                reject != rejections_.end()) {
-      error_(rec.seq, reject->code, reject->detail);
+      error_(rec.seq, reject->code, reject->detail, reject->delay_us);
       rejections_.erase(reject);
     } else {
       handle_(msg);
@@ -497,9 +514,22 @@ void FakeCoprocessor::handle_(const Message &msg) {
       } else if (on->freq_hz < d.band_min_hz || on->freq_hz > d.band_max_hz) {
         error_(seq, ErrorCode::PARAM_RANGE, field::rx_on::FREQ_HZ);
       } else {
-        r->freq_hz = on->freq_hz;  // a retune; any scan ends
+        settle_preamble_hold_();
+        const bool held = on->radio == 0 && now_us() < preamble_held_until_us_;
+        const uint32_t old_freq_hz = r->freq_hz;
+        if (held && !on->force && on->freq_hz != old_freq_hz) {
+          deferred_freq_hz_ = on->freq_hz;  // the retune waits for the frame in progress
+        } else {
+          r->freq_hz = on->freq_hz;  // a retune; any scan ends
+          deferred_freq_hz_.reset();
+        }
         r->mode = Mode::RX;
         ack_(seq);
+        if (held && on->force &&
+            on->freq_hz != old_freq_hz) {  // to the frequency it is on a forced rx_on changes nothing
+          preamble_held_until_us_ = 0;
+          inject_rx_abort(old_freq_hz, RxAbortReason::FORCED_RETUNE);
+        }
       }
     }
   } else if (const auto *idle = std::get_if<Idle>(&msg.body)) {
@@ -513,9 +543,10 @@ void FakeCoprocessor::handle_(const Message &msg) {
     }
   } else if (const auto *rssi = std::get_if<GetRssi>(&msg.body)) {
     if (RadioState *r = radio_of(rssi->radio)) {
+      settle_preamble_hold_();
       if (!configured_(*r)) {
         error_(seq, ErrorCode::NOT_CONFIGURED);
-      } else if (transmitting()) {
+      } else if (transmitting() || deferred_freq_hz_.has_value()) {
         error_(seq, ErrorCode::BUSY);
       } else if (r->mode == Mode::IDLE) {
         error_(seq, ErrorCode::NOT_RECEIVING);
@@ -528,7 +559,7 @@ void FakeCoprocessor::handle_(const Message &msg) {
           reply.rssi_dbm = static_cast<int8_t>(std::clamp<int16_t>(channel_levels_.front(), INT8_MIN, INT8_MAX));
           channel_levels_.pop_front();
         }
-        queue_(reply, now_us());
+        queue_(reply, now_us() + rssi_reply_delay_us_);
       }
     }
   } else if (std::holds_alternative<GetStats>(msg.body)) {

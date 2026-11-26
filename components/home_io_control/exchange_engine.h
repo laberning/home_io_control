@@ -636,6 +636,9 @@ class ExchangeEngine {
     uint32_t channel_busy_attempts{0};  ///< Attempts of send_and_receive() and openings by open_session() that
                                         ///< ended as "channel busy": the access time ran out and nothing was
                                         ///< sent (ADR 0096, ADR 0133).
+    uint32_t no_reading_attempts{0};    ///< Attempts of send_and_receive() and openings by open_session() that
+                                        ///< ended because the radio gave no reading of the channel: nothing was
+                                        ///< sent, and the attempt counts as neither quiet nor busy (ADR 0134).
     uint32_t retransmits{0};            ///< TX attempts beyond the first of send_and_receive() and of
                                         ///< run_attempts() (pairing's retry loops).
     uint32_t challenge_round_trips{0};  ///< Completed 0x3C/0x3D challenge-response cycles, either
@@ -747,13 +750,20 @@ class ExchangeEngine {
   /// @param buf       Serialized frame.
   /// @param len       Its length.
   /// @param tx_config The transmission; its clear-channel threshold is set here.
-  /// @return SENT or FAILED from the radio, or CHANNEL_BUSY with the level that made it busy.
+  /// @return SENT or FAILED from the radio, CHANNEL_BUSY with the level that made it busy, or NO_READING when
+  ///         a reading of the channel was not to be had (ADR 0134).
   [[nodiscard]] TxResult check_channel_and_send_(const uint8_t *buf, uint8_t len, RadioTxConfig &tx_config);
 
   /// Receive for @p ms on the radio's current channel through listen(), so a frame heard meanwhile
   /// (a remote's press on the channel the hub backs off from) reaches the overheard-frame observer
   /// like one heard inside an exchange's wait.
   void hear_channel_for_(uint32_t ms);
+
+  /// Count and log an attempt that ended without a reading of its channel (ADR 0134).
+  /// @param frame The frame that was not sent.
+  /// @param freq  The channel that was being checked.
+  /// @return The NO_READING result of transmit_with_channel_access_().
+  ChannelTransmit no_reading_(const IoFrame &frame, uint32_t freq);
 
   /// Count a channel check that found the TX channel busy and tell the transmit observer.
   /// @param level_dbm The level that made the channel busy (TxResult::cca_level_dbm).

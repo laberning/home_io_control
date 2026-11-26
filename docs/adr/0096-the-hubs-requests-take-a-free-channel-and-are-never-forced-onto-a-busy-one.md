@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0096 -->
 
-**Status:** Accepted, amends [ADR 0045](0045-listen-before-talk-is-part-of-sending.md), amended by [ADR 0132](0132-a-radio-describes-its-band-and-the-hubs-rules-read-it.md) (the band describes the channels a request may use) and by [ADR 0133](0133-pairing-and-the-key-pull-open-their-sessions-through-channel-access.md) (pairing and the key pull open their sessions through channel access) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0045](0045-listen-before-talk-is-part-of-sending.md), amended by [ADR 0132](0132-a-radio-describes-its-band-and-the-hubs-rules-read-it.md) (the band describes the channels a request may use) and by [ADR 0133](0133-pairing-and-the-key-pull-open-their-sessions-through-channel-access.md) (pairing and the key pull open their sessions through channel access) and by [ADR 0134](0134-a-radio-may-have-no-reading-and-an-attempt-without-one-fails.md) (a radio may have no reading, and an attempt without one fails) · **Recorded:** 2026-11
 
 ## Context
 

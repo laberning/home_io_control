@@ -60,12 +60,6 @@ static constexpr uint8_t IO868_PREAMBLE_BITS_PER_BYTE = SOFT_PHY_PREAMBLE_BITS_P
 /// the radio (`RadioBridle::accepts_tuning()`), never by a larger requirement here.
 static constexpr uint16_t IO868_MIN_PREAMBLE_CAPACITY_BYTES = 4096;
 
-// === Clear-channel settle ===
-
-/// Wait after a retune before a `get_rssi` describes the new channel: 113 µs, the co-processor's clear-channel
-/// settle on the SX1262 behind it, measured on the bench (ADR 0048).
-static constexpr uint32_t IO868_CCA_SETTLE_US = 113;
-
 // === Idle scan ===
 
 /// Dwell of the idle scan, per channel, in µs: the hub's own hop time.
@@ -110,8 +104,6 @@ class Io868GfskPhy : public BridlePhy {
   [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.sx1262_discovery_hop_slice_ms;
   }
-  /// `IO868_CCA_SETTLE_US`.
-  [[nodiscard]] uint32_t cca_settle_us() const override { return IO868_CCA_SETTLE_US; }
   /// True: a wake-up is a long preamble.
   [[nodiscard]] bool wake_up_is_preamble() const override { return true; }
   /// `IO868_PREAMBLE_BITS_PER_BYTE`.

@@ -122,8 +122,6 @@ class BridlePhy {
 
   /// Per-channel dwell for a rotating listen (see RadioDriver::hop_dwell_ms()).
   [[nodiscard]] virtual uint16_t hop_dwell_ms(const TuningConfig &tuning) const = 0;
-  /// Wait after a retune before a `get_rssi` describes the new channel (see RadioDriver::cca_settle_us()).
-  [[nodiscard]] virtual uint32_t cca_settle_us() const = 0;
   /// Whether a wake-up on this band is a long preamble the radio must be able to send (so the wake-up duration has to
   /// fit the radio's `max_preamble_bytes`), as opposed to a strobe, which has no preamble to lengthen.
   [[nodiscard]] virtual bool wake_up_is_preamble() const = 0;

@@ -240,6 +240,21 @@ TEST(DecisionsChannel, AForcedSendTakesTheQuietestChannel) {
   EXPECT_EQ(decisions::forced_send_channel(all, {-60, -60, -60}), FREQ_CH2) << "a tie keeps channel 2";
 }
 
+TEST(DecisionsChannel, AForcedSendNeverPicksAChannelWithoutAReading) {
+  const ChannelSet all = ChannelSet::all();
+  EXPECT_EQ(decisions::forced_send_channel(all, {std::nullopt, -70, -60}), FREQ_CH1)
+      << "the quietest of the channels that have a reading";
+  EXPECT_EQ(decisions::forced_send_channel(all, {-50, std::nullopt, std::nullopt}), FREQ_CH2);
+  EXPECT_FALSE(decisions::forced_send_channel(all, {std::nullopt, std::nullopt, std::nullopt}).has_value())
+      << "no reading anywhere: no channel is chosen by guessing";
+}
+
+TEST(DecisionsChannel, AnAttemptWithoutAReadingWasNotSentAndSaysNothingAboutTheReceiver) {
+  const auto status = decisions::ChannelAccessStatus::NO_READING;
+  EXPECT_FALSE(decisions::request_was_sent(status)) << "nothing went out, so there is nothing to listen for";
+  EXPECT_FALSE(decisions::silence_is_evidence(status)) << "silence after no send is no evidence";
+}
+
 TEST(DecisionsChannel, AForcedSendStaysInsideTheSet) {
   EXPECT_EQ(decisions::forced_send_channel(ChannelSet::only(FREQ_CH2), {-50, -95, -95}), FREQ_CH2);
   const ChannelSet without_ch1 =

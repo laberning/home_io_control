@@ -171,7 +171,7 @@ class RadioSX1276 : public RadioDriver {
   /// Live read of the channel, the right measurement before a send. A received frame's level in
   /// RadioCaptureInfo::rssi_dbm is a different reading: the one latched when its sync word was seen.
   /// @return RSSI in dBm (negative).
-  int16_t read_rssi() override;
+  std::optional<int16_t> read_rssi() override;
   /// @copydoc RadioDriver::is_sync_detected
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected

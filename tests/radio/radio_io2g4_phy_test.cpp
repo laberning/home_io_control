@@ -257,8 +257,7 @@ TEST(RadioIo2g4Phy, TheHopDwellComesFromTheTuningField) {
   EXPECT_EQ(io2g4_phy().hop_dwell_ms(tuning), 9);
 }
 
-TEST(RadioIo2g4Phy, TheHubAddsNoWaitAfterARetuneBecauseTheCoprocessorWaitsForItsReceiver) {
-  EXPECT_EQ(io2g4_phy().cca_settle_us(), 0u);
+TEST(RadioIo2g4Phy, AWakeUpIsAStrobeWithOneFixedPreamble) {
   EXPECT_FALSE(io2g4_phy().wake_up_is_preamble());
   EXPECT_EQ(io2g4_phy().preamble_bits_per_byte(), 8) << "802.15.4 has one fixed preamble";
 }

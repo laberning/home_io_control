@@ -239,7 +239,7 @@ class SoftPhyDriverBase : public RadioDriver {
   /// Same formula on both chips (`-(int16_t) raw / 2`, see @ref raw_rssi_to_dbm_); only the opcode
   /// used to read the single raw byte differs, via @ref read_rssi_raw_byte. Antenna-referred: the
   /// gain of an external receive front end is removed, see @ref front_end_rx_gain_db.
-  int16_t read_rssi() override;
+  std::optional<int16_t> read_rssi() override;
   /// @copydoc RadioDriver::cca_settle_us
   [[nodiscard]] uint32_t cca_settle_us() const override { return SOFT_PHY_CCA_SETTLE_US; }
   /// @copydoc RadioDriver::is_sync_detected

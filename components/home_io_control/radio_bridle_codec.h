@@ -3,7 +3,7 @@
 /// @ingroup hioc_radio
 ///
 /// Bridle is the protocol between the hub and a radio co-processor
-/// ([specification](https://github.com/laberning/bridle/blob/bridle-v0.5.0/README.md)). This header is the byte-level
+/// ([specification](https://github.com/laberning/bridle/blob/bridle-v0.8.0/README.md)). This header is the byte-level
 /// half of it: it turns messages into frames and frames into messages, and knows nothing of io-homecontrol, of any
 /// radio or of the transport. Every code (message type, param id, error code, capability bit) comes from the generated
 /// `radio_bridle_enums.h` (the generated header of a Bridle release, namespace `::bridle`); the link CRC is

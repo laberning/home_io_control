@@ -27,6 +27,7 @@ enum class ChannelAccessStatus : uint8_t {
   SENT,          ///< Sent on a channel the check found free.
   SENT_FORCED,   ///< Sent onto a channel measured busy (`lbt_force_when_busy`): no evidence about the receiver.
   CHANNEL_BUSY,  ///< Never sent: the access time ran out with the channel busy.
+  NO_READING,    ///< Never sent: the radio had no reading of the channel (ADR 0134). Neither quiet nor busy.
   FAILED,        ///< The radio could not send (serialization or TX failure).
 };
 
@@ -224,19 +225,25 @@ struct WifiCoexistence {
 
 /// The channel a forced send takes once the access time is spent (`lbt_force_when_busy`).
 /// @param channels The channels the request may use (request_channels()); must not be empty.
-/// @param levels_dbm The level measured on each of REQUEST_CHANNELS, in that order; only the entries
-///        of channels in the set are read.
-/// @return The quietest channel of the set (the first of equals in REQUEST_CHANNELS order).
-[[nodiscard]] inline uint32_t forced_send_channel(const ChannelSet &channels,
-                                                  const std::array<int16_t, 3> &levels_dbm) {
-  std::optional<size_t> quietest;
+/// @param levels_dbm The level measured on each of REQUEST_CHANNELS, in that order, or nothing for a
+///        channel the radio gave no reading of (ADR 0134); only the entries of channels in the set are
+///        read.
+/// @return The quietest channel of the set that has a reading (the first of equals in REQUEST_CHANNELS
+///         order); nothing when none of them has one, so that no channel is picked by guessing.
+[[nodiscard]] inline std::optional<uint32_t> forced_send_channel(
+    const ChannelSet &channels, const std::array<std::optional<int16_t>, 3> &levels_dbm) {
+  std::optional<uint32_t> quietest_channel;
+  int16_t quietest_level_dbm = 0;
   for (size_t i = 0; i < levels_dbm.size(); i++) {
-    if (!channels.contains(REQUEST_CHANNELS[i]))
+    const std::optional<int16_t> level = levels_dbm[i];
+    if (!channels.contains(REQUEST_CHANNELS[i]) || !level.has_value())
       continue;
-    if (!quietest.has_value() || levels_dbm[i] < levels_dbm[*quietest])
-      quietest = i;
+    if (!quietest_channel.has_value() || *level < quietest_level_dbm) {
+      quietest_channel = REQUEST_CHANNELS[i];
+      quietest_level_dbm = *level;
+    }
   }
-  return quietest.has_value() ? REQUEST_CHANNELS[*quietest] : channels.nth(0);
+  return quietest_channel;
 }
 
 /// Whether the request of a try went out on the air (on a free channel or forced); a try that did not
@@ -246,9 +253,9 @@ struct WifiCoexistence {
 }
 
 /// Whether a try that ended this way says anything about the receiver when it then got no answer. A
-/// request that was never sent, or went out onto a measured-busy channel (where a collision explains
-/// the silence), is no evidence that the receiver is at rest. A failed transmit keeps the rule that
-/// predates channel access: the try counts.
+/// request that was never sent (channel busy, or no reading to judge the channel by), or went out onto
+/// a measured-busy channel (where a collision explains the silence), is no evidence that the receiver
+/// is at rest. A failed transmit keeps the rule that predates channel access: the try counts.
 [[nodiscard]] inline bool silence_is_evidence(ChannelAccessStatus status) {
   return status == ChannelAccessStatus::SENT || status == ChannelAccessStatus::FAILED;
 }

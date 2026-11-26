@@ -382,16 +382,30 @@ TEST(RadioBridle, TheReceiverRunsAfterASentFrame) {
 }
 
 TEST(RadioBridle, TheReceiverRunsAfterAFailedSendToo) {
-  // Issue #228: a send that failed must not leave the radio idle, or the hub listens to nothing.
+  // Issue #228: a send that failed must not leave the radio idle, or the hub listens to nothing. A refused `tx`
+  // changes nothing (spec §2.2), so a radio that listened before listens after it, and the driver sends no `rx_on`
+  // to make sure.
   {
     Rig rig;  // a transmission the co-processor refuses before it starts
     rig.start();
-    rig.cp.reject_next(MsgType::TX, ErrorCode::RADIO_FAULT, 9);
+    listen_on(rig);
+    rig.cp.reject_next(MsgType::TX, ErrorCode::PAYLOAD_TOO_LONG);
     const auto frame = io_frame(1);
     EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), {}).status, TxResult::Status::FAILED);
-    rig.radio.check_for_packet(*std::make_unique<RadioRxPacket>());  // takes the ack of the rx_on it sent
-    EXPECT_TRUE(rig.cp.receiving()) << "a refused tx leaves the radio as it was; the driver tells it to receive";
+    EXPECT_TRUE(rig.cp.receiving()) << "a refused tx leaves the radio as it was: receiving";
     EXPECT_TRUE(rig.radio.rx_on_active());
+    EXPECT_EQ(rig.commands_of<RxOn>(MsgType::RX_ON).size(), 1u) << "and the driver sends no rx_on to make sure";
+  }
+  {
+    Rig rig;  // a refused tx leaves a running scan running, and the driver's own state says so
+    rig.start();
+    ASSERT_TRUE(rig.radio.run_idle_scan());
+    rig.cp.reject_next(MsgType::TX, ErrorCode::BUSY);
+    const auto frame = io_frame(1);
+    EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), {}).status, TxResult::Status::FAILED);
+    EXPECT_TRUE(rig.radio.scanning()) << "the scan the co-processor still runs";
+    EXPECT_TRUE(rig.cp.scanning());
+    EXPECT_EQ(rig.commands_of<RxOn>(MsgType::RX_ON).size(), 0u);
   }
   {
     Rig rig;  // the clear-channel check found the channel busy: nothing was sent, the radio is in receive
@@ -417,6 +431,71 @@ TEST(RadioBridle, TheReceiverRunsAfterAFailedSendToo) {
     }
     EXPECT_TRUE(rig.radio.running());
     EXPECT_TRUE(rig.cp.receiving());
+  }
+}
+
+TEST(RadioBridle, ARefusedTxDoesNotRestoreTheStateOfAnUnawaitedRxOnRefusedDuringItsWait) {
+  // The co-processor refuses the unawaited `rx_on` (spec §2.2: nothing changes) while the `tx` is awaited, then the
+  // `tx` itself. The driver's record must match the co-processor, which does not receive: the next wait sends an
+  // `rx_on` again instead of believing the radio listens.
+  Rig rig;
+  rig.start();
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::BUSY, 0, -1, 500);
+  rig.cp.reject_next(MsgType::TX, ErrorCode::PAYLOAD_TOO_LONG, 0, -1, 20000);
+  listen_on(rig);
+  const auto frame = io_frame(1);
+  EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), {}).status, TxResult::Status::FAILED);
+  EXPECT_FALSE(rig.cp.receiving()) << "both refusals changed nothing: the radio does not receive";
+  EXPECT_FALSE(rig.radio.rx_on_active()) << "and the driver's record says the same";
+  EXPECT_EQ(rig.commands_of<RxOn>(MsgType::RX_ON).size(), 1u);
+  esphome::test_clock::advance_ms(6000);  // past SCAN_RETRY_MS, the hold-off after a refused rx_on
+  RadioRxPacket packet;
+  rig.radio.wait_for_packet(packet, 1);
+  EXPECT_TRUE(rig.cp.receiving()) << "the next wait tells the radio to receive";
+}
+
+TEST(RadioBridle, ARefusedTxDoesNotRestoreTheStateOfAnUnawaitedRxScanRefusedDuringItsWait) {
+  // As above for the scan: the unawaited `rx_scan` is refused while the `tx` is awaited, then the `tx` itself. The
+  // radio neither scans nor receives, and the driver must not believe it scans, or the idle pass starts nothing.
+  Rig rig;
+  rig.start();
+  rig.cp.reject_next(MsgType::RX_SCAN, ErrorCode::BUSY, 0, -1, 500);
+  rig.cp.reject_next(MsgType::TX, ErrorCode::PAYLOAD_TOO_LONG, 0, -1, 20000);
+  ASSERT_TRUE(rig.radio.run_idle_scan());
+  const auto frame = io_frame(1);
+  EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), {}).status, TxResult::Status::FAILED);
+  EXPECT_FALSE(rig.cp.receiving()) << "both refusals changed nothing: the radio neither scans nor receives";
+  EXPECT_FALSE(rig.radio.scanning()) << "and the driver's record says the same";
+  EXPECT_FALSE(rig.radio.rx_on_active());
+  // Within the hold-off after the refused scan the idle pass hops from the host, which needs the radio receiving.
+  EXPECT_FALSE(rig.radio.run_idle_scan());
+  EXPECT_TRUE(rig.cp.receiving()) << "the idle pass tells the radio to receive";
+}
+
+TEST(RadioBridle, ARefusedUnawaitedCommandIsUndoneBeforeATxAndSupersededByASentOne) {
+  const auto frame = io_frame(1);
+  {
+    Rig rig;  // the refusal is read before the `tx` is sent: the `tx`'s restore starts from the undone state
+    rig.start();
+    rig.cp.reject_next(MsgType::RX_ON, ErrorCode::BUSY);
+    rig.cp.reject_next(MsgType::TX, ErrorCode::PAYLOAD_TOO_LONG, 0, -1, 20000);
+    listen_on(rig);
+    RadioRxPacket packet;
+    EXPECT_FALSE(rig.radio.check_for_packet(packet));
+    EXPECT_FALSE(rig.radio.rx_on_active()) << "the refused rx_on is undone at once";
+    EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), {}).status, TxResult::Status::FAILED);
+    EXPECT_FALSE(rig.cp.receiving());
+    EXPECT_FALSE(rig.radio.rx_on_active());
+  }
+  {
+    Rig rig;  // the refusal arrives during the wait of a `tx` that is sent: the `tx` defines the state
+    rig.start();
+    rig.cp.reject_next(MsgType::RX_SCAN, ErrorCode::BUSY, 0, -1, 500);
+    ASSERT_TRUE(rig.radio.run_idle_scan());
+    EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), {}).status, TxResult::Status::SENT);
+    EXPECT_TRUE(rig.cp.receiving()) << "the tx returns to receive by itself (then_rx)";
+    EXPECT_TRUE(rig.radio.rx_on_active()) << "and the refused scan before it does not undo that";
+    EXPECT_FALSE(rig.radio.scanning());
   }
 }
 
@@ -1013,6 +1092,311 @@ TEST(RadioBridle, ChangeFrequencyOnAReceivingRadioRetunesWithRxOnAndSkipsARepeat
   EXPECT_EQ(rig.radio.get_current_freq(), FREQ_CH3);
 }
 
+TEST(RadioBridle, OnlyAChannelChecksRetuneIsForced) {
+  Rig rig;
+  rig.start();
+  rig.radio.set_mode_rx();
+  rig.radio.change_frequency(FREQ_CH3);
+  EXPECT_FALSE(rig.last_command<RxOn>().force) << "an idle hop waits for the frame in progress";
+  rig.radio.set_mode_rx();
+  EXPECT_FALSE(rig.last_command<RxOn>().force);
+  rig.radio.change_frequency(FREQ_CH1);
+  EXPECT_FALSE(rig.last_command<RxOn>().force) << "so does a rotating listen";
+
+  size_t const before = rig.cp.commands_of(MsgType::RX_ON).size();
+  rig.cp.set_channel_rssi_dbm(-90);
+  EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH2), -90);
+  ASSERT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), before + 1);
+  RxOn const check = rig.commands_of<RxOn>(MsgType::RX_ON).back().second;
+  EXPECT_TRUE(check.force) << "the channel check retunes at once";
+  EXPECT_EQ(check.freq_hz, rig.radio.band().air_hz_of(FREQ_CH2));
+
+  EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH2), -90);
+  EXPECT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), before + 1)
+      << "the readings that follow in the same check need no retune of their own";
+
+  // Anything sent in between (here an idle hop, which records the channel the next check asks for) starts the next
+  // check with a forced retune again, even though the recorded frequency is the checked one.
+  rig.radio.change_frequency(FREQ_CH3);
+  EXPECT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), before + 2);
+  EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH3), -90);
+  ASSERT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), before + 3);
+  RxOn const again = rig.commands_of<RxOn>(MsgType::RX_ON).back().second;
+  EXPECT_TRUE(again.force) << "a check on the recorded channel sends its forced retune too";
+  EXPECT_EQ(again.freq_hz, rig.radio.band().air_hz_of(FREQ_CH3));
+
+  // So do a send, a scan and `idle` in between.
+  auto forced_retune_before_next_check = [&rig](const char *what) {
+    size_t const n = rig.cp.commands_of(MsgType::RX_ON).size();
+    EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH3), -90) << what;
+    ASSERT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), n + 1) << what;
+    EXPECT_TRUE(rig.commands_of<RxOn>(MsgType::RX_ON).back().second.force) << what;
+  };
+  const auto frame = io_frame(1);
+  RadioTxConfig tx_config{};
+  tx_config.freq_hz = FREQ_CH3;
+  ASSERT_TRUE(rig.radio.send_packet(frame.data(), frame.size(), tx_config).sent());
+  forced_retune_before_next_check("after a send");
+  ASSERT_TRUE(rig.radio.run_idle_scan());
+  forced_retune_before_next_check("after a scan");
+  rig.radio.set_mode_standby();
+  forced_retune_before_next_check("after idle");
+}
+
+// The race: an unforced retune (idle hop, rotating listen) went out before the driver saw the preamble that holds it,
+// and the request's check follows on that very channel. The recorded frequency already is the checked one, so the
+// forced retune must still go out: it replaces the waiting one and the reading is not `busy`.
+TEST(RadioBridle, AChannelCheckOnTheChannelAWaitingRetuneAsksForGivesAReadingNotBusy) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.cp.set_channel_rssi_dbm(-90);
+  rig.cp.hold_preamble(1000000);
+  rig.radio.change_frequency(FREQ_CH3);  // waits behind the preamble the driver has not read yet
+  uint32_t const busy_before = rig.radio.rssi_busy();
+
+  EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH3), -90) << "the forced retune drops the held preamble";
+  EXPECT_EQ(rig.radio.rssi_busy(), busy_before);
+  EXPECT_TRUE(rig.commands_of<RxOn>(MsgType::RX_ON).back().second.force);
+}
+
+// By specification §2.2 a refused command changes nothing: the forced retune to the recorded frequency leaves the
+// co-processor receiving where it was, and the driver's record (frequency) still matches it after the refusal. A
+// reading is only of the channel the retune it follows has put the radio on, and that retune was refused: the
+// driver gives none, even though the radio happens to sit on the channel asked for (a reading is used only when the
+// retune before it was accepted). The optimistic `receiving` flag is undone, as for any refused unawaited `rx_on`,
+// so the next listen asks again on the same channel.
+TEST(RadioBridle, ARefusedForcedRetuneToTheRecordedChannelLeavesTheRecordMatchingTheCoprocessor) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.radio.change_frequency(FREQ_CH3);
+  uint32_t const cp_freq_before = rig.cp.freq_hz();
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  rig.cp.set_channel_rssi_dbm(-90);
+
+  EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH3).has_value()) << "the retune the reading follows was refused";
+  EXPECT_EQ(rig.radio.unawaited_errors(), 1u);
+  EXPECT_TRUE(rig.cp.receiving()) << "a refusal changed nothing";
+  EXPECT_EQ(rig.cp.freq_hz(), cp_freq_before);
+  EXPECT_EQ(rig.radio.get_current_freq(), FREQ_CH3) << "the recorded frequency is still the co-processor's";
+  EXPECT_EQ(rig.radio.link_state(), TestableRadioBridle::Link::RUNNING);
+  EXPECT_FALSE(rig.radio.rx_on_active());
+  rig.radio.set_mode_rx();
+  EXPECT_EQ(rig.last_command<RxOn>().freq_hz, rig.radio.band().air_hz_of(FREQ_CH3));
+  EXPECT_TRUE(rig.radio.rx_on_active());
+}
+
+// A reading follows the retune right behind it, and the refusal of that retune arrives only with the reading's reply.
+// The radio then stayed on the old channel and `get_rssi` reports that one's level: it is not the level of the channel
+// asked for, so there is no reading, whether the retune was forced or not.
+TEST(RadioBridle, ARefusedUnforcedRetuneLeavesTheReadingThatFollowsWithoutALevel) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.cp.set_channel_rssi_dbm(-90);
+  ASSERT_EQ(rig.radio.read_rssi(), -90) << "the same reading without the refusal is a level";
+
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  rig.radio.change_frequency(FREQ_CH1);
+  uint32_t const refused_before = rig.radio.rssi_refused();
+  EXPECT_FALSE(rig.radio.read_rssi().has_value()) << "the old channel's level is not the new channel's";
+  EXPECT_EQ(rig.radio.rssi_refused(), refused_before + 1);
+  EXPECT_EQ(rig.radio.link_state(), TestableRadioBridle::Link::RUNNING);
+}
+
+TEST(RadioBridle, ARefusedForcedRetuneToAnotherChannelLeavesTheReadingWithoutALevel) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.radio.change_frequency(FREQ_CH3);
+  rig.cp.set_channel_rssi_dbm(-90);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+
+  EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH2).has_value());
+  EXPECT_EQ(rig.cp.freq_hz(), rig.radio.band().air_hz_of(FREQ_CH3)) << "the radio stayed on the old channel";
+}
+
+TEST(RadioBridle, ALaterAcceptedRetuneGivesReadingsAgain) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.cp.set_channel_rssi_dbm(-90);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH2).has_value());
+
+  rig.radio.set_mode_rx();  // a new command: the refusal no longer describes the radio
+  EXPECT_EQ(rig.radio.read_rssi(), -90);
+}
+
+// A check on an idle radio starts the receiver with its forced retune: one `rx_on` for all of the check's readings,
+// within the trace budget of a check (TRACE_CHANNEL_CHECK_LINES). While a refused `rx_on` is held off, none is sent
+// and there is no reading.
+TEST(RadioBridle, AChannelCheckOnAnIdleRadioStartsTheReceiverWithItsForcedRetune) {
+  Rig rig;
+  rig.start();
+  rig.radio.set_mode_standby();
+  rig.cp.set_channel_rssi_dbm(-90);
+  size_t const before = rig.cp.commands_of(MsgType::RX_ON).size();
+  for (int reading = 0; reading < 4; reading++)
+    EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH2), -90);
+  ASSERT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), before + 1);
+  RxOn const start = rig.commands_of<RxOn>(MsgType::RX_ON).back().second;
+  EXPECT_TRUE(start.force);
+  EXPECT_EQ(start.freq_hz, rig.radio.band().air_hz_of(FREQ_CH2));
+
+  rig.radio.set_mode_standby();
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH3).has_value()) << "the refusal reaches the reading's wait";
+  size_t const refused = rig.cp.commands_of(MsgType::RX_ON).size();
+  rig.radio.set_mode_standby();
+  EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH3).has_value());
+  EXPECT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), refused) << "a refused rx_on is not repeated at once";
+}
+
+// A check on the channel a frame is arriving on: the forced retune to the frequency the radio is on drops nothing
+// (spec §3.1), so the frame stays in progress and the reading measures it.
+TEST(RadioBridle, AChannelCheckOnTheChannelAFrameArrivesOnKeepsTheFrame) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.radio.change_frequency(FREQ_CH3);
+  rig.cp.set_channel_rssi_dbm(-60);
+  rig.cp.hold_preamble(1000000);  // on CH3, where the radio receives
+  RadioRxPacket none;
+  EXPECT_FALSE(rig.radio.check_for_packet(none));  // takes the frame_start in
+  ASSERT_TRUE(rig.radio.is_preamble_detected());
+
+  EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH3), -60);
+  EXPECT_TRUE(rig.commands_of<RxOn>(MsgType::RX_ON).back().second.force);
+  EXPECT_FALSE(rig.radio.check_for_packet(none));
+  EXPECT_TRUE(rig.radio.is_preamble_detected()) << "no rx_abort: the frame is still arriving";
+}
+
+// The forced send ranks the channels one reading after another with nothing sent in between: each channel gets its
+// own forced retune, so no reading describes the channel before it.
+TEST(RadioBridle, AReadingOfAnotherChannelRightAfterACheckRetunesToIt) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.cp.set_channel_rssi_dbm(-90);
+  ASSERT_EQ(rig.radio.measure_channel_level(FREQ_CH2), -90);
+  size_t const before = rig.cp.commands_of(MsgType::RX_ON).size();
+  EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH3), -90);
+  ASSERT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), before + 1);
+  RxOn const next = rig.commands_of<RxOn>(MsgType::RX_ON).back().second;
+  EXPECT_TRUE(next.force);
+  EXPECT_EQ(next.freq_hz, rig.radio.band().air_hz_of(FREQ_CH3));
+  EXPECT_EQ(rig.cp.freq_hz(), rig.radio.band().air_hz_of(FREQ_CH3));
+}
+
+// Command ids wrap after 255 commands. A later command that happens to get the id of an old check's forced retune is
+// not that retune: here the unforced `rx_on` that ends a scan, which may wait behind a frame on the scanned channel.
+TEST(RadioBridle, ACommandThatReusesTheIdOfAnOldChecksRetuneDoesNotStandInForIt) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.cp.set_channel_rssi_dbm(-90);
+  ASSERT_EQ(rig.radio.measure_channel_level(FREQ_CH2), -90);
+  auto const check = rig.commands_of<RxOn>(MsgType::RX_ON).back();
+  ASSERT_TRUE(check.second.force);
+  uint8_t const check_seq = check.first.seq;
+  auto next_seq = [&rig] {
+    Message m;
+    const auto &last = rig.cp.commands().back().message;
+    EXPECT_EQ(decode_message(last.data(), last.size(), m), DecodeStatus::OK);
+    return static_cast<uint8_t>(m.seq == UINT8_MAX ? 1 : m.seq + 1);
+  };
+  uint8_t const scan_seq = check_seq == 1 ? UINT8_MAX : static_cast<uint8_t>(check_seq - 1);
+  for (int i = 0; i < 300 && next_seq() != scan_seq; i++)
+    ASSERT_TRUE(rig.radio.read_rssi().has_value());  // each reading is a command and takes an id
+  ASSERT_EQ(next_seq(), scan_seq);
+  ASSERT_TRUE(rig.radio.run_idle_scan());
+  rig.radio.set_mode_rx();
+  ASSERT_EQ(rig.commands_of<RxOn>(MsgType::RX_ON).back().first.seq, check_seq) << "the id came round again";
+  ASSERT_EQ(rig.radio.get_current_freq(), FREQ_CH2);
+
+  size_t const before = rig.cp.commands_of(MsgType::RX_ON).size();
+  EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH2), -90);
+  ASSERT_EQ(rig.cp.commands_of(MsgType::RX_ON).size(), before + 1) << "the new check sends its own forced retune";
+  EXPECT_TRUE(rig.commands_of<RxOn>(MsgType::RX_ON).back().second.force);
+}
+
+// Command ids wrap after 255 commands. A refused retune keeps its id only until a newer receive command goes out, an
+// `rx_on` or a `tx`; one that comes round with the same id later was accepted and its reading is a level.
+TEST(RadioBridle, ACommandThatReusesTheIdOfARefusedRetuneGivesReadings) {
+  enum class Next : uint8_t { RX_ON, TX };
+  for (Next const next : {Next::RX_ON, Next::TX}) {
+    SCOPED_TRACE(next == Next::RX_ON ? "the id comes round on an rx_on" : "the id comes round on a tx");
+    Rig rig;
+    rig.start();
+    listen_on(rig);
+    rig.cp.set_channel_rssi_dbm(-90);
+    rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+    rig.radio.set_mode_rx();
+    uint8_t const refused_seq = rig.commands_of<RxOn>(MsgType::RX_ON).back().first.seq;
+    ASSERT_FALSE(rig.radio.read_rssi().has_value()) << "the refusal is taken in";
+    auto next_seq = [&rig] {
+      Message m;
+      const auto &last = rig.cp.commands().back().message;
+      EXPECT_EQ(decode_message(last.data(), last.size(), m), DecodeStatus::OK);
+      return static_cast<uint8_t>(m.seq == UINT8_MAX ? 1 : m.seq + 1);
+    };
+    const auto frame = io_frame(1);
+    auto send_next = [&] {
+      if (next == Next::RX_ON)
+        rig.radio.set_mode_rx();
+      else
+        ASSERT_TRUE(rig.radio.send_packet(frame.data(), frame.size(), {}).sent());
+    };
+    send_next();  // accepted: the radio receives again, and the refusal no longer describes it
+    for (int i = 0; i < 300 && next_seq() != refused_seq; i++)
+      ASSERT_TRUE(rig.radio.read_rssi().has_value());  // each reading is a command and takes an id
+    ASSERT_EQ(next_seq(), refused_seq);
+    send_next();
+
+    EXPECT_EQ(rig.radio.read_rssi(), -90) << "the command with the refused one's id was accepted";
+  }
+}
+
+TEST(RadioBridle, AChannelCheckDuringAHeldPreambleGivesAReadingAndTheAbortIsNoFault) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.cp.set_channel_rssi_dbm(-90);
+  rig.cp.hold_preamble(1000000);  // a preamble without a sync word, held for the profile's sync_timeout_us
+  RadioRxPacket none;
+  EXPECT_FALSE(rig.radio.check_for_packet(none));  // takes the frame_start in
+  ASSERT_TRUE(rig.radio.is_preamble_detected());
+  uint32_t const busy_before = rig.radio.rssi_busy();
+
+  EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH3), -90) << "the retune does not wait for the preamble";
+  EXPECT_FALSE(rig.radio.check_for_packet(none));  // takes the rx_abort(forced_retune) in
+  EXPECT_FALSE(rig.radio.is_preamble_detected());
+  EXPECT_FALSE(rig.radio.reception_in_progress()) << "the dropped frame is not one the hub waits for";
+  EXPECT_EQ(rig.radio.rssi_busy(), busy_before);
+  EXPECT_EQ(rig.radio.resyncs(), 0u);
+  EXPECT_EQ(rig.radio.unawaited_errors(), 0u);
+  EXPECT_EQ(rig.radio.link_state(), TestableRadioBridle::Link::RUNNING);
+
+  // The reply listening that follows is not affected: a frame on the new channel arrives.
+  rig.cp.inject_rx(rig.cp.freq_hz(), psdu(0x30), CrcState::OK, 100);
+  RadioRxPacket packet;
+  ASSERT_TRUE(rig.radio.wait_for_packet(packet, 5));
+  EXPECT_EQ(packet.freq_hz, FREQ_CH3);
+}
+
+TEST(RadioBridle, AnUnforcedRetuneBehindAHeldPreambleLeavesTheReadingBusy) {
+  Rig rig;
+  rig.start();
+  listen_on(rig);
+  rig.cp.set_channel_rssi_dbm(-90);
+  rig.cp.hold_preamble(1000000);
+  rig.radio.change_frequency(FREQ_CH3);  // not a channel check: it waits for the frame in progress
+  EXPECT_FALSE(rig.radio.read_rssi().has_value()) << "busy: the retune is still waiting";
+  EXPECT_EQ(rig.radio.rssi_busy(), 1u);
+}
+
 TEST(RadioBridle, ModesMapToRxOnAndIdle) {
   Rig rig;
   rig.start();
@@ -1055,17 +1439,19 @@ TEST(RadioBridle, ATransmissionEndsTheScan) {
 TEST(RadioBridle, ReadRssiReportsTheLevelWhileReceivingAndNoValueOtherwise) {
   Rig rig;
   rig.start();
-  EXPECT_EQ(rig.radio.read_rssi(), RadioBridle::RSSI_NONE_DBM) << "the radio is not receiving: busy";
-  rig.radio.set_mode_rx();
+  rig.radio.set_mode_standby();
   rig.cp.set_rssi_dbm(-88);
-  EXPECT_EQ(rig.radio.read_rssi(), -88);
+  EXPECT_EQ(rig.radio.read_rssi(), -88) << "an idle radio is told to receive first, and the reading follows";
+  EXPECT_TRUE(rig.cp.receiving());
+  rig.radio.run_idle_scan();
+  EXPECT_FALSE(rig.radio.read_rssi().has_value()) << "a reading during a scan belongs to no channel";
 }
 
 TEST(RadioBridle, WhatTheHubAsksOfTheDriverComesFromThePhy) {
   Rig rig;
   TuningConfig tuning;
   EXPECT_EQ(rig.radio.hop_dwell_ms(tuning), 2);
-  EXPECT_EQ(rig.radio.cca_settle_us(), io2g4_phy().cca_settle_us());
+  EXPECT_EQ(rig.radio.cca_settle_us(), 0u) << "the co-processor holds the reply until it has read";
   EXPECT_EQ(rig.radio.preamble_bits_per_byte(), io2g4_phy().preamble_bits_per_byte());
   EXPECT_EQ(rig.radio.band().air_hz, IO_2G4_BAND.air_hz);
   EXPECT_EQ(rig.radio.band().late_answer_warn_ms, 30);

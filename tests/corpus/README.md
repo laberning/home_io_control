@@ -251,8 +251,8 @@ seconds from the first frame of the trace: the first received frame, whatever it
 ### Bridle sessions (`tests/corpus/sessions/`)
 
 A session fixture is one recorded conversation between the hub's driver and a Bridle co-processor
-(the [Bridle protocol](https://github.com/laberning/bridle/blob/bridle-v0.7.0/README.md)), in the recording format of
-that release ([specification §12.1](https://github.com/laberning/bridle/blob/bridle-v0.7.0/README.md#121-traces-and-session-recordings)).
+(the [Bridle protocol](https://github.com/laberning/bridle/blob/bridle-v0.8.0/README.md)), in the recording format of
+that release ([specification §12.1](https://github.com/laberning/bridle/blob/bridle-v0.8.0/README.md#121-traces-and-session-recordings)).
 It is not a golden-frame capture: it holds the link's messages. A host test replays it by playing every recorded
 co-processor message back at its recorded gap after the command it followed and comparing each command the hub sends
 with the recorded one by type and body: the link and boot fixtures through the driver alone

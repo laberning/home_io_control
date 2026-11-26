@@ -1,10 +1,10 @@
-protocol: '0.7'
+protocol: '0.8'
 header:
   host_version: null
   firmware_version: fake-0.0
   board: fake-board
   chip_id: nrf52840
-  proto: '0.7'
+  proto: '0.8'
   reset_cause: pin
   radios:
   - radio: 0
@@ -31,13 +31,13 @@ source:
 messages:
 - dir: coproc_to_host
   host_ms: 100020
-  hex: 8000000007010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f000000040110050101aa5e
+  hex: 8000000008010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f0000000401100501015cb5
   msg_type: ready
   seq: 0
   fields:
     cmd_seq: 0
     proto_major: 0
-    proto_minor: 7
+    proto_minor: 8
     chip_id: nrf52840
     caps: {}
     info:
@@ -131,73 +131,89 @@ messages:
       value: 8
 - dir: host_to_coproc
   host_ms: 100020
-  hex: 0703006da6
-  msg_type: get_rssi
+  hex: 030300800808920195b0
+  msg_type: rx_on
   seq: 3
   fields:
     radio: 0
-- dir: coproc_to_host
-  host_ms: 100020
-  hex: 8803030c000058b9
-  msg_type: error
-  seq: 3
-  fields:
-    cmd_seq: 3
-    detail: 0
-    code: not_receiving
+    freq_hz: 2450000000
+    force: true
 - dir: host_to_coproc
-  host_ms: 100021
+  host_ms: 100020
   hex: 07040065eb
   msg_type: get_rssi
   seq: 4
   fields:
     radio: 0
 - dir: coproc_to_host
-  host_ms: 100021
-  hex: 8804040c0000a5de
-  msg_type: error
+  host_ms: 100020
+  hex: 820303a7a1
+  msg_type: ack
+  seq: 3
+  fields:
+    cmd_seq: 3
+- dir: coproc_to_host
+  host_ms: 100020
+  hex: 840404009c2de8
+  msg_type: rssi
   seq: 4
   fields:
     cmd_seq: 4
-    detail: 0
-    code: not_receiving
+    radio: 0
+    rssi_dbm: -100
 - dir: host_to_coproc
-  host_ms: 100022
+  host_ms: 100021
   hex: 070500bdf2
   msg_type: get_rssi
   seq: 5
   fields:
     radio: 0
 - dir: coproc_to_host
-  host_ms: 100022
-  hex: 8805050c00005ac9
-  msg_type: error
+  host_ms: 100021
+  hex: 840505009c4aae
+  msg_type: rssi
   seq: 5
   fields:
     cmd_seq: 5
-    detail: 0
-    code: not_receiving
+    radio: 0
+    rssi_dbm: -100
 - dir: host_to_coproc
-  host_ms: 100023
+  host_ms: 100022
   hex: 070600d5d8
   msg_type: get_rssi
   seq: 6
   fields:
     radio: 0
 - dir: coproc_to_host
-  host_ms: 100023
-  hex: 8806060c00005bf1
-  msg_type: error
+  host_ms: 100022
+  hex: 840606009ce364
+  msg_type: rssi
   seq: 6
   fields:
     cmd_seq: 6
-    detail: 0
-    code: not_receiving
+    radio: 0
+    rssi_dbm: -100
+- dir: host_to_coproc
+  host_ms: 100023
+  hex: 0707000dc1
+  msg_type: get_rssi
+  seq: 7
+  fields:
+    radio: 0
+- dir: coproc_to_host
+  host_ms: 100023
+  hex: 840707009c8422
+  msg_type: rssi
+  seq: 7
+  fields:
+    cmd_seq: 7
+    radio: 0
+    rssi_dbm: -100
 - dir: host_to_coproc
   host_ms: 100024
-  hex: 060700800808920b0000b5fe0140420f00e0ce0f00010240420f00ffff030000001401696f5020445566112233000163c80080d80600f0ff
+  hex: 060800800808920b0000b5fe0140420f00e0ce0f00010240420f00ffff030000001401696f5020445566112233000163c80080d8060085a1
   msg_type: tx
-  seq: 7
+  seq: 8
   fields:
     radio: 0
     freq_hz: 2450000000
@@ -215,11 +231,11 @@ messages:
     payload: 01696f5020445566112233000163c80080d80600
 - dir: coproc_to_host
   host_ms: 100535
-  hex: 830707007208fe05f20bfe05fe01000072f5
+  hex: 830808007208fe05f20bfe05fe01000023cb
   msg_type: tx_done
-  seq: 7
+  seq: 8
   fields:
-    cmd_seq: 7
+    cmd_seq: 8
     radio: 0
     t_main_start_us: 100534386
     t_main_end_us: 100535282
@@ -227,9 +243,9 @@ messages:
     strobe_late: 0
 - dir: coproc_to_host
   host_ms: 100535
-  hex: c108001e0dfe0580080892c400011401696f0e001122334455663c1122334455667a23144e
+  hex: c109001e0dfe0580080892c400011401696f0e001122334455663c1122334455667a23c91f
   msg_type: rx
-  seq: 8
+  seq: 9
   fields:
     radio: 0
     t_us: 100535582
@@ -240,9 +256,9 @@ messages:
     payload: 01696f0e001122334455663c1122334455667a23
 - dir: host_to_coproc
   host_ms: 100535
-  hex: 060800800808920100001201696f0e204455661122333d8c90ce256dc6415f
+  hex: 060900800808920100001201696f0e204455661122333d8c90ce256dc65f91
   msg_type: tx
-  seq: 8
+  seq: 9
   fields:
     radio: 0
     freq_hz: 2450000000
@@ -250,11 +266,11 @@ messages:
     payload: 01696f0e204455661122333d8c90ce256dc6
 - dir: coproc_to_host
   host_ms: 100536
-  hex: 83090800620dfe05a210fe050000000062e3
+  hex: 830a0900620dfe05a210fe0500000000f645
   msg_type: tx_done
-  seq: 9
+  seq: 10
   fields:
-    cmd_seq: 8
+    cmd_seq: 9
     radio: 0
     t_main_start_us: 100535650
     t_main_end_us: 100536482
@@ -262,9 +278,9 @@ messages:
     strobe_late: 0
 - dir: coproc_to_host
   host_ms: 100536
-  hex: c10a00ce11fe0580080892c400011401696f8e00112233445566040000000000007c8387d6
+  hex: c10b00ce11fe0580080892c400011401696f8e00112233445566040000000000007c835a87
   msg_type: rx
-  seq: 10
+  seq: 11
   fields:
     radio: 0
     t_us: 100536782

@@ -653,7 +653,7 @@ bool SoftPhyDriverBase::reception_in_progress() {
       [this] { this->change_frequency(this->current_freq_); });
 }
 
-int16_t SoftPhyDriverBase::read_rssi() { return this->raw_rssi_to_dbm_(this->read_rssi_raw_byte()); }
+std::optional<int16_t> SoftPhyDriverBase::read_rssi() { return this->raw_rssi_to_dbm_(this->read_rssi_raw_byte()); }
 
 bool SoftPhyDriverBase::is_sync_detected() { return (this->read_irq_status_raw() & this->sync_word_valid_bit()) != 0; }
 

@@ -6,9 +6,9 @@
 
 namespace bridle {
 
-/// Protocol version this header was generated for (`-protocol-version` 0.7).
+/// Protocol version this header was generated for (`-protocol-version` 0.8).
 static constexpr uint8_t PROTO_MAJOR = 0;
-static constexpr uint8_t PROTO_MINOR = 7;
+static constexpr uint8_t PROTO_MINOR = 8;
 
 /// The largest decoded message: msg_type, seq, body and CRC.
 static constexpr size_t MAX_DECODED_BYTES = 255;
@@ -117,6 +117,7 @@ static constexpr uint32_t TURNAROUND_US = 300;  ///< `then_rx` bound
 static constexpr uint32_t RX_START_US = 1000;  ///< `rx_on` to listening
 static constexpr uint32_t TX_START_US = 1000;  ///< `tx` to main frame
 static constexpr uint32_t TX_START_CCA_US = 1000;  ///< `tx` with `cca`
+static constexpr uint32_t RSSI_REPLY_US = 650;  ///< `get_rssi`: command's last byte in to reply queued
 static constexpr uint16_t STANDARD_PREAMBLE_BYTES = 4;
 static constexpr bool PER_PACKET_PREAMBLE = false;
 }  // namespace profile_ieee802154_oqpsk_250k
@@ -127,6 +128,7 @@ static constexpr uint32_t TURNAROUND_US = 1000;  ///< `then_rx` bound
 static constexpr uint32_t RX_START_US = 3000;  ///< `rx_on` to listening
 static constexpr uint32_t TX_START_US = 1000;  ///< `tx` to main frame
 static constexpr uint32_t TX_START_CCA_US = 3000;  ///< `tx` with `cca`
+static constexpr uint32_t RSSI_REPLY_US = 1100;  ///< `get_rssi`: command's last byte in to reply queued
 static constexpr uint16_t STANDARD_PREAMBLE_BYTES = 8;
 static constexpr bool PER_PACKET_PREAMBLE = true;
 }  // namespace profile_gfsk_raw
@@ -159,9 +161,9 @@ enum class MsgType : uint8_t {
   RX_SCAN = 0x04,  ///< Receive on a radio while cycling through a frequency list (radio cap `rx_scan`)
   IDLE = 0x05,  ///< Stop a radio
   TX = 0x06,  ///< Transmit a payload, optionally after a strobe or with a given preamble length (§5)
-  GET_RSSI = 0x07,  ///< Instantaneous RSSI of a receiving radio; `error(not_receiving)` while it is idle, `error(busy)` while it transmits
+  GET_RSSI = 0x07,  ///< A fresh reading of the signal level on the frequency a receiving radio listens on, taken after the command arrives (§3.1); `error(not_receiving)` while it is idle, `error(busy)` while it transmits or a command waits behind a frame or a transmission (§2.2)
   GET_STATS = 0x08,  ///< Read device-wide counters
-  SOFT_RESET = 0x09,  ///< Reboot the co-processor; it answers `ack` first, then the boot `ready` follows
+  SOFT_RESET = 0x09,  ///< Reboot the co-processor; it answers `ack` first, then the boot `ready` follows. A boot `ready` with `reset_cause` `soft` confirms a `soft_reset` whether or not its `ack` was seen
   ENTER_BOOTLOADER = 0x0A,  ///< Reboot into the bootloader (device cap `bootloader`); it answers `ack` first. The body is a fixed 4-byte magic, so a corrupted command can't trigger it.
   READY = 0x80,  ///< Identity (`chip_id`), protocol version, device capabilities, info TLVs including one `radio` descriptor per radio. Sent unsolicited after every boot (`cmd_seq` 0), and in reply to `hello`. `chip_id` values are registered in the `.ksy` enum, append-only; a new port requests one through a pull request to this package.
   PARAMS_ACK = 0x81,  ///< The settings as applied (e.g. a clamped TX power, a rounded RX bandwidth)
@@ -183,8 +185,6 @@ enum class ParamId : uint8_t {
   TX_POWER_DBM = 0x02,  ///< s8; clamped to the radio's range, and the applied value is echoed
   EVENT_MASK = 0x03,  ///< Bits: 0 `frame_start`, 1 CRC-error `rx`, 2 `rx_abort`, 3 `log` (release builds send only levels `error` and `warn`, §3.2). After every boot all bits are 0: none of these events is sent until the host enables it.
   PHY_PROFILE = 0x04,  ///< u8, one of the radio's profiles (table below). The first TLV of a `set_params` that carries it: it resets the radio's profile params to their defaults.
-  ANTENNA = 0x05,  ///< u8: 0 fixed A, 1 fixed B, 2 diversity (radio cap `antenna_diversity`)
-  FEM_MODE = 0x06,  ///< u8: 0 off, 1 auto: PA on TX, LNA on RX (radio cap `fem_control`)
   BITRATE_BPS = 0x07,  ///< u32. Required.
   FDEV_HZ = 0x08,  ///< u32, frequency deviation. Required.
   RX_BW_HZ = 0x09,  ///< u32, double-sided; the radio applies the nearest supported bandwidth not below it, and echoes that value. Choose at least `bitrate_bps` + 2 × `fdev_hz` plus the frequency error between the two ends.
@@ -201,7 +201,7 @@ enum class InfoId : uint8_t {
   FW_VERSION = 0x01,  ///< ASCII
   BOARD = 0x02,  ///< ASCII
   RADIO = 0x03,  ///< Radio descriptor, one TLV per radio (layout in the table above)
-  RX_QUEUE_DEPTH = 0x04,  ///< u8, the event entries the co-processor keeps for `frame_start`, `rx`, `rx_abort`, `log` and `rx_overflow`; replies use entries reserved besides
+  RX_QUEUE_DEPTH = 0x04,  ///< u8, the largest number of event entries (`frame_start`, `rx`, `rx_abort`, `log` and `rx_overflow`) the co-processor keeps; fewer are kept while replies wait unread, each reply waiting unread taking the place of one event, so that every accepted command has a slot for its reply whatever the host leaves unread (§6)
   RESET_CAUSE = 0x05,  ///< u8: 0 power-on, 1 pin, 2 watchdog, 3 soft, 4 brown-out, 5 link takeover
 };
 
@@ -218,19 +218,6 @@ enum class PulseShape : uint8_t {
   GAUSSIAN_BT_0_5 = 0x02,
   GAUSSIAN_BT_0_7 = 0x03,
   GAUSSIAN_BT_1_0 = 0x04,
-};
-
-/// .ksy enum `antenna_mode`.
-enum class AntennaMode : uint8_t {
-  FIXED_A = 0x00,
-  FIXED_B = 0x01,
-  DIVERSITY = 0x02,
-};
-
-/// .ksy enum `fem_mode`.
-enum class FemMode : uint8_t {
-  OFF = 0x00,
-  AUTO = 0x01,
 };
 
 /// .ksy enum `frame_stage`.
@@ -259,7 +246,7 @@ enum class ChipId : uint16_t {
 
 /// .ksy enum `rx_abort_reason`.
 enum class RxAbortReason : uint8_t {
-  NO_END_AFTER_SYNC = 0x01,
+  NO_END_AFTER_SYNC = 0x01,  ///< A frame whose sync word or SFD was seen but whose end was not, or a frame the radio could not deliver intact
   BAD_PHR = 0x02,
   ABORTED_FOR_TX = 0x03,
   FORCED_RETUNE = 0x04,
@@ -271,10 +258,10 @@ enum class ErrorCode : uint8_t {
   UNKNOWN_TYPE = 0x01,  ///< —
   BAD_LENGTH = 0x02,  ///< — (a well-framed command whose body does not match its type's layout, §2.2)
   PARAM_RANGE = 0x03,  ///< The TLV id for `set_params`, otherwise the field index (§2.2)
-  BUSY = 0x04,  ///< — (the radio is transmitting and the command would change or use it: a second `tx`, a radio-scope `set_params`; or `get_rssi` during a transmission)
+  BUSY = 0x04,  ///< — (the radio is transmitting and the command would change or use it: a second `tx`, a radio-scope `set_params`; or `get_rssi` during a transmission or while a command waits behind a frame or a transmission, §2.2)
   NOT_CONFIGURED = 0x05,  ///< — (`tx`/`rx_on`/`rx_scan`/`get_rssi` before the radio's profile and its required params were set)
   UNSUPPORTED = 0x06,  ///< The TLV id for `set_params`, otherwise the bit of the missing capability
-  RADIO_FAULT = 0x07,  ///< Chip-specific code
+  RADIO_FAULT = 0x07,  ///< Chip-specific code (also: a `get_rssi` the radio cannot take a reading for, §3.1). The radio is idle afterwards, whether the error is unsolicited or answers a command.
   PAYLOAD_TOO_LONG = 0x08,  ///< — (longer than the radio's `max_payload`)
   NO_SUCH_RADIO = 0x09,  ///< The radio index
   LINK_IN_USE = 0x0A,  ///< — (a command on a link other than the host link, §2.1)
@@ -339,8 +326,6 @@ static constexpr uint32_t STROBE = uint32_t(1) << 0;  ///< `tx` supports a strob
 static constexpr uint32_t SCHEDULED_TX = uint32_t(1) << 1;  ///< `tx.at_time` supported
 static constexpr uint32_t RX_SCAN = uint32_t(1) << 2;  ///< `rx_scan` supported
 static constexpr uint32_t CCA = uint32_t(1) << 3;  ///< `tx.cca` supported: a clear-channel check on the target frequency right before sending
-static constexpr uint32_t ANTENNA_DIVERSITY = uint32_t(1) << 4;  ///< Param `antenna` supported
-static constexpr uint32_t FEM_CONTROL = uint32_t(1) << 5;  ///< Param `fem_mode` supported
 }  // namespace radio_caps
 
 /// Bit masks of .ksy `phy_profiles` (16 bits; bits not listed are reserved and sent as 0).

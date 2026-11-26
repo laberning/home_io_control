@@ -104,7 +104,7 @@ void RadioSX1276::change_frequency(uint32_t freq_hz) {
     this->write_register_(REG_RX_CONFIG, RX_CONFIG_VALUE | RX_CONFIG_RESTART_RX_WITH_PLL_LOCK);
 }
 
-int16_t RadioSX1276::read_rssi() { return -(int16_t) this->read_register_(REG_RSSI_VALUE) / 2; }
+std::optional<int16_t> RadioSX1276::read_rssi() { return -(int16_t) this->read_register_(REG_RSSI_VALUE) / 2; }
 
 void RadioSX1276::latch_rssi_at_sync_() {
   if (this->rssi_latched_)

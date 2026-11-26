@@ -300,7 +300,6 @@ TEST(RadioIo868GfskPhy, TheHopDwellComesFromTheSx1262TuningField) {
   EXPECT_EQ(io868_gfsk_phy().hop_dwell_ms(tuning), 77);
 }
 
-TEST(RadioIo868GfskPhy, TheChannelCheckWaitsTheCoprocessorsSettleAndAPreambleByteIsEightBitTimes) {
-  EXPECT_EQ(io868_gfsk_phy().cca_settle_us(), 113u);
+TEST(RadioIo868GfskPhy, APreambleByteIsEightBitTimes) {
   EXPECT_EQ(io868_gfsk_phy().preamble_bits_per_byte(), SOFT_PHY_PREAMBLE_BITS_PER_BYTE);
 }

@@ -111,7 +111,21 @@ class FakeCoprocessor {
   /// a command whose first body byte (the radio of `set_params`, `rx_on`, ...) is that value is refused, so a
   /// radio-scope `set_params` can be refused without the device-scope one before it.
   void reject_next(esphome::home_io_control::bridle::MsgType type, esphome::home_io_control::bridle::ErrorCode code,
-                   uint16_t detail = 0, int radio = -1);
+                   uint16_t detail = 0, int radio = -1, uint64_t delay_us = 0);
+  /// Refuse every `rx_on` to @p air_hz with `error(code)`, as a co-processor does that cannot tune there: the radio
+  /// stays where it was (spec §2.2).
+  void reject_every_rx_on_to(uint32_t air_hz, esphome::home_io_control::bridle::ErrorCode code) {
+    refused_rx_on_hz_ = air_hz;
+    refused_rx_on_code_ = code;
+  }
+  /// Hold every `rssi` reply back by @p delay_us after its `get_rssi` arrived: the time a co-processor takes to read
+  /// (specification §3.1's reply bound is measured on such a delay).
+  void set_rssi_reply_delay_us(uint64_t delay_us) { rssi_reply_delay_us_ = delay_us; }
+  /// A preamble detected on the channel the first radio listens on, held for @p duration_us (`sync_timeout_us`):
+  /// it reports `frame_start(preamble)`. Until the hold ends, an `rx_on` without `force` to another frequency is
+  /// acknowledged but waits (and a `get_rssi` meanwhile answers `error(busy)`, spec §2.2); an `rx_on` with `force`
+  /// retunes at once and reports `rx_abort(forced_retune)` on the old frequency.
+  void hold_preamble(uint64_t duration_us);
   /// The energy `tx` with `cca` measures (default -100 dBm: a quiet channel).
   void set_channel_level_dbm(int16_t level) { channel_level_dbm_ = level; }
   /// The energy the next clear-channel readings measure, one queued level per reading, whether a `tx` with `cca`
@@ -240,7 +254,8 @@ class FakeCoprocessor {
   void drain_due_();
   void on_host_bytes_(const uint8_t *data, size_t n);
   void handle_(const esphome::home_io_control::bridle::Message &msg);
-  void error_(uint8_t cmd_seq, esphome::home_io_control::bridle::ErrorCode code, uint16_t detail = 0);
+  void error_(uint8_t cmd_seq, esphome::home_io_control::bridle::ErrorCode code, uint16_t detail = 0,
+              uint64_t delay_us = 0);
   void queue_(const esphome::home_io_control::bridle::Body &body, uint64_t due_us);
   void queue_ready_(uint8_t cmd_seq, uint64_t due_us);
   void reset_state_();
@@ -283,10 +298,15 @@ class FakeCoprocessor {
   bool reboot_after_drain_{false};  ///< A soft reset waits until the `ack` and everything due before it is out.
   uint32_t errors_sent_[16]{};
   int16_t channel_level_dbm_{-100};
+  uint64_t rssi_reply_delay_us_{0};
   uint16_t next_strobe_late_{0};
   int8_t rssi_dbm_{-60};
   std::optional<int8_t> channel_rssi_dbm_;  ///< What `get_rssi` reports; unset: rssi_dbm_.
   uint64_t tx_busy_until_us_{0};
+  uint64_t preamble_held_until_us_{0};        ///< A preamble holds the receiver until then (hold_preamble()).
+  std::optional<uint32_t> deferred_freq_hz_;  ///< An `rx_on` retune that waits for the held preamble.
+  /// Applies a deferred retune once the hold has ended.
+  void settle_preamble_hold_();
   uint32_t set_params_during_tx_{0};
   uint32_t tx_ok_{0};
   uint32_t rx_short_{0};  ///< Frames dropped for being shorter than `rx_min_psdu`.
@@ -294,9 +314,13 @@ class FakeCoprocessor {
     uint8_t type;
     esphome::home_io_control::bridle::ErrorCode code;
     uint16_t detail;
-    int radio;  ///< Only commands whose first body byte is this; -1 = any.
+    int radio;          ///< Only commands whose first body byte is this; -1 = any.
+    uint64_t delay_us;  ///< The `error` follows its command by this long.
   };
   std::vector<Rejection> rejections_;
+  std::optional<uint32_t> refused_rx_on_hz_;  ///< reject_every_rx_on_to()
+  esphome::home_io_control::bridle::ErrorCode refused_rx_on_code_{
+      esphome::home_io_control::bridle::ErrorCode::PARAM_RANGE};
   std::deque<int16_t> channel_levels_;
   std::function<void(const std::vector<uint8_t> &, uint64_t, uint64_t)> tx_observer_;
   /// A reply anchored at a transmission that has not happened yet.

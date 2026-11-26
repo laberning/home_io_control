@@ -187,7 +187,7 @@ TEST(RadioBridleLink, WhileTheLinkIsLostSendingFailsAtOnce) {
   EXPECT_EQ(rig.radio.send_packet(frame, sizeof(frame), {}).status, TxResult::Status::FAILED);
   EXPECT_LT(Rig::now() - start, 1000u);
   EXPECT_FALSE(rig.radio.run_idle_scan());
-  EXPECT_EQ(rig.radio.read_rssi(), RadioBridle::RSSI_NONE_DBM);
+  EXPECT_FALSE(rig.radio.read_rssi().has_value());
 }
 
 TEST(RadioBridleLink, ATxDoneTimeoutStartsAResyncAndTheNextTryWaitsForIt) {
@@ -544,15 +544,244 @@ TEST(RadioBridleLink, ErrorNotConfiguredToAnUnawaitedCommandStartsAResync) {
 TEST(RadioBridleLink, ErrorNotConfiguredToAnAwaitedCommandStartsAResync) {
   Rig rig;
   rig.cp.reject_next(MsgType::GET_RSSI, ErrorCode::NOT_CONFIGURED);
-  EXPECT_EQ(rig.radio.read_rssi(), RadioBridle::RSSI_NONE_DBM);
+  EXPECT_FALSE(rig.radio.read_rssi().has_value());
   EXPECT_FALSE(rig.running());
 }
 
 TEST(RadioBridleLink, ErrorNotReceivingToGetRssiIsNoValueAndNoResync) {
   Rig rig;
-  EXPECT_EQ(rig.radio.read_rssi(), RadioBridle::RSSI_NONE_DBM) << "the radio is idle";
+  rig.cp.reject_next(MsgType::GET_RSSI, ErrorCode::NOT_RECEIVING);
+  EXPECT_FALSE(rig.radio.read_rssi().has_value());
   EXPECT_TRUE(rig.running());
   EXPECT_EQ(rig.cp.errors_sent(ErrorCode::NOT_RECEIVING), 1u);
+}
+
+// === Readings (ADR 0134) ===
+
+TEST(RadioBridleLink, AReplyWithinTheCommandReplyTimeoutIsAReadingAlsoAtTheFirstCheckAfterBoot) {
+  Rig rig;
+  rig.cp.set_rssi_dbm(-77);
+  // The co-processor's own bound (about a millisecond), the slowest steady-state round trip measured on the hub's
+  // clock (4.7 ms) and the first check after boot (33.5 ms).
+  for (uint64_t const delay_ms : {1u, 5u, 34u, RadioBridle::ACK_TIMEOUT_MS - 1}) {
+    rig.cp.set_rssi_reply_delay_us(1000u * delay_ms);
+    EXPECT_EQ(rig.radio.read_rssi(), -77) << "a reply after " << delay_ms << " ms";
+  }
+  EXPECT_EQ(rig.radio.rssi_no_reply(), 0u);
+  EXPECT_TRUE(rig.running());
+  EXPECT_EQ(rig.radio.resyncs(), 0u);
+}
+
+TEST(RadioBridleLink, ABusyAnswerIsNoReadingAndIsNotAskedAgainOrTreatedAsAFault) {
+  Rig rig;
+  rig.cp.reject_next(MsgType::GET_RSSI, ErrorCode::BUSY);
+
+  EXPECT_FALSE(rig.radio.read_rssi().has_value());
+
+  EXPECT_EQ(rig.radio.rssi_busy(), 1u);
+  EXPECT_EQ(rig.commands(MsgType::GET_RSSI), 1u) << "no second ask within the attempt";
+  EXPECT_TRUE(rig.running()) << "busy is the co-processor's own transmission or a waiting retune, not a fault";
+  rig.cp.set_rssi_dbm(-90);
+  EXPECT_EQ(rig.radio.read_rssi(), -90) << "and the next reading is a reading";
+}
+
+namespace {
+
+/// What a lost link and its recovery look like from outside: the link is down after @p fault, one reset pulse follows
+/// the start-up one, and both configurations are sent again.
+void expect_the_reset_of_a_radio_fault(Rig &rig) {
+  EXPECT_FALSE(rig.running()) << "the link is lost and resyncs";
+  EXPECT_EQ(rig.radio.resyncs(), 1u);
+  rig.run_until([&] { return rig.running(); }, 10000, 5);
+  EXPECT_TRUE(rig.running());
+  EXPECT_EQ(rig.reset.pulse_starts_us.size(), 2u) << "the start-up pulse and the resync's";
+  EXPECT_EQ(rig.commands(MsgType::SET_PARAMS), 4u) << "both configurations again, device and radio";
+}
+
+}  // namespace
+
+TEST(RadioBridleLink, ARadioFaultThatAnswersAGetRssiResetsTheLinkLikeAnUnsolicitedOne) {
+  {
+    Rig rig;
+    rig.cp.reject_next(MsgType::GET_RSSI, ErrorCode::RADIO_FAULT, 4);
+    EXPECT_FALSE(rig.radio.read_rssi().has_value());
+    EXPECT_EQ(rig.radio.rssi_refused(), 1u) << "the waiting reading gets the fault as its answer";
+    EXPECT_EQ(rig.radio.rssi_no_reply(), 0u) << "and does not wait out its timeout";
+    expect_the_reset_of_a_radio_fault(rig);
+  }
+  {
+    Rig rig;
+    rig.cp.inject_radio_fault(4);
+    rig.pass();
+    expect_the_reset_of_a_radio_fault(rig);
+  }
+}
+
+TEST(RadioBridleLink, ARadioFaultThatAnswersATxOrAnUnawaitedCommandResetsTheLinkToo) {
+  {
+    Rig rig;
+    rig.radio.set_mode_rx();
+    rig.pass();
+    rig.cp.reject_next(MsgType::TX, ErrorCode::RADIO_FAULT);
+    const uint8_t frame[12] = {};
+    EXPECT_EQ(rig.radio.send_packet(frame, sizeof(frame), {}).status, TxResult::Status::FAILED);
+    EXPECT_FALSE(rig.running());
+    EXPECT_EQ(rig.radio.resyncs(), 1u);
+  }
+  {
+    Rig rig;
+    rig.cp.reject_next(MsgType::RX_ON, ErrorCode::RADIO_FAULT);
+    rig.radio.set_mode_rx();
+    rig.pass();
+    EXPECT_FALSE(rig.running());
+    EXPECT_EQ(rig.radio.resyncs(), 1u);
+    EXPECT_EQ(rig.radio.unawaited_errors(), 0u) << "a fault is not the refusal of an rx_on";
+  }
+}
+
+TEST(RadioBridleLink, AGetRssiWithoutAReplyTakesThePathOfEveryCommandWithoutOne) {
+  // A reading with no reply ends its wait at the command reply timeout, is no reading and loses the link; a reply that
+  // still comes before the reset is an unmatched reply like any other. The reference below: a `tx` that is never
+  // answered loses the link the same way.
+  {
+    Rig rig;
+    rig.cp.set_rssi_reply_delay_us(1000u * (RadioBridle::ACK_TIMEOUT_MS + 100));
+    uint64_t const start = Rig::now();
+    EXPECT_FALSE(rig.radio.read_rssi().has_value());
+    EXPECT_GE(Rig::now() - start, 1000u * (RadioBridle::ACK_TIMEOUT_MS - 1))
+        << "the wait is the command reply timeout (a tick of slack)";
+    EXPECT_EQ(rig.radio.rssi_no_reply(), 1u);
+    EXPECT_EQ(rig.commands(MsgType::GET_RSSI), 1u) << "no second ask";
+    EXPECT_EQ(rig.radio.stale_replies(), 0u);
+    expect_the_reset_of_a_radio_fault(rig);
+  }
+  {
+    Rig rig;
+    rig.radio.set_mode_rx();
+    rig.pass();
+    rig.cp.set_silent(true);
+    const uint8_t frame[12] = {};
+    EXPECT_EQ(rig.radio.send_packet(frame, sizeof(frame), {}).status, TxResult::Status::FAILED);
+    EXPECT_FALSE(rig.running()) << "a tx without its tx_done is the same case";
+    EXPECT_EQ(rig.radio.resyncs(), 1u);
+  }
+}
+
+TEST(RadioBridleLink, AnRssiThatComesAfterItsWaitIsAnUnmatchedReply) {
+  Rig rig;
+  // Just past the wait: the reply reaches the hub before the resync's reset pulse.
+  rig.cp.set_rssi_reply_delay_us(1000u * (RadioBridle::ACK_TIMEOUT_MS + 2));
+  EXPECT_FALSE(rig.radio.read_rssi().has_value());
+  rig.advance_ms(3);
+  rig.pass();
+  EXPECT_EQ(rig.radio.stale_replies(), 1u) << "no wait takes it any more";
+  EXPECT_EQ(rig.radio.rssi_no_reply(), 1u);
+  EXPECT_EQ(rig.radio.resyncs(), 1u) << "the one resync of the missing reply, no second";
+}
+
+TEST(RadioBridleLink, AnIdleRadioIsToldToReceiveBeforeTheReadingAndKeepsListening) {
+  Rig rig;
+  ASSERT_EQ(rig.commands(MsgType::RX_ON), 0u);
+  rig.cp.set_rssi_dbm(-95);
+
+  EXPECT_EQ(rig.radio.read_rssi(), -95);
+
+  ASSERT_EQ(rig.commands(MsgType::RX_ON), 1u);
+  EXPECT_TRUE(rig.cp.receiving());
+  EXPECT_EQ(rig.cp.errors_sent(ErrorCode::NOT_RECEIVING), 0u);
+  EXPECT_EQ(rig.radio.read_rssi(), -95);
+  EXPECT_EQ(rig.commands(MsgType::RX_ON), 1u) << "once is enough";
+}
+
+TEST(RadioBridleLink, AReadingDuringAScanBelongsToNoChannelButAChannelCheckEndsTheScanFirst) {
+  Rig rig;
+  ASSERT_TRUE(rig.radio.run_idle_scan());
+  rig.pass();
+  ASSERT_TRUE(rig.cp.scanning());
+  uint32_t const recorded = rig.radio.get_current_freq();  // where the hub last tuned: the scan does not change it
+  size_t const gets = rig.commands(MsgType::GET_RSSI);
+
+  EXPECT_FALSE(rig.radio.read_rssi().has_value());
+  EXPECT_EQ(rig.commands(MsgType::GET_RSSI), gets) << "no reading is asked of a scan";
+
+  // The channel check names the very channel the driver last recorded: the receiver is on whatever the scan has
+  // reached, so the reading is of a retuned receiver or it is of nothing.
+  rig.cp.set_rssi_dbm(-61);
+  EXPECT_EQ(rig.radio.measure_channel_level(recorded), -61);
+  EXPECT_FALSE(rig.cp.scanning()) << "the retune ended the scan";
+  EXPECT_EQ(rig.cp.freq_hz(), rig.radio.band().air_hz_of(recorded));
+  EXPECT_EQ(rig.commands(MsgType::RX_ON), 1u);
+  EXPECT_EQ(rig.commands(MsgType::GET_RSSI), gets + 1);
+  EXPECT_FALSE(rig.radio.scanning());
+}
+
+// === Reset sequencing (spec §2.1, §7) ===
+
+TEST(RadioBridleLink, TheDriverNeverSendsASoftResetOrEntersTheBootloader) {
+  Rig rig;
+  rig.radio.set_mode_rx();
+  rig.cp.inject_radio_fault();
+  rig.pass();
+  rig.run_until([&] { return rig.running(); }, 10000, 5);
+  rig.cp.reboot(ResetCause::SOFT);
+  rig.run_until([&] { return rig.running(); }, 10000, 5);
+  EXPECT_EQ(rig.commands(MsgType::SOFT_RESET), 0u) << "the hub resets a UART co-processor by its reset line";
+  EXPECT_EQ(rig.commands(MsgType::ENTER_BOOTLOADER), 0u);
+}
+
+TEST(RadioBridleLink, ABootReadyWithSoftCauseIsTakenAsARebootAndNothingIsSentBeforeItsConfiguration) {
+  Rig rig;
+  rig.radio.set_mode_rx();
+  rig.pass();
+  size_t const commands_before = rig.cp.commands().size();
+
+  rig.cp.reboot(
+      ResetCause::SOFT);  // a `soft_reset` the hub did not send (or whose ack it never saw): reboot, same rule
+  rig.pass();
+
+  ASSERT_FALSE(rig.running());
+  for (size_t i = commands_before; i < rig.cp.commands().size(); i++)
+    ADD_FAILURE() << "command 0x" << std::hex << static_cast<int>(rig.cp.commands()[i].type)
+                  << " went out while the link was lost";
+  rig.run_until([&] { return rig.running(); }, 10000, 5);
+  ASSERT_TRUE(rig.running());
+  for (size_t i = commands_before; i < rig.cp.commands().size(); i++) {
+    uint8_t const type = rig.cp.commands()[i].type;
+    EXPECT_EQ(type, static_cast<uint8_t>(MsgType::SET_PARAMS)) << "the configuration, nothing else";
+  }
+}
+
+TEST(RadioBridleLink, WithoutAResetLineTheOnlyCommandBetweenALostLinkAndTheReadyIsHello) {
+  ManualClock clock;
+  FakeByteStream stream;
+  FakeCoprocessor cp(stream);
+  TestableRadioBridle radio(&stream, io2g4_phy(), nullptr, std::nullopt);
+  cp.boot();
+  ASSERT_TRUE(radio.init());
+  radio.set_mode_rx();
+  RadioRxPacket packet;
+  radio.check_for_packet(packet);
+  size_t const before = cp.commands().size();
+  cp.inject_radio_fault();
+  esphome::test_clock::advance_ms(5);
+  radio.check_for_packet(packet);
+  ASSERT_NE(radio.link_state(), Link::RUNNING) << "the fault is taken";
+  for (int t = 0; t < 12000 && radio.link_state() != Link::RUNNING; t += 5) {
+    esphome::test_clock::advance_ms(5);
+    radio.check_for_packet(packet);
+    radio.read_rssi();  // a hub that keeps asking while the link is lost
+  }
+  ASSERT_EQ(radio.link_state(), Link::RUNNING);
+  bool configured = false;
+  for (size_t i = before; i < cp.commands().size(); i++) {
+    auto const type = static_cast<MsgType>(cp.commands()[i].type);
+    if (type == MsgType::SET_PARAMS) {
+      configured = true;
+    } else if (!configured) {
+      EXPECT_EQ(type, MsgType::HELLO) << "before the co-processor's ready is taken, a hello is the only command";
+    }
+  }
+  EXPECT_TRUE(configured);
 }
 
 TEST(RadioBridleLink, AMissingAckResyncsTheLinkAfterTheAckTimeout) {
@@ -786,10 +1015,11 @@ TEST(RadioBridleLink, ABacklogThatDoesNotEndStillTimesOutAtTheGraceCap) {
   rig.pass();
   rig.log_backlog(300);  // three seconds of trace lines: the reply behind them cannot arrive in time
   uint64_t const start = Rig::now();
-  EXPECT_EQ(rig.radio.read_rssi(), RadioBridle::RSSI_NONE_DBM);
+  EXPECT_FALSE(rig.radio.read_rssi().has_value());
   uint64_t const took_us = Rig::now() - start;
-  EXPECT_GE(took_us, 1000u * RadioBridle::RSSI_TIMEOUT_MS);
-  EXPECT_LE(took_us, 1000u * (RadioBridle::RSSI_TIMEOUT_MS + RadioBridle::DRAIN_TIMEOUT_GRACE_MS) + 100000u);
+  constexpr uint32_t timeout_ms = RadioBridle::ACK_TIMEOUT_MS;
+  EXPECT_GE(took_us, 1000u * timeout_ms);
+  EXPECT_LE(took_us, 1000u * (timeout_ms + RadioBridle::DRAIN_TIMEOUT_GRACE_MS) + 100000u);
 }
 
 TEST(RadioBridleLink, AFullPendingTableWaitsForAHeadReplyBehindATracedBacklog) {

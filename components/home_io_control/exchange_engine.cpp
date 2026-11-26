@@ -177,7 +177,11 @@ void ExchangeEngine::note_idle_reading_() {
   if (this->tuning_->lbt_rssi_threshold_dbm.has_value())
     return;
   RadioDriver *radio = *this->radio_ptr_;
-  this->quiet_level_.add_reading(radio->get_current_freq(), radio->read_rssi());
+  // A radio without a reading teaches nothing: the quiet level stays what the readings it did give made it.
+  const std::optional<int16_t> level = radio->read_rssi();
+  if (!level.has_value())
+    return;
+  this->quiet_level_.add_reading(radio->get_current_freq(), *level);
   const BusyLimitReport report = this->busy_limit_log_.update(this->quiet_level_.board_quiet_level());
   if (report.limit_to_log_dbm.has_value())
     ESP_LOGI(TAG, "Busy channel limit %d dBm, learned from this board's quiet level", *report.limit_to_log_dbm);
@@ -293,9 +297,12 @@ TxResult ExchangeEngine::check_channel_and_send_(const uint8_t *buf, uint8_t len
   // All readings but the last are taken here; the last is the radio's own, right before the first
   // symbol, so a channel that turns busy between the check and the send is still caught.
   for (uint8_t reading = 1; reading < CHANNEL_CHECK_READINGS; reading++) {
-    const int16_t level_dbm = radio->measure_channel_level(tx_config.freq_hz);
-    if (decisions::channel_is_busy(level_dbm, threshold_dbm))
-      return TxResult::channel_busy(level_dbm);
+    const std::optional<int16_t> level_dbm = radio->measure_channel_level(tx_config.freq_hz);
+    // A reading the radio did not give is neither a free channel nor a busy one: the attempt fails (ADR 0134).
+    if (!level_dbm.has_value())
+      return TxResult::no_reading();
+    if (decisions::channel_is_busy(*level_dbm, threshold_dbm))
+      return TxResult::channel_busy(*level_dbm);
     // Too short to receive anything meaningful and not a wait for a reply: the readings are the
     // point. Waiting through listen() would also hand the radio's queued frames to the wrong handler.
     delay(CHANNEL_CHECK_READING_GAP_MS);
@@ -335,6 +342,9 @@ ExchangeEngine::ChannelTransmit ExchangeEngine::transmit_with_channel_access_(co
   for (uint8_t busy_checks = 0;; busy_checks++) {
     RadioTxConfig tx_config = tx_config_for(*radio, frame, freq, preamble);
     const TxResult result = this->check_channel_and_send_(buf, len, tx_config);
+    if (result.status == TxResult::Status::NO_READING) {
+      return this->no_reading_(frame, freq);
+    }
     if (result.status != TxResult::Status::CHANNEL_BUSY) {
       const bool sent = this->conclude_send_(frame, tx_config, len, result);
       return {sent ? decisions::ChannelAccessStatus::SENT : decisions::ChannelAccessStatus::FAILED, freq};
@@ -356,19 +366,31 @@ ExchangeEngine::ChannelTransmit ExchangeEngine::transmit_with_channel_access_(co
 
   // Opted in: every channel the request may use stayed busy, so send on the quietest of them. A set
   // of one channel leaves nothing to compare.
-  std::array<int16_t, decisions::REQUEST_CHANNELS.size()> levels{};
+  uint32_t forced_freq = channels.nth(0);
   if (channels.count() > 1) {
+    std::array<std::optional<int16_t>, decisions::REQUEST_CHANNELS.size()> levels{};
     for (size_t i = 0; i < levels.size(); i++) {
       if (channels.contains(decisions::REQUEST_CHANNELS[i]))
         levels[i] = radio->measure_channel_level(decisions::REQUEST_CHANNELS[i]);
     }
+    const std::optional<uint32_t> quietest = decisions::forced_send_channel(channels, levels);
+    if (!quietest.has_value()) {
+      return this->no_reading_(frame, freq);
+    }
+    forced_freq = *quietest;
   }
-  const uint32_t forced_freq = decisions::forced_send_channel(channels, levels);
   const RadioTxConfig tx_config = tx_config_for(*radio, frame, forced_freq, preamble);
   ESP_LOGW(TAG, "Channel busy for %" PRIu32 " ms: sending cmd=0x%02X on %" PRIu32 " Hz anyway (lbt_force_when_busy)",
            millis() - begin_ms, frame.cmd, this->band().air_hz_of(forced_freq));
   const bool sent = this->conclude_send_(frame, tx_config, len, radio->send_packet(buf, len, tx_config));
   return {sent ? decisions::ChannelAccessStatus::SENT_FORCED : decisions::ChannelAccessStatus::FAILED, forced_freq};
+}
+
+ExchangeEngine::ChannelTransmit ExchangeEngine::no_reading_(const IoFrame &frame, uint32_t freq) {
+  this->counters_.no_reading_attempts++;
+  ESP_LOGW(TAG, "No reading of the channel (last on %" PRIu32 " Hz) for cmd=%s(0x%02X): nothing sent",
+           this->band().air_hz_of(freq), command_name(frame.cmd), frame.cmd);
+  return {decisions::ChannelAccessStatus::NO_READING, freq};
 }
 
 ChannelSet ExchangeEngine::request_channels(bool wake_up_channels) const {
@@ -710,7 +732,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
         request, freq, context.request_preamble, options.channel_access, previous_freq, context);
     previous_freq = context.request_freq;
     evidence_try |= decisions::silence_is_evidence(access);
-    // A request that was never sent (channel busy) or failed to send ends the try; a forced send
+    // A request that was never sent (channel busy, no reading) or failed to send ends the try; a forced send
     // onto a busy channel listens like any other.
     if (!decisions::request_was_sent(access)) {
       frame_log_release();
@@ -923,6 +945,9 @@ decisions::ChannelAccessStatus ExchangeEngine::transmit_request_(const IoFrame &
     ESP_LOGI(TAG,
              "Try %d ended: channel busy for cmd=%s(0x%02X), nothing sent, last checked %" PRIu32 " Hz preamble=%u",
              ctx.try_index, command_name(request.cmd), request.cmd, this->band().air_hz_of(sent.freq_hz), preamble);
+  } else if (sent.status == decisions::ChannelAccessStatus::NO_READING) {
+    ctx.state = exchange::OutboundExchangeState::FAILED;
+    this->record_debug("no_reading", ctx.try_index, false);
   } else if (sent.status == decisions::ChannelAccessStatus::FAILED) {
     ctx.state = exchange::OutboundExchangeState::FAILED;
     this->record_debug("tx_request_failed", ctx.try_index, false);

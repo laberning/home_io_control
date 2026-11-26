@@ -15,7 +15,8 @@
 /// table's head when it arrives: replies leave the co-processor in command order (spec §2.2), so a reply
 /// that names a later entry means the head's command was lost, and a head with no answer after
 /// `ACK_TIMEOUT_MS` is a lost link. A refusal undoes the driver's optimistic state only while its command
-/// is still the newest receive-state command, and is not retried before `SCAN_RETRY_MS`.
+/// is still the newest receive-state command (or, while a `tx` is awaited, the one a refused `tx` restores), and is
+/// not retried before `SCAN_RETRY_MS`.
 ///
 /// Receiving. One private drain (`drain_`) reads the stream chunk by chunk, deframes it and
 /// routes each message: a reply to the command awaiting it, a received frame into a small FIFO,
@@ -67,8 +68,9 @@ class RadioBridle : public RadioDriver {
   /// How long init() waits for a `ready`, and for the reply to a `hello`.
   static constexpr uint32_t READY_TIMEOUT_MS = 2000;
   static constexpr uint32_t HELLO_TIMEOUT_MS = 1000;
-  /// How long a command may take to be answered (a configuration command, or the `ack` of an `rx_on`,
-  /// `rx_scan` or `idle`).
+  /// How long a command may take to be answered (a configuration command, the `rssi` of a `get_rssi`, or the `ack`
+  /// of an `rx_on`, `rx_scan` or `idle`). It is link supervision, not a bound on the co-processor's reading: it
+  /// exceeds that bound plus the link's transit and the hub's own latency by two orders of magnitude (ADR 0134).
   static constexpr uint32_t ACK_TIMEOUT_MS = 500;
   /// Most unawaited commands (`rx_on`, `rx_scan`, `idle`) in flight at once. The hub sends them from its own
   /// passes and drains the link only between passes: one pass sends at most four (a hop, a return to receive,
@@ -77,8 +79,6 @@ class RadioBridle : public RadioDriver {
   /// After a refused `rx_scan` or `rx_on` the driver does not send it again for this long: a refusal
   /// means the co-processor and the profile disagree, which a retry does not fix.
   static constexpr uint32_t SCAN_RETRY_MS = 5000;
-  /// How long a `get_rssi` may take: the radio answers at once or says it is not receiving.
-  static constexpr uint32_t RSSI_TIMEOUT_MS = 20;
   /// Margin on top of a transmission's own duration before send_packet() gives up on `tx_done`.
   static constexpr uint32_t TX_DONE_MARGIN_MS = 100;
   /// Bytes kept of the co-processor's firmware and board names.
@@ -98,8 +98,6 @@ class RadioBridle : public RadioDriver {
   /// Room for the TLVs of one configuration command: the 868 MHz profile's eleven take 48 bytes with the
   /// profile and the TX power.
   static constexpr size_t CONFIG_TLV_CAP = 64;
-  /// The level read_rssi() returns when the radio cannot say (dBm): below any real reading.
-  static constexpr int16_t RSSI_NONE_DBM = -127;
 
   // === Link supervision (spec §7 and the numbers the spec leaves to the host) ===
 
@@ -156,9 +154,25 @@ class RadioBridle : public RadioDriver {
   TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override;
   bool check_for_packet(RadioRxPacket &packet) override;
-  /// `get_rssi`; the idle floor (see the constant below) when the link is down, the radio is not receiving or
-  /// the reply does not come.
-  int16_t read_rssi() override;
+  /// `get_rssi`: a fresh reading of the frequency the receiver is on (specification §3.1). An idle radio is
+  /// told to receive first. Nothing when the link is down, a scan runs (a reading during a scan cannot be attributed
+  /// to a channel), the co-processor answers `busy` (its own transmission, or a retune waiting behind a frame), or the
+  /// reply does not come within ACK_TIMEOUT_MS (a command without a reply: the link is resynced, as for every other
+  /// command), or the newest retune it depends on was refused (the radio then stays where it was, and the level read
+  /// is of that channel, not of the one asked for); a `radio_fault` resets the link as it does wherever it comes. The
+  /// hub does not ask again: the attempt that wanted the reading fails (ADR 0134).
+  std::optional<int16_t> read_rssi() override;
+  /// True unless the newest command of this driver already is a forced `rx_on` to @p freq_hz that the radio
+  /// receives on: the recorded frequency says nothing about where the receiver is, because a scan hides its channel
+  /// and an unforced retune to this very frequency may still wait behind a frame on the old one (spec §2.2), where a
+  /// reading would be refused as `busy`. A forced `rx_on` replaces that waiting retune, so it is sent once per channel
+  /// check, before its first reading, and again after any hop, scan, `idle` or send in between (ADR 0134); the
+  /// command ids are compared, and a command sent since clears the check's id, so a wrapped id never stands in for it.
+  [[nodiscard]] bool reading_needs_retune(uint32_t freq_hz) const override {
+    bool const checking_here = this->reading_cmd_ != 0 && this->reading_cmd_ == this->newest_receive_cmd_ &&
+                               this->rx_on_ && !this->scanning_ && freq_hz == this->current_freq_;
+    return !checking_here;
+  }
   bool is_sync_detected() override;
   bool is_preamble_detected() override;
   [[nodiscard]] bool reception_in_progress() override;
@@ -168,6 +182,11 @@ class RadioBridle : public RadioDriver {
   /// Records the frequency of an idle radio. A receiving radio gets an `rx_on` for a new frequency; a scanning
   /// one gets it for any, which ends the scan.
   void change_frequency(uint32_t freq_hz) override;
+  /// Retunes with a forced `rx_on` (spec §3.1), sent even when the recorded frequency is @p freq_hz: the
+  /// co-processor retunes at once, drops a frame in progress on another frequency (a preamble held for
+  /// `sync_timeout_us` included) as `rx_abort(forced_retune)` and replaces an earlier retune that still waits, so
+  /// the reading that follows is not refused as `busy`. Every other retune of this driver waits for the frame.
+  void retune_for_reading(uint32_t freq_hz) override;
   /// `rx_on` on the current frequency; ends a scan.
   void set_mode_rx() override;
   /// `idle`; a frame being received is dropped without an `rx_abort`.
@@ -180,8 +199,9 @@ class RadioBridle : public RadioDriver {
   }
   /// The band the profile describes: where the channels lie on air and everything the hub's rules read from it.
   [[nodiscard]] const IoBand &band() const override { return this->phy_.band(); }
-  /// The profile's settle after a retune, before a `get_rssi` describes the new channel.
-  [[nodiscard]] uint32_t cca_settle_us() const override { return this->phy_.cca_settle_us(); }
+  /// Zero: the co-processor holds the reply to a `get_rssi` until the receiver has been listening on the new
+  /// frequency, so the hub adds no settle of its own (specification §3.1).
+  [[nodiscard]] uint32_t cca_settle_us() const override { return 0; }
   /// The profile's bit periods per preamble byte.
   [[nodiscard]] uint8_t preamble_bits_per_byte() const override { return this->phy_.preamble_bits_per_byte(); }
   /// Keeps the tuning the profile reads. When it changes a param of the radio's profile (the receiver
@@ -235,6 +255,13 @@ class RadioBridle : public RadioDriver {
 
   /// Send `body` as a command; returns its command id (never 0).
   uint8_t send_command_(const bridle::Body &body);
+  /// The driver's own record of what the radio does, kept to put it back when a command is refused.
+  struct RadioState {
+    uint32_t freq_hz{0};            ///< Frequency the radio is tuned to (`current_freq_`).
+    bool scanning{false};           ///< An `rx_scan` runs (`scanning_`).
+    bool rx_on{false};              ///< The radio receives or scans (`rx_on_`).
+    uint8_t newest_receive_cmd{0};  ///< Command whose refusal still describes the radio (`newest_receive_cmd_`).
+  };
   /// What an unawaited command was, for undoing the driver's optimistic state when it is refused.
   enum class PendingKind : uint8_t { RX_ON, RX_SCAN, IDLE };
   /// An unawaited command waiting for its `ack` or `error`.
@@ -278,9 +305,21 @@ class RadioBridle : public RadioDriver {
   void route_(const uint8_t *msg, size_t len);
   void note_event_counter_(const bridle::Message &m);
   /// Route a reply: to the awaited config command, a pending command, or the resync path. An `error` with
-  /// `cmd_seq` 0 (a radio fault outside a transmission), or `not_configured` for any command, means the
-  /// co-processor lost its configuration, so resync.
+  /// `cmd_seq` 0 (a radio fault outside a transmission), an `error(radio_fault)` that answers a command, or
+  /// `not_configured` for any command, means the co-processor lost its configuration, so resync.
   void route_reply_(const bridle::Message &m, const uint8_t *msg, size_t len, uint8_t seq);
+  /// An `error(radio_fault)`, unsolicited (@p seq 0) or answering command @p seq whether or not that command is still
+  /// awaited: hands the waiting caller the refusal and starts the resync.
+  /// @param fault The error.
+  /// @param msg   The decoded message, kept for the waiting caller.
+  /// @param len   Its length.
+  /// @param seq   The `cmd_seq` it carries.
+  void on_radio_fault_(const bridle::Error &fault, const uint8_t *msg, size_t len, uint8_t seq);
+  /// End the running wait with @p error as the answer to the awaited command: what await_() reports as Wait::ERROR.
+  /// @param error The `error` that answers it.
+  /// @param msg   The decoded message, kept for the waiting caller.
+  /// @param len   Its length.
+  void end_await_with_error_(const bridle::Error &error, const uint8_t *msg, size_t len);
   void on_awaited_reply_(const bridle::Message &m, const uint8_t *msg, size_t len);
   void route_event_(const bridle::Body &body);
   void show_log_(const bridle::Log &log);
@@ -312,6 +351,11 @@ class RadioBridle : public RadioDriver {
 
   /// A lost link: reset the co-processor and configure it again, one step per poll.
   void begin_resync_(const char *why, bool skip_reset);
+  /// The one path of an awaited command whose reply did not come within @p waited_ms (a `tx` without its `tx_done`,
+  /// a `get_rssi` without its `rssi`): a command or reply the link lost, so the link resyncs (spec §7). @p why names
+  /// the missing reply ("no tx_done") in the log line and as the resync's reason. Nothing when the wait ended
+  /// because the link already went down: that is being handled.
+  void on_no_reply_(const char *why, uint32_t waited_ms);
   /// Keep the counters a heartbeat's `stats` reply carries for `dump_debug()`.
   void keep_heartbeat_stats_(const bridle::Stats &stats);
   void set_link_(Link state, const char *why);
@@ -331,6 +375,11 @@ class RadioBridle : public RadioDriver {
   bool pop_packet_(RadioRxPacket &packet);
   bool decode_entry_(const RxEntry &entry, RadioRxPacket &packet);
   void ensure_rx_();
+  /// True while a refused `rx_on` is not sent again (SCAN_RETRY_MS after the refusal).
+  [[nodiscard]] bool rx_retry_held_() const;
+  /// The retune of change_frequency() and retune_for_reading(): `rx_on` on a receiving or scanning radio, with
+  /// @p force the frame in progress dropped at once; with @p force also on an idle radio.
+  void retune_(uint32_t freq_hz, bool force);
 
   ByteStreamAccess *stream_;
   const bridle::BridlePhy &phy_;
@@ -381,13 +430,17 @@ class RadioBridle : public RadioDriver {
   // Unawaited commands.
   PendingCommand pending_[PENDING_DEPTH]{};
   size_t pending_count_{0};
+  RadioState tx_restore_{};        ///< What a refused `tx` puts back; kept current while the `tx` is awaited.
+  bool tx_restore_active_{false};  ///< A `tx` is awaited, so a refusal of an older command lands in `tx_restore_`.
+  uint8_t reading_cmd_{0};         ///< Command id of the forced `rx_on` of the current channel check (0 = none).
   uint8_t newest_receive_cmd_{0};  ///< Command id of the last rx_on, rx_scan, idle or tx sent (0 = none).
-  uint16_t refusal_logged_{0};     ///< Bit per error code already logged for a refused unawaited command.
-  bool scan_refused_{false};       ///< An rx_scan was refused; not sent again before SCAN_RETRY_MS.
-  uint32_t scan_refused_ms_{0};    ///< millis() of the rx_scan refusal.
-  bool rx_refused_{false};         ///< An rx_on was refused; not sent again before SCAN_RETRY_MS.
-  uint32_t rx_refused_ms_{0};      ///< millis() of the rx_on refusal.
-  uint32_t unawaited_errors_{0};   ///< Errors received for unawaited commands.
+  uint8_t refused_cmd_{0};      ///< Command id of the last unawaited command refused; cleared when a newer one is sent.
+  uint16_t refusal_logged_{0};  ///< Bit per error code already logged for a refused unawaited command.
+  bool scan_refused_{false};    ///< An rx_scan was refused; not sent again before SCAN_RETRY_MS.
+  uint32_t scan_refused_ms_{0};   ///< millis() of the rx_scan refusal.
+  bool rx_refused_{false};        ///< An rx_on was refused; not sent again before SCAN_RETRY_MS.
+  uint32_t rx_refused_ms_{0};     ///< millis() of the rx_on refusal.
+  uint32_t unawaited_errors_{0};  ///< Errors received for unawaited commands.
 
   // Link supervision.
   Link link_{Link::INIT};
@@ -432,6 +485,10 @@ class RadioBridle : public RadioDriver {
   uint32_t bad_crc_frames_{0};
   uint32_t short_frames_{0};
   uint32_t stale_replies_{0};
+  uint32_t rssi_busy_{0};      ///< `get_rssi` answered `busy`: no reading, the attempt that asked fails.
+  uint32_t rssi_no_reply_{0};  ///< `get_rssi` that got no reply within ACK_TIMEOUT_MS.
+  uint32_t rssi_refused_{0};   ///< `get_rssi` answered with another `error` (a fault resets the link as well), or its
+                               ///< level was dropped because the retune before it was refused.
   uint32_t counter_gaps_{0};
   uint32_t strobe_late_total_{0};
   uint32_t rx_overflow_reports_{0};

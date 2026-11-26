@@ -229,7 +229,6 @@ TEST(RadioBridleCodec, ReadyVectorCarriesTheDescriptorTheSpecShows) {
   EXPECT_EQ(radio.max_payload, 125);
   EXPECT_NE(radio.caps & radio_caps::STROBE, 0u);
   EXPECT_NE(radio.caps & radio_caps::CCA, 0u);
-  EXPECT_EQ(radio.caps & radio_caps::FEM_CONTROL, 0u);
   EXPECT_EQ(radio.strobe_jitter_us, 2);
   EXPECT_EQ(radio.max_preamble_bytes, 0);
   EXPECT_TRUE(info.has_rx_queue_depth);

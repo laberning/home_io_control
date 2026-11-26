@@ -284,6 +284,132 @@ TEST(ExchangeOverBridle, NoChannelCheckPrecedesTheChallengeAnswerWhileTheRequest
   EXPECT_EQ(rig.engine.counters().lbt_retries, 0u);
 }
 
+// A preamble the co-processor holds for its `sync_timeout_us` would keep an unforced retune waiting and the reading
+// behind it refused as `busy`; the channel check's forced retune drops it, so the request is checked and sent.
+TEST(ExchangeOverBridle, ARequestIsCheckedAndSentWhileTheCoprocessorHoldsAPreambleOnAnotherChannel) {
+  Rig<OverBridle> rig;
+  auto &bridge = static_cast<BridleStandIn &>(*rig.radio);
+  rig.challenge(CHALLENGE);
+  rig.final_reply();
+  bridge.driver().change_frequency(FREQ_CH1);
+  ASSERT_TRUE(bridge.driver().run_idle_scan());
+  bridge.coprocessor().hold_preamble(1000000);
+
+  IoFrame response{};
+  ASSERT_EQ(rig.engine.send_and_receive(execute_request(false), response, FREQ_CH2),
+            ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 0u);
+  EXPECT_EQ(rig.engine.counters().lbt_retries, 0u);
+}
+
+// A retune the co-processor refuses leaves the radio on the old channel, and the `get_rssi` right behind it reports
+// that channel's level. A level is used only when the retune before it was accepted (ADR 0134), whichever caller
+// asked: the channel check, the quiet-level learning of the idle hops and the ranking of a forced send.
+TEST(ExchangeOverBridle, ARequestIsNotSentOnAChannelWhoseRetuneTheCoprocessorRefused) {
+  Rig<OverBridle> rig;
+  auto &bridge = static_cast<BridleStandIn &>(*rig.radio);
+  bridge.driver().set_mode_rx();
+  ASSERT_TRUE(bridge.driver().read_rssi().has_value()) << "the radio receives; its rx_on is through";
+  bridge.coprocessor().set_channel_rssi_dbm(-50);  // the busy channel the radio stays on: its level is not CH2's
+  bridge.coprocessor().reject_every_rx_on_to(rig.driver->band().air_hz_of(FREQ_CH2), ErrorCode::PARAM_RANGE);
+
+  const ExchangeEngine::ChannelTransmit opened = rig.engine.open_session(status_read(), 8, 0);
+
+  EXPECT_EQ(opened.status, decisions::ChannelAccessStatus::NO_READING) << "the level read was another channel's";
+  EXPECT_EQ(rig.radio->send_count(), 0);
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 1u);
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 0u) << "nobody measured the channel busy";
+  EXPECT_EQ(rig.engine.counters().lbt_retries, 0u) << "the other channel's level did not count as a busy check";
+}
+
+TEST(ExchangeOverBridle, ARequestIsSentOnAChannelTheCoprocessorRetunedTo) {
+  Rig<OverBridle> rig;
+  auto &bridge = static_cast<BridleStandIn &>(*rig.radio);
+  bridge.driver().set_mode_rx();
+  bridge.coprocessor().set_channel_rssi_dbm(-120);
+
+  EXPECT_EQ(rig.engine.open_session(status_read(), 8, 0).status, decisions::ChannelAccessStatus::SENT);
+}
+
+// The forced send ranks the channels by their readings (CH2, CH1, CH3). CH1 is the channel the co-processor refused to
+// tune to: the quiet level it then reports is the level of the channel the radio stayed on, which was quieter a moment
+// ago. CH1 has no reading, so it is not ranked and the request goes out on CH2, the quietest channel measured.
+TEST(ExchangeOverBridle, AForcedSendDoesNotRankAChannelWhoseRetuneTheCoprocessorRefused) {
+  // The checks alternate between CH2 and CH3 and never draw CH1: the value drawn for the channel of each check, and
+  // between them for its back-off.
+  auto start = [](auto &rig) {
+    for (int check = 0; check < 200; check++) {
+      rig.random_values.push_back(check % 2 == 0 ? 0 : 1);
+      rig.random_values.push_back(0);
+    }
+    auto &bridge = static_cast<BridleStandIn &>(*rig.radio);
+    bridge.driver().set_mode_rx();
+    EXPECT_TRUE(bridge.driver().read_rssi().has_value()) << "the radio receives; its rx_on is through";
+    bridge.coprocessor().set_channel_rssi_dbm(-50);  // every channel busy
+    return &bridge;
+  };
+  IoFrame response{};
+
+  // How many readings the checks take before the ranking, with nothing refused and no forced send.
+  const size_t check_readings = [&] {
+    Rig<OverBridle> dry;
+    BridleStandIn *dry_bridge = start(dry);
+    const size_t before = dry_bridge->coprocessor().commands_of(MsgType::GET_RSSI).size();
+    dry.engine.send_and_receive(status_read(), response, FREQ_CH2, ExchangeOptions{1});
+    EXPECT_EQ(dry.radio->send_count(), 0);
+    return dry_bridge->coprocessor().commands_of(MsgType::GET_RSSI).size() - before;
+  }();
+
+  Rig<OverBridle> rig;
+  rig.tuning.lbt_force_when_busy = true;
+  BridleStandIn *bridge = start(rig);
+  bridge->coprocessor().reject_every_rx_on_to(rig.driver->band().air_hz_of(FREQ_CH1), ErrorCode::PARAM_RANGE);
+  for (size_t reading = 0; reading < check_readings; reading++)
+    bridge->coprocessor().queue_channel_level_dbm(-50);
+  bridge->coprocessor().queue_channel_level_dbm(-50);   // the ranking's reading of CH2
+  bridge->coprocessor().queue_channel_level_dbm(-120);  // what the radio reports after the refused retune to CH1
+  rig.engine.send_and_receive(status_read(), response, FREQ_CH2, ExchangeOptions{1});
+
+  ASSERT_EQ(rig.sent_channels().size(), 1u) << "the request went out on the quietest channel that has a reading";
+  EXPECT_EQ(rig.sent_channels()[0], FREQ_CH2);
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 0u);
+}
+
+// The idle hop's reading teaches the board's quiet level. One taken right behind a refused hop is the level of the
+// channel the radio stayed on, so it teaches nothing; the same hops with every retune accepted do. The refusal comes
+// late, while the reading behind it waits for its reply, so that the driver has not undone the hop's `rx_on` yet when
+// it asks for the reading: only the rule that a reading needs an accepted retune keeps it out of the quiet level.
+TEST(ExchangeOverBridle, TheQuietLevelIsNotLearnedFromAReadingBehindARefusedHop) {
+  constexpr uint64_t READING_US = 500;  // the co-processor's time to read
+  // After the next hop has started its reading, before that reading's reply (replies keep command order).
+  constexpr uint64_t REFUSAL_DELAY_US = HOP_TIME_US + 1 + (READING_US / 2);
+  auto learned_limit_dbm = [](bool refuse) {
+    Rig<OverBridle> rig;
+    auto &bridge = static_cast<BridleStandIn &>(*rig.radio);
+    bridge.coprocessor().set_channel_rssi_dbm(-113);
+    bridge.coprocessor().set_rssi_reply_delay_us(READING_US);
+    rig.engine.reset_hop_timestamp();
+    const int blocks = static_cast<int>(QUIET_LEVEL_MIN_READINGS) * 3 * 2;
+    auto idle_hop = [&rig] {
+      esphome::test_clock::advance_us(HOP_TIME_US + 1);
+      rig.engine.maybe_hop();
+    };
+    for (int block = 0; block < blocks; block++) {
+      bridge.driver().set_mode_rx();
+      for (int hop = 1; hop < QUIET_LEVEL_READING_EVERY_N_HOPS - 1; hop++)
+        idle_hop();
+      if (refuse)
+        bridge.coprocessor().reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0, REFUSAL_DELAY_US);
+      idle_hop();  // the hop whose retune is refused
+      idle_hop();  // the hop that takes the reading right behind it
+    }
+    return rig.engine.busy_limit_dbm();
+  };
+  int16_t const unlearned = Rig<OverBridle>().engine.busy_limit_dbm();
+  EXPECT_NE(learned_limit_dbm(false), unlearned) << "the same hops with every retune accepted do learn";
+  EXPECT_EQ(learned_limit_dbm(true), unlearned);
+}
+
 // Source of the session fixture bridle_exchange_long_strobe.
 TEST(ExchangeOverBridle, TheStartFrameToALowPowerDeviceGetsTheLongTrainAndItsContinuationsNone) {
   Rig<OverBridle> rig;
@@ -528,6 +654,8 @@ struct TracedEngineRig {
         engine(&driver, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning) {
     reset.on_release = [this] { cp.boot(); };
     radio.set_trace(true);
+    cp.set_channel_rssi_dbm(
+        -100);  // a quiet channel: the hub's checks read it, the idle radio is told to receive first
   }
 };
 
