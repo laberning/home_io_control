@@ -188,6 +188,15 @@ inline void log_1w_remote_frame(const OneWayFrameInfo &info, const std::vector<s
     suffix += ')';
   }
 
+  if (info.has_intent && info.mode_switch != OneWayModeSwitch::NONE) {
+    // An A/M wall switch's flip: the STOP is how the switch reports it, so name the reported state.
+    ESP_LOGD(TAG, "rx 1W remote %s dst-class=%s: %s(0x%02X) %s originator=%s priority=%s am_state=%s(0x%02X)%s",
+             src_id.c_str(), target_label, command_name(info.cmd), info.cmd, info.intent,
+             originator_name(info.originator), acei_level_name(info.acei_level),
+             oneway_mode_switch_name(info.mode_switch), info.mode_switch_raw, suffix.c_str());
+    return;
+  }
+
   if (info.has_intent) {
     ESP_LOGD(TAG, "rx 1W remote %s dst-class=%s: %s(0x%02X) %s originator=%s priority=%s%s", src_id.c_str(),
              target_label, command_name(info.cmd), info.cmd, info.intent, originator_name(info.originator),
@@ -219,11 +228,14 @@ inline std::string describe_learned_device_type(DeviceType type) {
 ///
 /// Only meaningful when `info.has_intent` is true (the caller gates emission on that); the
 /// `intent` field is only populated by decode_1w_frame() in that case.
+///
+/// An A/M wall switch's flip adds `am_state` (`auto`, `manual` or `unknown`); every other frame
+/// leaves the key out, so an automation can tell a flip from an ordinary STOP press by its presence.
 /// @param info Already-decoded 1W frame info (see decode_1w_frame()).
 /// @param linked True if this sender is linked to at least one registered device.
 /// @return Event data map ready for fire_homeassistant_event().
 inline std::map<std::string, std::string> build_sender_event_data(const OneWayFrameInfo &info, bool linked) {
-  return {
+  std::map<std::string, std::string> data{
       {"remote_id", node_id_to_string(info.src)},
       {"target_class", address_class_name(info.address_class)},
       {"target_type", device_type_name(info.target_type)},
@@ -233,6 +245,9 @@ inline std::map<std::string, std::string> build_sender_event_data(const OneWayFr
       {"acei_level", acei_level_name(info.acei_level)},
       {"linked", linked ? "true" : "false"},
   };
+  if (info.mode_switch != OneWayModeSwitch::NONE)
+    data.emplace("am_state", oneway_mode_switch_name(info.mode_switch));
+  return data;
 }
 
 // ============================================================================

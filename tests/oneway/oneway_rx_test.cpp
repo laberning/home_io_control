@@ -42,6 +42,7 @@ RadioRxPacket make_rx_packet(const IoFrame &frame) {
 
 const uint8_t REMOTE_ID[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
 const uint8_t BROADCAST_ROLLER[NODE_ID_SIZE] = {0x00, 0x00, 0xBF};  // typed broadcast: ROLLER_SHUTTER
+const uint8_t BROADCAST_ALL_ID[NODE_ID_SIZE] = {0x00, 0x00, 0x3F};  // all-devices broadcast
 
 /// Build a 1W execute frame: originator, ACEI, main0/main1 select the decoded intent.
 IoFrame make_1w_execute(uint8_t main0, uint8_t main1 = 0x00) {
@@ -69,6 +70,35 @@ IoFrame make_1w_execute_with_sequence(uint8_t main0, uint16_t sequence) {
                                0x00,
                                static_cast<uint8_t>(sequence >> 8),
                                static_cast<uint8_t>(sequence & 0xFF),
+                               0xA1,
+                               0xA2,
+                               0xA3,
+                               0xA4,
+                               0xA5,
+                               0xA6};
+  set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+  return f;
+}
+
+/// Build the EXECUTE STOP a Somfy Smoove A/M io switch sends when its slider is flipped: ACEI 0x5B
+/// (service type 3), empty FPI1/FPI2, the trailer `FF <state> FF`, the sequence and a placeholder MAC
+/// (tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_auto_sx1262.yaml).
+IoFrame make_1w_mode_switch(uint8_t state, uint8_t acei = 0x5B, uint8_t lead = 0xFF) {
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  set_dst(f, BROADCAST_ALL_ID);
+  set_src(f, REMOTE_ID);
+  const uint8_t payload[17] = {ORIGINATOR_USER_REMOTE,
+                               acei,
+                               POS_STOP,
+                               0x00,
+                               0x00,
+                               0x00,
+                               lead,
+                               state,
+                               0xFF,
+                               0x37,
+                               0x0A,
                                0xA1,
                                0xA2,
                                0xA3,
@@ -128,6 +158,63 @@ TEST(OnewayRx, BuildEventData_StopIntent) {
 
   const auto data = detail::build_sender_event_data(info, /*linked=*/false);
   EXPECT_EQ(data.at("intent"), "STOP");
+}
+
+TEST(OnewayRx, BuildEventData_OrdinaryStopHasNoAmState) {
+  const OneWayFrameInfo info = decode_1w_frame(make_1w_execute_with_sequence(POS_STOP, 0x1234));
+  EXPECT_EQ(info.mode_switch, OneWayModeSwitch::NONE);
+  const auto data = detail::build_sender_event_data(info, /*linked=*/false);
+  EXPECT_EQ(data.count("am_state"), 0u) << "only an A/M switch's flip carries am_state";
+}
+
+// ============================================================================
+// A/M switch report: decode_1w_frame() and the sender event
+// ============================================================================
+
+TEST(OnewayRx, ModeSwitch_DecodesAutoAndManual) {
+  const OneWayFrameInfo to_auto = decode_1w_frame(make_1w_mode_switch(0x55));
+  EXPECT_EQ(to_auto.mode_switch, OneWayModeSwitch::AUTO);
+  EXPECT_EQ(to_auto.mode_switch_raw, 0x55);
+  EXPECT_STREQ(to_auto.intent, "STOP");
+  EXPECT_EQ(to_auto.acei_level, ACEI_LEVEL_USER_HIGH);
+
+  const OneWayFrameInfo to_manual = decode_1w_frame(make_1w_mode_switch(0x00));
+  EXPECT_EQ(to_manual.mode_switch, OneWayModeSwitch::MANUAL);
+  EXPECT_EQ(to_manual.mode_switch_raw, 0x00);
+}
+
+TEST(OnewayRx, ModeSwitch_UnseenStateByteIsUnknownNotGuessed) {
+  const OneWayFrameInfo info = decode_1w_frame(make_1w_mode_switch(0x2A));
+  EXPECT_EQ(info.mode_switch, OneWayModeSwitch::UNKNOWN);
+  EXPECT_EQ(info.mode_switch_raw, 0x2A);
+  EXPECT_STREQ(oneway_mode_switch_name(info.mode_switch), "unknown");
+}
+
+TEST(OnewayRx, ModeSwitch_NearMissesAreNotReports) {
+  // Same trailer, but the ACEI of an ordinary Smoove press (0x43, service type 0).
+  EXPECT_EQ(decode_1w_frame(make_1w_mode_switch(0x55, /*acei=*/0x43)).mode_switch, OneWayModeSwitch::NONE);
+  // Service type 3, but the first marker byte is not FF.
+  EXPECT_EQ(decode_1w_frame(make_1w_mode_switch(0x55, 0x5B, /*lead=*/0x00)).mode_switch, OneWayModeSwitch::NONE);
+  // A remote's ordinary 6-parameter STOP (the corpus Smoove's shape): no trailer at all.
+  EXPECT_EQ(decode_1w_frame(make_1w_execute_with_sequence(POS_STOP, 0x5994)).mode_switch, OneWayModeSwitch::NONE);
+}
+
+TEST(OnewayRx, ModeSwitch_EventCarriesAmState) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.add_exposed_sender(node_id_to_string(REMOTE_ID));
+
+  comp.process_received_packet_(make_rx_packet(make_1w_mode_switch(0x00)));
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  const auto &event = api_server.events_.front();
+  EXPECT_EQ(event.data.at("intent"), "STOP");
+  EXPECT_EQ(event.data.at("am_state"), "manual");
 }
 
 // ============================================================================

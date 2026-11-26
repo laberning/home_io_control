@@ -188,6 +188,8 @@ def render_capture(capture: dict) -> "tuple[str, str]":
     oneway_originator = oneway.get("originator", 0)
     has_oneway_acei = "acei" in oneway
     oneway_acei = oneway.get("acei", 0)
+    has_oneway_am_state = "am_state" in oneway
+    oneway_am_state = oneway.get("am_state", "")
 
     key_expr = KEY_MODE_ENUM[capture["key"]]
     origin_expr = c_string(capture["source"]["origin"])
@@ -203,7 +205,8 @@ def render_capture(capture: dict) -> "tuple[str, str]":
         f"{'true' if has_oneway_intent else 'false'}, {c_string(oneway_intent)}, "
         f"{'true' if has_oneway_target_type else 'false'}, {oneway_target_type}u, "
         f"{'true' if has_oneway_originator else 'false'}, {oneway_originator}u, "
-        f"{'true' if has_oneway_acei else 'false'}, {oneway_acei}u}},"
+        f"{'true' if has_oneway_acei else 'false'}, {oneway_acei}u, "
+        f"{'true' if has_oneway_am_state else 'false'}, {c_string(oneway_am_state)}}},"
     )
     return decls, capture_init
 
@@ -272,6 +275,8 @@ struct CorpusCapture {{
   uint8_t oneway_originator;
   bool has_oneway_acei;
   uint8_t oneway_acei;
+  bool has_oneway_am_state;
+  const char *oneway_am_state;
 }};
 """
 

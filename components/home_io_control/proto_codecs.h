@@ -216,6 +216,18 @@ std::optional<float> oneway_intent_to_target(uint8_t main0, uint8_t main1);
 /// @brief Buffer size for the decoded 1W main-intent string.
 static constexpr size_t ONEWAY_INTENT_BUFFER_SIZE = 24;
 
+/// @brief The auto/manual state an A/M wall switch reports when its slider is flipped.
+///
+/// NONE for every frame that is not an A/M report (the layout is described with
+/// ONEWAY_MODE_SWITCH_ACEI_SERVICE in proto_constants.h); UNKNOWN for a report whose state byte is
+/// neither of the two values seen on air, so a new value shows up instead of being guessed.
+enum class OneWayModeSwitch : uint8_t { NONE, AUTO, MANUAL, UNKNOWN };
+
+/// @brief The name of an A/M report state as the log and the sender event render it.
+/// @param state A decoded state.
+/// @return `"auto"`, `"manual"`, `"unknown"`, or `""` for NONE.
+const char *oneway_mode_switch_name(OneWayModeSwitch state);
+
 /// @brief Decoded representation of a 1W remote frame.
 ///
 /// Captures all fields extractable from a 1W broadcast frame in a structured form
@@ -234,6 +246,8 @@ struct OneWayFrameInfo {
   uint8_t data_len{0};       ///< Raw data length (for commands without decoded intent).
   bool has_sequence{false};  ///< True if the rolling sequence was read (execute frames long enough to hold one).
   uint16_t sequence{0};      ///< The sender's rolling sequence; every copy of one press carries the same value.
+  OneWayModeSwitch mode_switch{OneWayModeSwitch::NONE};  ///< An A/M switch's reported state, NONE otherwise.
+  uint8_t mode_switch_raw{0};                            ///< The raw state byte when mode_switch is not NONE.
 };
 
 /// @brief Decode a parsed 1W frame into a structured OneWayFrameInfo.
