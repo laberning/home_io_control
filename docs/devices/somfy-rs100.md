@@ -82,8 +82,8 @@ cover:
   in 35 to 38 ms. Scan Paired Devices prints a hint when a device that reports
   `power_save=always_alive` is configured with the flag.
 - **A mains motor reports no remaining travel time.** The hub cannot schedule a read at the end of
-  travel, so the position refreshes at `status_poll_interval`. A long interval leaves the cover
-  shown as moving until the interval elapses.
+  travel, so the position refreshes every 3 s, or at `status_poll_interval` when you set one. A
+  long interval leaves the cover shown as moving until the interval elapses.
 - **Range matters more than on a mains-powered motor.** The corpus has near, far and failure
   captures at different distances against the same device, and the failure case is a range case.
 - **The battery level in status replies is coarse.** The motor reports full, normal or low, and
@@ -101,7 +101,8 @@ cover:
 300 hub, and a discovery attempt alongside 1W traffic. Three more captures hold an RS100 Solar
 io's answers to the sun level and battery level requests (`somfy_rs100_probe_subscribe_event_*`).
 
-Five mains RS100 IO roller shutters on a LilyGO T-Beam v1.2 / SX1276 cover the always-alive rows.
+Five mains RS100 IO roller shutters on a LilyGO T-Beam v1.2 / SX1276 cover the always-alive rows
+(pull request #258).
 
 Field reports: issues #16, #45, #156 and #187.
 
