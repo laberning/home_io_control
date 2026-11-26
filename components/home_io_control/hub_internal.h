@@ -58,9 +58,11 @@ inline bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabil
 }
 
 /// @brief Does the device kind answer a status read at all?
-/// @details False for a kind with device_feature::NO_STATUS_READ, which keeps its values in data objects: the hub
+/// @details False for a kind with device_feature::NO_STATUS_READ, a device that has no state to poll: the hub
 ///          never arms, queues or sends a status poll for it (the request after boot, a refresh, the poll after
-///          another controller's traffic). The one place that rule lives.
+///          another controller's traffic, a heater's regular poll), while commands reach it as usual. Two kinds
+///          carry it: the Atlantic heat pump, which keeps its values in data objects, and the interface for
+///          pilot-wire heaters, whose status carries no heating level. The one place that rule lives.
 /// @param dev IoDevice to check.
 inline bool device_reads_status(const IoDevice &dev) {
   return !has_feature(dev.features, device_feature::NO_STATUS_READ);

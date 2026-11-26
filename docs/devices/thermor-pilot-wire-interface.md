@@ -19,7 +19,7 @@ reports no level back.
 | Control with the key of its Cozytouch installation | ✅ Confirmed |
 | Comfort, Comfort -1, Comfort -2, Eco, frost protection and Off | ✅ Confirmed: the heater's display follows each one |
 | Boost | ❌ Not offered: the interface ignores a boost |
-| Reading the level back | ❌ The interface's status carries no heating level, and most status reads go unanswered |
+| Reading the level back | ❌ The interface's status carries no heating level, so the hub does not read it |
 
 What the display of the reported heater showed for each pilot-wire order:
 
@@ -84,10 +84,9 @@ with it, and in an earlier run without it the interface answered only on the fif
 - **Every command ends unconfirmed.** The interface never sends the closing reply of an exchange, so
   the hub logs each command as accepted without a closing reply, and the Unconfirmed Exchanges
   counter rises. The heater's level changes each time all the same.
-- **Status reads mostly go unanswered.** The interface answered about one status read in a hundred, and
-  each try sends a long wake-up. The reads tell the hub nothing, because the status carries no level, so
-  set a long `status_poll_interval` on the entry, such as `30min`, to spare the air time. The interval
-  does not delay commands (issue #228).
+- **The hub never reads the interface's status.** The status carries no level, and the interface
+  answered about one read in a hundred, each after a long wake-up (issue #228). So the hub sends it
+  commands only, and `status_poll_interval` has no effect on this entry.
 - **A command is sometimes not heard.** Now and then the interface does not answer at all and the card
   keeps the previous state. Send the command again; a command can take two or three sends.
 - **Comfort -1 and Comfort -2 can take a few minutes** to show on the heater's display.

@@ -336,6 +336,64 @@ TEST(HubOperations, ALevelHeaterIsNeverInTheMovementSettleLoop) {
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
 }
 
+// === Interface for pilot-wire heaters (52/0, model PILOT_WIRE_INTERFACE) ===
+
+namespace {
+
+IoDevice *make_pilot_wire_interface(TestableComponent &comp, MockRadio &radio) {
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  EXPECT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE);
+  return dev;
+}
+
+}  // namespace
+
+// Its status carries no level and it rarely answers one (issue #228): the type table gives it no status read.
+TEST(HubOperations, APilotWireInterfaceIsSentNoStatusReadFromAnyEntryPoint) {
+  esphome::test_clock::ManualClock clock{200000};
+  TestableComponent comp;
+  MockRadio radio;
+  esphome::test_scheduler::clear();
+  auto *dev = make_pilot_wire_interface(comp, radio);
+  ASSERT_TRUE(has_feature(dev->features, device_feature::NO_STATUS_READ));
+
+  comp.queue_request_device_status("ABC123");  // the read after boot and the heater's regular poll
+  EXPECT_TRUE(comp.op_queue_.empty());
+  EXPECT_FALSE(comp.request_device_status("ABC123"));  // a refresh
+  // The Cozytouch bridge commanding the interface, and the interface answering the bridge's challenge.
+  comp.act_on_foreign_frame_("ABC123", ForeignFrameKind::REQUEST_TO_DEVICE, "8F5BA3", CMD_EXECUTE);
+  comp.act_on_foreign_frame_("ABC123", ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER, "8F5BA3", CMD_CHALLENGE_REQ);
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+
+  esphome::test_scheduler::run_until(esphome::millis() + 3600000);
+  EXPECT_TRUE(comp.op_queue_.empty());
+  EXPECT_TRUE(radio.get_sent_data().empty());
+  esphome::test_scheduler::clear();
+}
+
+TEST(HubOperations, ALevelCommandStillReachesAPilotWireInterfaceWithNoReadBackAfterIt) {
+  esphome::test_clock::ManualClock clock{200000};
+  TestableComponent comp;
+  MockRadio radio;
+  esphome::test_scheduler::clear();
+  make_pilot_wire_interface(comp, radio);
+  radio.queue_rx(test::make_rx_packet(
+      build_level_status_response(comp.node_id_, heating_level_main_parameter(heating_level::ECO))));
+
+  EXPECT_TRUE(comp.heater_controller_.set_heating_level("ABC123", heating_level::ECO));
+
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  EXPECT_EQ(radio.get_sent_data().front()[8], CMD_EXECUTE);
+  EXPECT_EQ(radio.get_sent_data().front()[12], heating_level::ECO);
+  EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "no read-back poll is scheduled";
+  esphome::test_scheduler::run_until(esphome::millis() + 3600000);
+  EXPECT_TRUE(comp.op_queue_.empty());
+  EXPECT_EQ(radio.get_sent_data().size(), 1u) << "only the command went out";
+  esphome::test_scheduler::clear();
+}
+
 // === Exterior heating (21/0, 21/58): heat level as an IO position ===
 
 namespace {

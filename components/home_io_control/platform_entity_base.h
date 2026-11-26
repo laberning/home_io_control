@@ -218,12 +218,18 @@ class DeviceBoundEntity {
     return true;
   }
 
-  /// @brief Emit the shared two-branch poll-interval line for dump_config().
+  /// @brief Emit the shared poll-interval line for dump_config().
+  /// @details A device kind that is sent no status read (DeviceFeature::NO_STATUS_READ) gets a line saying so,
+  ///          since its `status_poll_interval` has no effect.
   /// @param tag Log tag of the calling entity.
   /// @param resolve_interval For an entity with a fixed cadence of its own, the rule that turns the YAML
   ///        interval (zero when unset) into the interval it polls at, e.g. heater_poll_interval_ms(); null
   ///        (the default) prints the YAML interval as set.
   void log_poll_interval_config_(const char *tag, uint32_t (*resolve_interval)(uint32_t) = nullptr) const {
+    if (has_feature(this->device_features_(DeviceCapabilityClass::UNKNOWN), device_feature::NO_STATUS_READ)) {
+      ESP_LOGCONFIG(tag, "  Status Poll Interval: none (the device is sent no status read)");
+      return;
+    }
     const uint32_t interval_ms =
         resolve_interval != nullptr ? resolve_interval(this->status_poll_interval_ms_) : this->status_poll_interval_ms_;
     if (interval_ms == 0) {

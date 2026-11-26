@@ -4,9 +4,12 @@
 #include "platform_climate.h"
 #include "reading_store.h"
 #include "hub_port_doubles.h"
+#include "log_capture.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cinttypes>
 #include <cmath>
 #include <deque>
 #include <functional>
@@ -714,6 +717,36 @@ TEST(PlatformClimate, PilotWireInterfaceOffersTheSixOrdersAndNoBoost) {
             (std::vector<ClimatePreset>{CLIMATE_PRESET_AWAY, CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}));
   EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Comfort -1", "Comfort -2"}));
   EXPECT_EQ(hub.get_device("ABC123")->model, DeviceModel::PILOT_WIRE_INTERFACE);
+}
+
+// The interface is sent no status read (issue #228), so the boot log shows no poll interval for it.
+TEST(PlatformClimate, PilotWireInterfaceDumpShowsNoPollInterval) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.set_device_model(DeviceModel::PILOT_WIRE_INTERFACE);
+  entity.setup();
+  const auto poll_lines = [&entity]() {
+    test::LogCapture log;
+    entity.dump_config();
+    std::vector<std::string> formats;
+    for (const auto &line : log.lines()) {
+      if (line.format.find("Status Poll Interval") != std::string::npos)
+        formats.push_back(line.format);
+    }
+    return formats;
+  };
+
+  EXPECT_EQ(poll_lines(),
+            (std::vector<std::string>{"  Status Poll Interval: none (the device is sent no status read)"}));
+
+  MockHubClimate plain_hub;
+  IOHomeClimate plain = make_level_climate(plain_hub);
+  plain.setup();
+  test::LogCapture log;
+  plain.dump_config();
+  EXPECT_TRUE(std::ranges::any_of(log.lines(), [](const auto &line) {
+    return line.format == "  Status Poll Interval: %" PRIu32 " ms";
+  })) << "a plain level heater is polled";
 }
 
 TEST(PlatformClimate, PilotWireInterfacePresetsSendTheSameLevelsAsAPlainHeater) {

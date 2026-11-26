@@ -21,6 +21,7 @@ using namespace esphome::home_io_control;
 class TestableComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::begin_status_poll_tracking_;
+  using IOHomeControlComponent::act_on_foreign_frame_;
   using IOHomeControlComponent::update_device_status_;
   using IOHomeControlComponent::execute_device_command_;
   using IOHomeControlComponent::send_and_receive_;

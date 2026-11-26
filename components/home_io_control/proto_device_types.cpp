@@ -254,9 +254,10 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // An interface for pilot-wire heaters (a Thermor one, issue #228) reports the same 52/0 as a plain heater
     // but carries the six pilot-wire orders only: no boost. Same class, platform and flags, own presets
     // (proto_heating_profiles.cpp); the YAML declares it (`io_model: pilot_wire_interface`). Its status carries
-    // no heating level, so it lacks REPORTS_HEATING_LEVEL.
+    // no heating level (main parameter 0xD400), so it lacks REPORTS_HEATING_LEVEL, and it answers about one
+    // status read in a hundred, each after a long wake-up: it is sent none (NO_STATUS_READ), only commands.
     {DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE, "pilot_wire_interface", CAP_CLIMATE,
-     SELECTABLE_PLATFORM, NO_FEATURES},
+     SELECTABLE_PLATFORM, device_feature::NO_STATUS_READ},
     {DeviceType::ELECTRICAL_HEATER, 1, NO_MODEL, "with adjustable setpoint", CAP_CLIMATE, SUBTYPE_PLATFORM,
      WINDOW_COMPANIONS | device_feature::OCCUPANCY | device_feature::ENERGY_METER},
     // A towel dryer reports the same 52/1 as the AGILIA radiator (two Atlantic Adelis units in issue

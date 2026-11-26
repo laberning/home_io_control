@@ -465,7 +465,7 @@ DEVICE_FEATURES = {
     "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}),
     "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS", "REPORTS_HEATING_LEVEL"}),
     "electrical_heater/1/heater_with_light": frozenset({"WINDOW_COMPANIONS", "NIGHT_LIGHT", "OCCUPANCY", "ENERGY_METER"}),
-    "electrical_heater/0/pilot_wire_interface": frozenset(),
+    "electrical_heater/0/pilot_wire_interface": frozenset({"NO_STATUS_READ"}),
     "heat_pump/1": frozenset({"HEAT_PUMP_ENERGY", "HEAT_PUMP_OUTDOOR_TEMPERATURE", "NO_STATUS_READ"}),
 }
 

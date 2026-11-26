@@ -125,7 +125,7 @@ How the hub reaches a heater depends on its kind:
 - **A plain electrical heater** (`io_subtype: 0`) is commanded with heating levels in the standard
   EXECUTE, the eight-byte frame a Cozytouch bridge was heard sending in issue #228, with the level in
   the main parameter. It is read with the ordinary status request. The control is confirmed on a
-  Thermor pilot-wire interface (issue #228).
+  Thermor pilot-wire interface (issue #228), which the hub never reads: its status carries no level.
 - **A heating temperature interface and a heat pump** carry a temperature or a named setpoint in the
   standard EXECUTE's main parameter, and report it in the ordinary status read.
 
@@ -140,7 +140,8 @@ at a later poll:
 |---|---|---|
 | Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. Then the open-window-detection setting, and with `io_model: heater_with_light` the light's state and brightness; a read of these that gets no answer leaves the entity as it was and is asked again at the next poll. With an `occupancy_detection:`, `occupancy:` or `energy:` block, one more register each, read after these on the same terms | The maximum setpoint, and for the declaration check the model name and the towel dryer's mode register |
 | Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured. With a `central_heating_mode:`, `energy:`, `boost_duration:` or `drying_duration:` sensor, one more register each, read before the status read; with `remaining_time:`, one more register while a boost or drying run is on | The maximum setpoint and the model name |
-| Plain electrical heater, pilot-wire interface | One status read | |
+| Plain electrical heater | One status read | |
+| Pilot-wire interface | Nothing: the hub sends it commands only, and `status_poll_interval` has no effect | |
 | Thermostat, heat pump | One status read | |
 
 - When a read fails the hub retries with a growing delay and keeps polling at the regular interval.
@@ -153,7 +154,8 @@ at a later poll:
   the hub first asks what the heater runs; see
   [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs).
 
-`Last Contact` shows when the heater last answered a poll.
+`Last Contact` shows when the heater last answered a poll. A pilot-wire interface is never polled, so
+its `Last Contact` moves only when it answers a command.
 
 ## Companion entities of a heater
 
@@ -357,6 +359,9 @@ climate:
   class `total_increasing`, no decimals), from a reply only: it has no state until the heater has
   answered, or when it answers without a value, and never starts at 0 on its own. The counter is in
   whole kilowatt-hours, so a heater of 500 W moves it about once in two hours at full power.
+- **After the heater restarts, the total can go back a little.** A Thermor EMOTION 3 H read 9 kWh
+  less after a restart (issue #228). You see a small negative step in the energy dashboard and a
+  warning in the Home Assistant log.
 - The block costs one register read per poll, and an entry without it reads nothing extra. A heater
   that answers the read without a value leaves the sensor without a state; the hub logs that once and
   stops asking for the register until the next boot.

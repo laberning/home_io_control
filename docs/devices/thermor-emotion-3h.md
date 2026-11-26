@@ -50,6 +50,9 @@ The options are on [Heating and climate](../configuration/climate.md); what the 
   radiator keeps. The Cozytouch cannot set 8.0 °C either.
 - **A detection lasts only a short time.** A short visit between two polls of the `occupancy:`
   sensor can be missed.
+- **The energy total can go back a little after a restart.** One radiator read 9 kWh less after it
+  restarted. You see a small negative step in the energy dashboard and a warning in the Home
+  Assistant log.
 
 ## Evidence
 
