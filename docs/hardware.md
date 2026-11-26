@@ -84,7 +84,7 @@ Someone running the board says it works. It has not been tested here.
 | LilyGO T-ETH-Elite (ESP32-S3) + LoRa shield SX1276 | SX1276 | `clk_pin: 10`, `mosi_pin: 11`, `miso_pin: 9` | `cs_pin: 40`, `rst_pin: 46`, `dio0_pin: 8` | See the notes below | Key extraction from a VELUX KLF 200 (issue #195) |
 | LilyGO LoRa32 V1.3 SX1276 | SX1276 | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | | |
 | LilyGO T3 V1.6.1 (TTGO LoRa32 V2.1) SX1276 | SX1276 | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 23`, `dio0_pin: 26` | Same pins as the Heltec V2 except `rst_pin: 23` | Three users: VELUX SSL shutters, VELUX roof windows (issue #225), Thermor radiators (issue #228) |
-| LilyGO T-Beam v1.2 SX1276 | SX1276 | Not reported | Not reported | Not reported | Five mains Somfy RS100 IO roller shutters, two-way ([pull request #258](https://github.com/laberning/home_io_control/pull/258)) |
+| LilyGO T-Beam v1.2 SX1276 | SX1276 | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 23`, `dio0_pin: 26` | Same pins as the T3 V1.6.1. See the notes below | Five mains Somfy RS100 IO roller shutters, two-way ([pull request #258](https://github.com/laberning/home_io_control/pull/258)) |
 | ESP32 DevKit + XL1262-P01 module (LLCC68, hand-wired) | LLCC68, as `sx1262` | `clk_pin: 18`, `mosi_pin: 23`, `miso_pin: 19` (the reporter's wiring) | `cs_pin: 26`, `rst_pin: 25`, `dio1_pin: 32`, `busy_pin: 27` | `tcxo_voltage: none`, `sx1262_rx_bandwidth: 156.2`; see the notes below | 1W only: a VELUX roller shutter (issue #177) |
 | ESP32-S3-Zero + RFM95 module (hand-wired) | SX1276 | `clk_pin: 6`, `mosi_pin: 7`, `miso_pin: 8` (the reporter's wiring) | `cs_pin: 9`, `rst_pin: 10`, `dio0_pin: 11` | Default `pa_pin: BOOST`, run at 10 dBm | Five VELUX roof windows polled, one moved ([issue #242](https://github.com/laberning/home_io_control/issues/242)) |
 | Custom ESP32-S3 board + DX-LR30-900M22SP module | SX1262 | `clk_pin: 12`, `mosi_pin: 11`, `miso_pin: 13` (the reporter's board) | `cs_pin: 10`, `rst_pin: 15`, `dio1_pin: 14`, `busy_pin: 9` | `tcxo_voltage: none` | A Somfy Izymo on/off receiver, following a linked Somfy io remote ([issue #57](https://github.com/laberning/home_io_control/issues/57)) |
@@ -104,6 +104,9 @@ yet. Notes on single boards:
 - **LilyGO T3 V1.6.1:** its OLED sits on I2C SDA 21 / SCL 22 with no reset pin according to
   LilyGO's pinout, so the Heltec example's display block (SDA 4 / SCL 15 / reset 16) leaves it dark
   until you change the pins.
+- **LilyGO T-Beam v1.2:** the on-board power chip needs no configuration. The radio comes up
+  with no `axp` block and no rail setting. The OLED header is I2C SDA 21 / SCL 22, as on the
+  T3 V1.6.1.
 - **XL1262-P01 module:** the LLCC68 is a reduced SX1262 that keeps the GFSK modem this project
   uses, so `radio_type: sx1262` drives it. The module has a plain crystal: set
   `tcxo_voltage: none` and widen the receive filter to 156.2 kHz with
