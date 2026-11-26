@@ -978,6 +978,24 @@ const char *acei_level_name(uint8_t level);
 /// the sender put in front.
 static constexpr uint8_t ONEWAY_SEQUENCE_SIZE = 2;
 
+/// @name 1W auto/manual (A/M) switch report
+/// A Somfy Smoove 1 A/M io wall switch reports a flip of its A/M slider as a 1W EXECUTE STOP to all
+/// devices whose ACEI carries service type 3 and whose parameter block ends in a 3-byte trailer
+/// `FF <state> FF` behind an empty FPI1/FPI2: `01 5B D2 00 00 00 FF 55 FF` (to auto) and
+/// `01 5B D2 00 00 00 FF 00 FF` (to manual). Two switches and four flips agree, and the switch's
+/// ordinary up/down presses carry neither the trailer nor the state
+/// (tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_auto_sx1262.yaml,
+/// tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_manual_sx1262.yaml,
+/// tests/corpus/captures/oneway/somfy_smoove_am_oneway_open_in_both_modes_sx1262.yaml).
+/// @{
+static constexpr uint8_t ONEWAY_MODE_SWITCH_ACEI_SERVICE = 3;  ///< ACEI service type of an A/M report.
+static constexpr uint8_t ONEWAY_MODE_SWITCH_PARAM_LEN = 9;     ///< originator, ACEI, MP(2), FPI1, FPI2, FF, state, FF.
+static constexpr uint8_t ONEWAY_MODE_SWITCH_MARKER = 0xFF;     ///< The byte on each side of the state byte.
+static constexpr uint8_t ONEWAY_MODE_SWITCH_STATE_OFFSET = 7;  ///< Data offset of the state byte.
+static constexpr uint8_t ONEWAY_MODE_SWITCH_AUTO = 0x55;       ///< State byte: the slider is on A (automatic).
+static constexpr uint8_t ONEWAY_MODE_SWITCH_MANUAL = 0x00;     ///< State byte: the slider is on M (manual).
+/// @}
+
 /// @brief ACEI byte for a 1W CMD_EXECUTE frame — the Somfy-shaped default.
 ///
 /// Level 2 (user_high), extended-info bit set. The 2W EXECUTE_ACEI (proto_commands.cpp) pins

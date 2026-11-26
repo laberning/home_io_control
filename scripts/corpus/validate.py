@@ -175,7 +175,9 @@ ALLOWED_EXPECT_KEYS = {"frames", "exchange", "device", "oneway"}
 ALLOWED_EXPECT_FRAME_KEYS = {"cmd", "start", "end", "protocol", "classification", "hmac_valid"}
 ALLOWED_EXPECT_EXCHANGE_KEYS = {"kind", "outcome"}
 ALLOWED_EXPECT_DEVICE_KEYS = {"reported_position", "reported_tilt", "name"}
-ALLOWED_EXPECT_ONEWAY_KEYS = {"intent", "target_type", "originator", "acei"}
+ALLOWED_EXPECT_ONEWAY_KEYS = {"intent", "target_type", "originator", "acei", "am_state"}
+# `none` asserts the frame is not an A/M switch report; the other three are oneway_mode_switch_name()'s values.
+ALLOWED_ONEWAY_AM_STATES = {"auto", "manual", "unknown", "none"}
 
 # Names only — imported from build.py::CLASSIFICATION_ENUM rather than hand-mirrored, so a new
 # disposition name needs one coordinated edit (there, plus the static_assert in
@@ -298,6 +300,11 @@ def validate_expect(expect: dict, frame_count: int, capture_id: str) -> None:
     if oneway is not None:
         require(isinstance(oneway, dict), f"{capture_id}: expect.oneway must be a mapping")
         require_known_keys(oneway, ALLOWED_EXPECT_ONEWAY_KEYS, f"{capture_id}: expect.oneway")
+        if "am_state" in oneway:
+            require(
+                oneway["am_state"] in ALLOWED_ONEWAY_AM_STATES,
+                f"{capture_id}: expect.oneway.am_state must be one of {sorted(ALLOWED_ONEWAY_AM_STATES)}",
+            )
 
 
 def _non_crc_raw_frame(frame: dict) -> "protolib.RawFrame":

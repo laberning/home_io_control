@@ -1,0 +1,31 @@
+id: somfy_smoove_am_oneway_identify_after_switch_sx1262
+description: >
+  The IDENTIFY(0x1E) to all (00003F) a Somfy Smoove 1 A/M io wall switch sends about 100 ms after the
+  EXECUTE STOP that reports a flip of its slider. Its data, 01 00, was the same after every flip, to A
+  and to M, on both switches seen (09E9A1, 5DA5A0), so it carries no state. What it asks of a receiver is
+  not known.
+source:
+  device: "Somfy Smoove 1 A/M io wall switches (nodes 09E9A1 and 5DA5A0), Heltec WiFi LoRa 32 V3"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-11-25
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F2 00 00 00 3F 09 E9 A1 1E 01 00 37 0B D1 A7 A6 D6 85 DC"
+    crc: absent
+    note: "09E9A1 after M -> A: IDENTIFY, data 01 00"
+  - dir: rx
+    t_ms: 1000
+    freq: 868950000
+    hex: "F2 00 00 00 3F 5D A5 A0 1E 01 00 24 12 BC 3E DD 41 B1 ED"
+    crc: absent
+    note: "5DA5A0 after A -> M: IDENTIFY, data 01 00"
+expect:
+  frames:
+    - {cmd: 0x1E, start: true, end: true, protocol: 1w}
+    - {cmd: 0x1E, start: true, end: true, protocol: 1w}

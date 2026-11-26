@@ -1,0 +1,36 @@
+id: somfy_smoove_am_oneway_switch_to_manual_sx1262
+description: >
+  Somfy Smoove 1 A/M io wall switches, slider flipped from A to M: the same EXECUTE(0x00) STOP to all
+  (00003F) with ACEI 0x5B as the flip to A (somfy_smoove_am_oneway_switch_to_auto_sx1262), with the
+  trailer FF 00 FF. One flip from each of two switches (09E9A1, 5DA5A0); each frame is the first of four
+  identical copies.
+source:
+  device: "Somfy Smoove 1 A/M io wall switches (nodes 09E9A1 and 5DA5A0), Heltec WiFi LoRa 32 V3"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-11-25
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F9 00 00 00 3F 09 E9 A1 00 01 5B D2 00 00 00 FF 00 FF 37 0C 90 BE DC 41 8E 6F"
+    crc: absent
+    note: "09E9A1, A -> M: EXECUTE STOP, ACEI 0x5B, trailer FF 00 FF (00 = manual)"
+  - dir: rx
+    t_ms: 1000
+    freq: 868950000
+    hex: "F9 00 00 00 3F 5D A5 A0 00 01 5B D2 00 00 00 FF 00 FF 24 11 57 3F 82 46 80 DC"
+    crc: absent
+    note: "5DA5A0, A -> M: EXECUTE STOP, ACEI 0x5B, trailer FF 00 FF (00 = manual)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: STOP
+    originator: 0x01
+    acei: 2
+    am_state: manual

@@ -58,7 +58,8 @@ TEST_P(CorpusDecode, ExpectationsMatchDecodedFrames) {
 
   // --- 1W remote frame decode --------------------------------------------------------------
   const bool has_oneway_expectation = capture->has_oneway_intent || capture->has_oneway_target_type ||
-                                      capture->has_oneway_originator || capture->has_oneway_acei;
+                                      capture->has_oneway_originator || capture->has_oneway_acei ||
+                                      capture->has_oneway_am_state;
   if (has_oneway_expectation) {
     int oneway_frames_seen = 0;
     for (uint8_t i = 0; i < capture->frame_count; i++) {
@@ -81,6 +82,12 @@ TEST_P(CorpusDecode, ExpectationsMatchDecodedFrames) {
       }
       if (capture->has_oneway_acei) {
         EXPECT_EQ(info.acei_level, capture->oneway_acei) << "1W ACEI level mismatch on frame " << static_cast<int>(i);
+      }
+      if (capture->has_oneway_am_state) {
+        // `none` in the YAML: the frame is not an A/M switch report, whose name is the empty string.
+        const std::string expected = std::string(capture->oneway_am_state) == "none" ? "" : capture->oneway_am_state;
+        EXPECT_EQ(std::string(oneway_mode_switch_name(info.mode_switch)), expected)
+            << "1W A/M state mismatch on frame " << static_cast<int>(i);
       }
     }
     EXPECT_GT(oneway_frames_seen, 0) << "capture has oneway expectations but no 1W-flagged frame was found";

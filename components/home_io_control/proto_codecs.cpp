@@ -360,6 +360,47 @@ std::optional<float> oneway_intent_to_target(uint8_t main0, uint8_t main1) {
 /// @brief Minimum data bytes for decode of execute/activate‑mode intent fields.
 static constexpr uint8_t ONEWAY_EXECUTE_MIN_DATA_LEN = 4;  // originator(1) + ACEI(1) + main[2].
 
+const char *oneway_mode_switch_name(OneWayModeSwitch state) {
+  switch (state) {
+    case OneWayModeSwitch::AUTO:
+      return "auto";
+    case OneWayModeSwitch::MANUAL:
+      return "manual";
+    case OneWayModeSwitch::UNKNOWN:
+      return "unknown";
+    case OneWayModeSwitch::NONE:
+      break;
+  }
+  return "";
+}
+
+/// @brief Read an A/M switch report (see ONEWAY_MODE_SWITCH_ACEI_SERVICE) out of an EXECUTE frame.
+///
+/// Every part of the captured layout must match: the exact length, ACEI service type 3, STOP, an
+/// empty FPI1/FPI2 and the FF markers. Anything else, an ordinary remote press included, is NONE.
+static void decode_1w_mode_switch(const IoFrame &frame, OneWayFrameInfo &info) {
+  constexpr uint8_t trailer = ONEWAY_SEQUENCE_SIZE + HMAC_SIZE;
+  if (frame.cmd != CMD_EXECUTE || frame.data_len != ONEWAY_MODE_SWITCH_PARAM_LEN + trailer)
+    return;
+  const uint8_t *d = frame.data;
+  const uint8_t service = (d[1] & ACEI_SERVICE_MASK) >> ACEI_SERVICE_SHIFT;
+  // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers) -- payload offsets of the layout.
+  const bool layout = service == ONEWAY_MODE_SWITCH_ACEI_SERVICE && d[2] == POS_STOP && d[4] == 0x00 && d[5] == 0x00 &&
+                      d[6] == ONEWAY_MODE_SWITCH_MARKER && d[8] == ONEWAY_MODE_SWITCH_MARKER;
+  // NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+  if (!layout)
+    return;
+  const uint8_t state = d[ONEWAY_MODE_SWITCH_STATE_OFFSET];
+  info.mode_switch_raw = state;
+  if (state == ONEWAY_MODE_SWITCH_AUTO) {
+    info.mode_switch = OneWayModeSwitch::AUTO;
+  } else if (state == ONEWAY_MODE_SWITCH_MANUAL) {
+    info.mode_switch = OneWayModeSwitch::MANUAL;
+  } else {
+    info.mode_switch = OneWayModeSwitch::UNKNOWN;
+  }
+}
+
 OneWayFrameInfo decode_1w_frame(const IoFrame &frame) {
   OneWayFrameInfo info{};
   memcpy(info.src, frame.src, NODE_ID_SIZE);
@@ -389,6 +430,7 @@ OneWayFrameInfo decode_1w_frame(const IoFrame &frame) {
     info.sequence = static_cast<uint16_t>((frame.data[at] << BITS_PER_BYTE) | frame.data[at + 1]);
   }
 
+  decode_1w_mode_switch(frame, info);
   return info;
 }
 

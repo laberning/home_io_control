@@ -30,7 +30,7 @@ SUBJECTS = frozenset({
     "atlantic_adelis", "atlantic_agilia", "atlantic_alfea", "atlantic_calypso", "multi_somfy", "reference_1w",
     "sauter_guelma", "sauter_hekla", "sauter_tahual", "selfpair", "wind_sensor",
     "somfy_awning", "somfy_connectivity_kit", "somfy_izymo_dimmer", "somfy_j406",
-    "somfy_oximo40", "somfy_pergola_louver", "somfy_rs100", "somfy_smoove", "somfy_sunilus", "somfy_tahoma",
+    "somfy_oximo40", "somfy_pergola_louver", "somfy_rs100", "somfy_smoove", "somfy_smoove_am", "somfy_sunilus", "somfy_tahoma",
     "synthetic", "thermor_pilot_wire_interface", "tilt_cover", "unenrolled_window_opener", "unidentified_1w_remote",
     "velux_kig300", "velux_kli310", "velux_kli313", "velux_klf200", "velux_klr200", "velux_klr300", "velux_kux100",
     "velux_sml", "velux_ssl",

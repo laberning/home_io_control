@@ -1,0 +1,38 @@
+id: somfy_smoove_am_oneway_open_in_both_modes_sx1262
+description: >
+  Up button of a Somfy Smoove 1 A/M io wall switch (5DA5A0), pressed once with the slider on M and once on
+  A. Apart from the rolling sequence and the MAC the two EXECUTE(0x00) OPEN frames are the same: ACEI
+  0x47, no FF xx FF trailer. An ordinary press does not carry the A/M state, so it is not an A/M report.
+  Each press is followed by two WRITE_PRIVATE(0x20) bursts, identical in both modes as well (M:
+  02 FF 01 43 00 0E 00 00 then 02 FF 01 43 00 05 FF 00; A: the same), left out here because they carry no
+  intent.
+source:
+  device: "Somfy Smoove 1 A/M io wall switch (node 5DA5A0), Heltec WiFi LoRa 32 V3"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-11-25
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F6 00 00 00 3F 5D A5 A0 00 01 47 00 00 00 00 24 17 6C 8A 32 79 D9 DD"
+    crc: absent
+    note: "slider on M: EXECUTE OPEN, ACEI 0x47"
+  - dir: rx
+    t_ms: 64456
+    freq: 868950000
+    hex: "F6 00 00 00 3F 5D A5 A0 00 01 47 00 00 00 00 24 1F D3 3D 9C E9 2D 84"
+    crc: absent
+    note: "slider on A: EXECUTE OPEN, ACEI 0x47"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: OPEN
+    originator: 0x01
+    acei: 2
+    am_state: none
