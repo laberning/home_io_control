@@ -17,7 +17,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | KLF 200 gateway | 📣 Reported as a key-extraction source (one reporter) — use **SEARCH FOR PRODUCTS**, and repeat it while armed if it finds nothing |
 | KIG 300 hub | ⚠️ Partial — one extraction succeeded, one stalled |
 | Devices behind an extracted key | ✅ Confirmed, with `low_power: true` |
-| MSU 100100 solar awning screen | ⚠️ Partial — open and close work; `stop` mid-travel reported to work by one owner (issue #95); how reliably is not known yet |
+| MSU 100100 solar awning screen | 📣 Reported (one owner) — open and close work; `stop` mid-travel reported to work (issue #95); how reliably is not known yet |
 | SSL solar roller shutter | ⚠️ Partial — Discover & Pair, open, close, position and status work; `stop` reaches it mid-travel, but not on every attempt |
 | SSL solar roller shutter behind a KLR 200 key | 📣 Reported (one reporter, two shutters, Heltec V4.3) — registered to the KLR 200 from its KLI 110, then found by Scan Paired Devices; open, close, `stop` mid-travel, position and status, with no motor reset |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
