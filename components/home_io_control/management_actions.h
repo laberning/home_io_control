@@ -125,6 +125,18 @@ class ManagementActions {
   /// @return Structured result describing whether the command was queued.
   ManagementActionResult force_open_device(const std::string &device_id);
 
+  /// Native API callback: store a favorite position and publish the result as a HA event.
+  void api_set_favorite_position(const std::string &device_id, const std::string &position);
+
+  /// @brief Queue a write of a cover's favorite position.
+  ///
+  /// A cover recalls that position from a function button, such as the My button on a Somfy
+  /// remote. `verified` is never set, since the write is only queued here.
+  /// @param device_id Target device ID (hex string, case-insensitive).
+  /// @param position Position to store, "0" (fully open) to "100" (fully closed) on the IO scale.
+  /// @return Structured result describing whether the write was queued.
+  ManagementActionResult set_favorite_position(const std::string &device_id, const std::string &position);
+
   /// Native API callback: run a roll-call scan and publish the result as a HA event.
   void api_scan_paired_devices();
 

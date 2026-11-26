@@ -424,6 +424,66 @@ TEST(HubManagement, ForceOpenDeviceEnqueuesForceOpenCommand) {
   EXPECT_EQ(component.op_queue_.front().device_id, "ABC123");
 }
 
+TEST(HubManagement, SetFavoritePositionEnqueuesTheWrite) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  test::set_kind(*component.get_device("ABC123"), DeviceType::ROLLER_SHUTTER);
+
+  const auto result = component.management_actions_.set_favorite_position("ABC123", "40");
+  EXPECT_TRUE(result.success);
+  EXPECT_FALSE(result.verified) << "the device's answer is logged when the exchange runs, not awaited here";
+  EXPECT_EQ(result.message, "favorite position write queued");
+
+  ASSERT_EQ(component.op_queue_.size(), 1u);
+  EXPECT_EQ(component.op_queue_.front().type, PendingOperationType::SET_FAVORITE_POSITION);
+  EXPECT_EQ(component.op_queue_.front().position, 40);
+  EXPECT_EQ(component.op_queue_.front().device_id, "ABC123");
+}
+
+TEST(HubManagement, SetFavoritePositionRefusesAPositionItCannotParse) {
+  // The write overwrites a setting the device keeps, so a position that is not a whole 0-100 is
+  // reported rather than coerced towards fully open.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  test::set_kind(*component.get_device("ABC123"), DeviceType::ROLLER_SHUTTER);
+
+  for (const char *bad : {"", " ", "-10", "40.5", "101", "fully open", "4294967336"}) {
+    const auto result = component.management_actions_.set_favorite_position("ABC123", bad);
+    EXPECT_FALSE(result.success) << "position \"" << bad << "\" should be refused";
+    EXPECT_EQ(result.message, "position must be a whole number between 0 and 100");
+  }
+  EXPECT_TRUE(component.op_queue_.empty());
+}
+
+TEST(HubManagement, SetFavoritePositionRejectsADeviceWithoutAFavorite) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::LIGHT);
+
+  const auto result = component.management_actions_.set_favorite_position("ABC123", "40");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device is not a cover with a favorite position");
+  EXPECT_TRUE(component.op_queue_.empty());
+}
+
+TEST(HubManagement, SetFavoritePositionRejectsUnknownDeviceAndUninitializedHub) {
+  TestableManagementComponent uninitialized;
+  EXPECT_EQ(uninitialized.management_actions_.set_favorite_position("ABC123", "40").message, "hub is not initialized");
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  EXPECT_EQ(component.management_actions_.set_favorite_position("123456", "40").message,
+            "device is not registered on this hub");
+  EXPECT_EQ(component.management_actions_.set_favorite_position("12", "40").message,
+            "device ID must be exactly 6 hexadecimal characters");
+}
+
 TEST(HubManagement, ForceOpenDeviceRejectsNonCoverDevice) {
   TestableManagementComponent component;
   MockRadio radio;
@@ -464,7 +524,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersOnlyElevenServicesByDefault) {
+TEST(HubManagement, RegisterManagementActionsRegistersOnlyTwelveServicesByDefault) {
   // diagnostic_probes_enabled_ defaults to false (no set_diagnostic_probes_enabled() call), so
   // probe_device/probe_sweep must not appear in the action list at all -- this is what keeps a
   // default build's Home Assistant action list clean, not just what refuses at call time.
@@ -477,7 +537,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyElevenServicesByDefaul
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 11u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 12u);
   for (const auto &service : esphome::api::global_api_server->user_services_) {
     const auto name = service->encode_list_service_response().name.str();
     EXPECT_NE(name, "probe_device");
@@ -573,9 +633,19 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyElevenServicesByDefaul
   ASSERT_EQ(pull_key_response.args.size(), 1u);
   EXPECT_EQ(pull_key_response.args[0].name.str(), "controller_id");
   EXPECT_EQ(pull_key_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto set_favorite_position_response =
+      esphome::api::global_api_server->user_services_[11]->encode_list_service_response();
+  EXPECT_EQ(set_favorite_position_response.name.str(), "set_favorite_position");
+  EXPECT_EQ(set_favorite_position_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(set_favorite_position_response.args.size(), 2u);
+  EXPECT_EQ(set_favorite_position_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(set_favorite_position_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+  EXPECT_EQ(set_favorite_position_response.args[1].name.str(), "position");
+  EXPECT_EQ(set_favorite_position_response.args[1].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllThirteenServicesWhenDiagnosticProbesEnabled) {
+TEST(HubManagement, RegisterManagementActionsRegistersAllFourteenServicesWhenDiagnosticProbesEnabled) {
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -586,10 +656,10 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllThirteenServicesWhenDia
   component.set_diagnostic_probes_enabled(true);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 13u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 14u);
 
   const auto probe_device_response =
-      esphome::api::global_api_server->user_services_[11]->encode_list_service_response();
+      esphome::api::global_api_server->user_services_[12]->encode_list_service_response();
   EXPECT_EQ(probe_device_response.name.str(), "probe_device");
   EXPECT_EQ(probe_device_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_device_response.args.size(), 3u);
@@ -600,7 +670,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllThirteenServicesWhenDia
   EXPECT_EQ(probe_device_response.args[2].name.str(), "index");
   EXPECT_EQ(probe_device_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[12]->encode_list_service_response();
+  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[13]->encode_list_service_response();
   EXPECT_EQ(probe_sweep_response.name.str(), "probe_sweep");
   EXPECT_EQ(probe_sweep_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_sweep_response.args.size(), 4u);
@@ -800,7 +870,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 11u);
+  ASSERT_EQ(api_server.user_services_.size(), 12u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
@@ -1793,7 +1863,7 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 11u);
+  ASSERT_EQ(api_server.user_services_.size(), 12u);
 
   const auto response = api_server.user_services_[4]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "scan_paired_devices");
@@ -1861,7 +1931,7 @@ TEST(HubManagement, OneWaySetPositionActionIsRegisteredWithBothArguments) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 11u);
+  ASSERT_EQ(api_server.user_services_.size(), 12u);
 
   const auto response = api_server.user_services_[5]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "oneway_set_position");

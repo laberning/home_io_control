@@ -16,6 +16,7 @@ stalls, and one motor has refused two-way altogether.
 | Open, close, stop | ✅ Confirmed |
 | Position feedback | ✅ Confirmed |
 | Mains motor without `low_power:` | ✅ Confirmed on five RS100 IO |
+| Stored My position | ✅ Read on five mains motors, written on one |
 | Discover & Pair | ⚠️ Partial — often first try; the key exchange can stall and need a retry |
 | Status poll while driven by another hub | 🔍 Captured, from a KIG 300 installation |
 | Battery level (`battery: true`) | ⚠️ Coarse level only (full / normal / low); only `full` observed so far |
@@ -84,6 +85,9 @@ cover:
 - **A mains motor reports no remaining travel time.** The hub cannot schedule a read at the end of
   travel, so the position refreshes every 3 s, or at `status_poll_interval` when you set one. A
   long interval leaves the cover shown as moving until the interval elapses.
+- **The stored My position sits on the motor's own grid.** A write is acknowledged with the main
+  parameter it carried and reads back a few units lower, so a whole percent does not round-trip
+  exactly. A motor set from its own remote holds a position between whole percents.
 - **Range matters more than on a mains-powered motor.** The corpus has near, far and failure
   captures at different distances against the same device, and the failure case is a range case.
 - **The battery level in status replies is coarse.** The motor reports full, normal or low, and
@@ -104,6 +108,9 @@ io's answers to the sun level and battery level requests (`somfy_rs100_probe_sub
 Five mains RS100 IO roller shutters on a LilyGO T-Beam v1.2 / SX1276 cover the always-alive rows
 (pull request #258); two more run on a Heltec V3 / SX1262 with linked remotes, no `low_power:` and a
 2 s status poll (issue #261).
+
+One more capture holds a My-position write and its read-back, from one of the five on the T-Beam
+(`somfy_rs100_exchange_set_favorite_position_sx1276`).
 
 Field reports: issues #16, #45, #156, #187 and #261.
 

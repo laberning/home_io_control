@@ -30,6 +30,7 @@ enum class PendingOperationType : uint8_t {
   SET_TILT,                ///< set_device_tilt call (tilt percentage 0–100).
   SET_POSITION_AND_TILT,   ///< Combined set_device_position_and_tilt call.
   DEVICE_COMMAND,          ///< Named device command (STOP, FAVORITE, VENT).
+  SET_FAVORITE_POSITION,   ///< set_favorite_position call: store a position as the device's "My".
   SET_LIGHT_STATE,         ///< set_light_position call (binary extremes or a dimmed position).
   SET_LOCK_STATE,          ///< set_lock_state call (locked/unlocked).
   SET_SWITCH_STATE,        ///< set_switch_state call (binary on/off).
@@ -105,6 +106,12 @@ class OperationQueue {
 
   // --- Named cover command ---
   void enqueue_device_command(const std::string &device_id, CoverCommand cmd);
+
+  /// Enqueue SET_FAVORITE_POSITION: store @p position as the device's favorite ("My") position.
+  /// Neither coalesced nor deduplicated, like the binary commands below.
+  /// @param device_id Target device ID.
+  /// @param position Position to store, 0-100 on the IO scale.
+  void enqueue_set_favorite_position(const std::string &device_id, uint8_t position);
 
   // --- Binary entity commands (no coalescing) ---
   /// Enqueue SET_LIGHT_STATE with an arbitrary IO position (0-100), for dimmable lights.

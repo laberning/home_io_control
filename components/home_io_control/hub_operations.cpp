@@ -40,6 +40,13 @@ constexpr size_t EXECUTE_ACTION_BUF_SIZE = 40;
 constexpr uint8_t FORCE_OPEN_WIRE_POSITION = 0;
 constexpr uint8_t FORCE_OPEN_WIRE_POSITION_INVERTED = 100;
 
+/// A cover whose kind has the favorite position.
+bool accepts_a_favorite_position(const IoDevice &d) {
+  const NamedPosition *named = find_named_position(CoverCommand::FAVORITE);
+  return named != nullptr && detail::known_device_matches_entity_class(d, DeviceCapabilityClass::COVER) &&
+         device_accepts_main_parameter(d.features, named->main_parameter);
+}
+
 /// Does a position or force-open EXECUTE to this device carry the speed block (the 8-byte form)?
 /// Only when the kind may take it and a speed was chosen: without a choice the frame is the 6-byte
 /// main-parameter form a wall pad sends, which leaves the speed to the motor.
@@ -463,6 +470,17 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
                    ? create_force_open(request, this->node_id_, d.node_id, d.low_power, open_position)
                    : create_execute_main_parameter(request, this->node_id_, d.node_id, d.low_power, open_position,
                                                    /*force_open_priority=*/true);
+      });
+}
+
+bool IOHomeControlComponent::set_favorite_position(const std::string &device_id, uint8_t position) {
+  char action[EXECUTE_ACTION_BUF_SIZE];
+  snprintf(action, sizeof(action), "store favorite position=%u%%", position);
+  // Not run_execute_operation_(): its rollback and moving evidence only apply to a movement.
+  return this->try_execute_operation_(
+      device_id, {action, false}, accepts_a_favorite_position, "cover with FAVORITE position",
+      [this, position](IoFrame &request, const IoDevice &d) {
+        return create_set_stored_position(request, this->node_id_, d.node_id, d.low_power, position);
       });
 }
 
@@ -958,6 +976,18 @@ bool IOHomeControlComponent::queue_device_command(const std::string &device_id, 
   return true;
 }
 
+bool IOHomeControlComponent::queue_set_favorite_position(const std::string &device_id, uint8_t position) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (!this->initialized_ || dev == nullptr)
+    return false;
+  if (!accepts_a_favorite_position(*dev)) {
+    detail::log_rejected_operation(device_id, *dev, "store favorite position", "cover with FAVORITE position");
+    return false;
+  }
+  this->op_queue_.enqueue_set_favorite_position(device_id, position);
+  return true;
+}
+
 void IOHomeControlComponent::queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) {
   if (queue_guard_rejects(this, device_id, QUEUE_GUARD_TILT)) {
     // Withdraw the entity's optimistic prediction — see queue_set_device_position().
@@ -1122,6 +1152,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::DEVICE_COMMAND:
       this->execute_device_command_(operation.device_id, operation.command);
+      break;
+    case PendingOperationType::SET_FAVORITE_POSITION:
+      this->set_favorite_position(operation.device_id, operation.position);
       break;
     case PendingOperationType::SET_LIGHT_STATE:
       // operation.position already carries the target IO position (0-100) regardless of whether

@@ -2,7 +2,7 @@
 <!-- doxygen-label: cfg_actions -->
 
 Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control
-exposes eleven **hub-level actions** through ESPHome's native API. These are one-off and advanced
+exposes twelve **hub-level actions** through ESPHome's native API. These are one-off and advanced
 operations that would clutter the entity UI if they were always-visible buttons, so most are only
 reachable from Developer Tools or an automation — `scan_paired_devices` is the exception, with an
 optional one-tap button.
@@ -20,6 +20,7 @@ optional one-tap button.
 | [`heating_control`](climate.md) ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. | No — an acknowledged write is not a readback; `read_window_open` reports the sensor in the `message`, the `read_paired_devices` / `read_setpoint_block` reads are logged |
 | [`pair_device`](#pair_device) | Pairs one device your YAML already declares, addressed by its ID, with no discovery broadcast. Takes `device_id`. | No — the `0x33` confirm is the device's own, and nothing reads a key back out of a device |
 | [`pull_key`](#pull_key) | Asks a controller you name by its node ID for its system key and proves it, with no discovery broadcast. Takes `controller_id`. | Yes, for a key the controller or the devices under it proved |
+| [`set_favorite_position`](#set_favorite_position) | Stores a position as a cover's favorite position, which its Favorite Position button recalls. Takes `device_id` and `position`. | No — the write is queued, and the device acknowledges the position it was given rather than the one it stored |
 
 Two more actions, `probe_device` and `probe_sweep`, exist behind a separate opt-in
 (`diagnostic_probes: true`) for sending opcodes this project hasn't fully decoded yet — see
@@ -145,6 +146,35 @@ Queued through the same dispatch path as the cover entity and its buttons (capab
 action: esphome.hioc_heltec_v2_force_open_device
 data:
   device_id: "FEEB1E"
+```
+
+## `set_favorite_position`
+
+Fields: `device_id` (required), `position` (required — a whole number from `0`, fully open, to `100`, fully closed, passed as a string).
+
+Stores `position` as the cover's favorite position, the "My" position of a Somfy motor. Its
+**Favorite Position** button, the `FAVORITE` command and the motor's own remote all recall it.
+Confirmed on a Somfy RS100 IO. A device whose kind has no favorite position is refused before
+anything is sent, as recalling one is.
+
+> [!NOTE]
+> The write replaces the stored position without reading the old one back. Only the
+> `private2_short` probe reports what a motor currently holds, with `diagnostic_probes: true`
+> (see [Diagnostic probes](../diagnostic-probes.md)).
+
+A whole percent is coarser than the position a device stores, and a device may round what it is
+given. On a mains RS100 IO a request for 76 % reads back as 75.99 %, and a favorite set from the
+motor's own remote sits between whole percents.
+
+Queued through the same dispatch path as the cover entity and its buttons, so the result event
+confirms the write was **queued**. The device acknowledges the position it was given, so only a
+read-back reports the stored value.
+
+```yaml
+action: esphome.hioc_heltec_v2_set_favorite_position
+data:
+  device_id: "FEEB1E"
+  position: "40"
 ```
 
 ## `oneway_set_position`

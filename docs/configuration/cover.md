@@ -68,7 +68,9 @@ Beyond the diagnostic companions every platform generates, covers add up to elev
 - **`<Cover Name> Favorite Position`** — a button, generated for any cover with a declared
   position-capable `io_device_type` except garage openers, whose motors refuse the favorite
   command (issue #163). It sends the protocol's favorite or My-position command. A motor with no
-  favorite position refuses the command before authenticating, and nothing moves.
+  favorite position refuses the command before authenticating, and nothing moves. The position the
+  button recalls can be written with the
+  [`set_favorite_position`](actions.md#set_favorite_position) action.
 - **`<Cover Name> Ventilation Position`** — a second button, for covers with `io_device_type` set
   to `window_opener` or `ventilation_point`. It moves the actuator to a predefined partially-open
   position suitable for air exchange.

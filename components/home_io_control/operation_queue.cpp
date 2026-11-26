@@ -114,6 +114,10 @@ void OperationQueue::enqueue_oneway_unenroll(const std::string &controller_id) {
   push_control_({PendingOperationType::ONEWAY_UNENROLL, controller_id, 0});
 }
 
+void OperationQueue::enqueue_set_favorite_position(const std::string &device_id, uint8_t position) {
+  push_control_({PendingOperationType::SET_FAVORITE_POSITION, device_id, position});
+}
+
 void OperationQueue::enqueue_set_light_position(const std::string &device_id, uint8_t position) {
   push_control_({PendingOperationType::SET_LIGHT_STATE, device_id, position});
 }

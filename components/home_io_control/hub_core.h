@@ -639,6 +639,12 @@ class IOHomeControlComponent : public Component,
   ///         features do not accept the value (an intermediate position on a device without
   ///         device_feature::LEVELS): nothing is sent and the optimistic target is withdrawn.
   bool set_device_position(const std::string &device_id, uint8_t position);
+  /// Store a position as the device's favorite ("My") position, with CMD_SET_STORED_POSITION.
+  /// @param device_id Target device ID.
+  /// @param position Position to store, 0-100 on the IO scale (0 = fully open, 100 = fully closed).
+  /// @return true when the device acknowledged the write. False when it is not a cover with a
+  ///         favorite position, the frame could not be built, or the exchange failed.
+  bool set_favorite_position(const std::string &device_id, uint8_t position);
   /// Send a tilt command to a tilt‑capable cover.
   /// @param device_id Target device ID.
   /// @param tilt_percent Desired tilt (0–100).
@@ -792,6 +798,13 @@ class IOHomeControlComponent : public Component,
   /// @return true if the hub is initialized, the device is registered, and the command matches
   ///         its capability class (so the command was enqueued); false otherwise.
   bool queue_device_command(const std::string &device_id, CoverCommand cmd) override;
+  /// @brief Queue an async favorite-position write; returns immediately, executed in loop()
+  /// through set_favorite_position().
+  /// @param device_id Target device ID.
+  /// @param position Position to store, 0-100 on the IO scale (0 = fully open, 100 = fully closed).
+  /// @return true if the hub is initialized, the device is registered and it has a favorite
+  ///         position to write, so the write was enqueued.
+  bool queue_set_favorite_position(const std::string &device_id, uint8_t position);
   /// @brief Queue an async tilt update; returns immediately, executed in loop().
   ///
   /// If a pending SET_POSITION operation for the same device is already in the queue, the two are

@@ -57,6 +57,7 @@ constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_SEQUENCE = "oneway_set_sequen
 constexpr const char *MANAGEMENT_ACTION_HEATING_CONTROL = "heating_control";
 constexpr const char *MANAGEMENT_ACTION_PAIR_DEVICE = "pair_device";
 constexpr const char *MANAGEMENT_ACTION_PULL_KEY = "pull_key";
+constexpr const char *MANAGEMENT_ACTION_SET_FAVORITE_POSITION = "set_favorite_position";
 /// Until when the retired `heating_control` function names work (ADR 0109).
 constexpr const char *HEATING_DEPRECATION_END = "January 2027";
 constexpr const char *MANAGEMENT_RESULT_EVENT = "esphome.home_io_control_action_result";
@@ -383,6 +384,12 @@ void ManagementActions::register_actions() {
        {"controller_id"},
        false,  // a real user feature, gated by documentation not by diagnostic_probes:
        [this](const api::ExecuteServiceRequest &r) { this->api_pull_key(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_SET_FAVORITE_POSITION,
+       {"device_id", "position"},
+       false,  // a real user feature, gated by documentation not by diagnostic_probes:
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_set_favorite_position(r.args[0].string_.str(), r.args[1].string_.str());
+       }},
       {MANAGEMENT_ACTION_PROBE_DEVICE,
        {"device_id", "probe", "index"},
        true,
@@ -715,6 +722,33 @@ void ManagementActions::run_heating_function_(const IoDevice &dev, DeviceRegiste
 }
 
 void ManagementActions::api_scan_paired_devices() { publish_result(scan_paired_devices()); }
+
+void ManagementActions::api_set_favorite_position(const std::string &device_id, const std::string &position) {
+  publish_result(set_favorite_position(device_id, position));
+}
+
+ManagementActionResult ManagementActions::set_favorite_position(const std::string &device_id,
+                                                                const std::string &position) {
+  ManagementActionResult result;
+  auto *dev = resolve_device_(MANAGEMENT_ACTION_SET_FAVORITE_POSITION, device_id, result);
+  if (dev == nullptr)
+    return result;
+
+  uint8_t parsed = 0;
+  if (!parse_whole_number_argument(position, POSITION_PERCENT_MAX, parsed)) {
+    result.message = "position must be a whole number between 0 and 100";
+    return result;
+  }
+
+  if (!hub_->queue_set_favorite_position(result.device_id, parsed)) {
+    result.message = "device is not a cover with a favorite position";
+    return result;
+  }
+
+  result.success = true;
+  result.message = "favorite position write queued";
+  return result;
+}
 
 void ManagementActions::api_oneway_set_position(const std::string &controller_id, const std::string &position) {
   // device_id carries the controller-identity handle: 1W addresses a class, so there is no device

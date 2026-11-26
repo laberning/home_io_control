@@ -99,6 +99,16 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, CoverCommand cmd,
                             bool silent = false);
 
+/// @brief Build a stored-position write (0x0A): store @p position as the favorite position that
+/// create_execute_command(CoverCommand::FAVORITE) recalls.
+/// @param f IoFrame to populate.
+/// @param own Controller's 3-byte node ID (source address).
+/// @param dst Target device's 3-byte node ID (destination address).
+/// @param low_power True if target is battery/solar-powered (sets CTRL1_LOW_POWER).
+/// @param position Position to store, 0-100 on the IO scale (0 = fully open, 100 = fully closed).
+/// @return true on success; false for a position above 100.
+bool create_set_stored_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position);
+
 /// @brief Build a force-open execute frame (0x00): move to the device's wire-scale "fully open"
 /// position at elevated ACEI priority (level 0, protection_human) instead of the usual
 /// user_high level — see EXECUTE_ACEI_FORCE_OPEN in proto_commands.cpp for why priority
