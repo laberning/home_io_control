@@ -1593,6 +1593,62 @@ def cover_opt_in_entities_are_created_with_their_names_ids_and_home_assistant_me
 
 
 @case()
+def nameless_entities_on_different_sub_devices_get_companions_with_the_same_names():
+    """Two covers with `name: ""`, each on its own ESPHome sub-device (the grouping the docs advise), both get a
+    "Favorite Position" button: ESPHome's duplicate-name check counts a name once per sub-device, so the companion is
+    validated with its parent's `device_id:`. The same name twice on one device is still refused."""
+    from unittest import mock
+
+    import esphome.config_validation as cv
+    from esphome.components import button
+    from esphome.components.home_io_control import platform_common as pc
+    from esphome.const import CONF_DEVICE_ID, CONF_ID, CONF_NAME
+    from esphome.core import CORE, ID
+    from esphome.core.config import Device
+
+    bound = []
+
+    async def capture(config, parent, new_entity, entity_config, **new_kwargs):
+        bound.append(entity_config)
+
+    def nameless_cover(cover_id, device):
+        return {
+            CONF_ID: ID(cover_id, is_declaration=True),
+            CONF_NAME: "",
+            CONF_DEVICE_ID: ID(device, is_declaration=False, type=Device),
+            "_favorite_button_id": ID(f"{cover_id}_favorite_button", is_declaration=True),
+        }
+
+    def create(config):
+        return pc.create_companion(
+            config,
+            None,
+            schema=button.button_schema(button.Button),
+            new_entity=None,
+            id_key="_favorite_button_id",
+            name=pc.companion_entity_name(config, "Favorite Position"),
+        )
+
+    saved_unique_ids = dict(CORE.unique_ids)
+    CORE.unique_ids.clear()
+    try:
+        with mock.patch.object(pc, "_bind_companion", capture):
+            asyncio.run(create(nameless_cover("living", "living_device")))
+            asyncio.run(create(nameless_cover("office", "office_device")))
+            assert [c[CONF_DEVICE_ID].id for c in bound] == ["living_device", "office_device"], bound
+            assert [c[CONF_NAME] for c in bound] == ["Favorite Position", "Favorite Position"], bound
+            try:
+                asyncio.run(create(nameless_cover("kitchen", "office_device")))
+            except cv.Invalid as err:
+                assert "Duplicate button entity" in str(err), err
+            else:
+                raise AssertionError("a second Favorite Position on one sub-device must still be refused")
+    finally:
+        CORE.unique_ids.clear()
+        CORE.unique_ids.update(saved_unique_ids)
+
+
+@case()
 def cover_gets_its_kinds_default_device_class():
     """A declared kind gets its Home Assistant class unless the YAML sets one (even ""); a cover with
     no declared type, or a kind with no default, gets none. The table is checked against the cover
