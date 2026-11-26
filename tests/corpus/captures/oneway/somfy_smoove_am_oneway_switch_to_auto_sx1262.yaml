@@ -4,9 +4,7 @@ description: >
   EXECUTE(0x00) STOP to all (00003F) whose ACEI 0x5B carries service type 3 and whose parameter block ends
   in the trailer FF 55 FF. One flip from each of two switches (09E9A1, 5DA5A0); each frame is the first of
   four identical copies, and an IDENTIFY(0x1E) burst follows each flip
-  (somfy_smoove_am_oneway_identify_after_switch_sx1262). A TaHoma that shares the installation read the
-  status of the switch's cover about a second later; the reply was the same in A and in M, although the motor
-  refuses a level-7 command while the switch is on M.
+  (somfy_smoove_am_oneway_identify_after_switch_sx1262).
 source:
   device: "Somfy Smoove 1 A/M io wall switches (nodes 09E9A1 and 5DA5A0), Heltec WiFi LoRa 32 V3"
   captured_with: sx1262

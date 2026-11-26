@@ -178,6 +178,38 @@ home_io_control:
 | `linked` | `"true"` if this sender is also in some entity's `linked_remotes` list, `"false"` otherwise |
 | `am_state` | Only on the frame an auto/manual (A/M) wall switch sends when its slider is flipped: `auto`, `manual`, or `unknown` for a state byte not seen before. Every other frame, an ordinary STOP press included, has no `am_state` key. See [Auto/manual switches](#automanual-switches) |
 
+### Auto/manual switches
+
+A Somfy Smoove 1 A/M io wall switch reports a flip of its A/M slider on the air: an `EXECUTE` STOP to all devices
+with ACEI `0x5B` and a trailer `FF <state> FF` after the parameters, `55` for auto and `00` for manual, followed by an
+`IDENTIFY(0x1E)` that carries no state. The hub decodes that frame, logs it as `... STOP ... am_state=manual(0x00)`,
+and adds `am_state` to the sender event, so an automation can hold the switch's state in a helper:
+
+```yaml
+automation:
+  - alias: "Office blind - follow the A/M switch"
+    triggers:
+      - trigger: event
+        event_type: esphome.home_io_control_sender_event
+        event_data: { remote_id: "09E9A1" }
+    conditions: "{{ trigger.event.data.am_state in ['auto', 'manual'] }}"
+    actions:
+      - action: "input_boolean.turn_{{ 'on' if trigger.event.data.am_state == 'manual' else 'off' }}"
+        target: { entity_id: input_boolean.office_blind_manual }
+```
+
+What to know:
+
+- **Only the flip carries the state.** The switch's up and down presses are the same in A and in M, so a flip the
+  hub did not hear stays wrong until the next flip.
+- **A wired switch sends nothing.** A Smoove Uno io wired to the motor puts no frame on the air, so the hub cannot
+  hear its flips.
+
+Evidence: `tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_auto_sx1262.yaml`,
+`tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_manual_sx1262.yaml`,
+`tests/corpus/captures/oneway/somfy_smoove_am_oneway_open_in_both_modes_sx1262.yaml`,
+`tests/corpus/captures/oneway/somfy_smoove_am_oneway_identify_after_switch_sx1262.yaml`.
+
 ### Verifying the event fires
 
 Before wiring up an automation, confirm the event actually reaches Home Assistant:
@@ -222,37 +254,3 @@ automation:
 - [Sending 1W commands](oneway-transmit.md) — the transmit side
 - [Covers](cover.md) — `optimistic_state` on a per-cover basis
 - [Named device types](../device-types.md#named-device-types) — what `class:` accepts
-
-## Auto/manual switches
-
-A Somfy Smoove 1 A/M io wall switch reports a flip of its A/M slider on the air: an `EXECUTE` STOP to all devices
-with ACEI `0x5B` and a trailer `FF <state> FF` after the parameters, `55` for auto and `00` for manual, followed by an
-`IDENTIFY(0x1E)` that carries no state. The hub decodes that frame, logs it as `... STOP ... am_state=manual(0x00)`,
-and adds `am_state` to the sender event, so an automation can hold the switch's state in a helper:
-
-```yaml
-automation:
-  - alias: "Office blind - follow the A/M switch"
-    triggers:
-      - trigger: event
-        event_type: esphome.home_io_control_sender_event
-        event_data: { remote_id: "09E9A1" }
-    conditions: "{{ trigger.event.data.am_state in ['auto', 'manual'] }}"
-    actions:
-      - action: "input_boolean.turn_{{ 'on' if trigger.event.data.am_state == 'manual' else 'off' }}"
-        target: { entity_id: input_boolean.office_blind_manual }
-```
-
-What to know:
-
-- **Only the flip carries the state.** The switch's up and down presses are the same in A and in M, so a flip the
-  hub did not hear stays wrong until the next flip.
-- **The cover's status does not show it.** A status read of a cover is the same in A and in M, so the flip is
-  the only signal the hub gets.
-- **A wired switch sends nothing.** A Smoove Uno io wired to the motor puts no frame on the air, so the hub cannot
-  hear its flips.
-
-Evidence: `tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_auto_sx1262.yaml`,
-`tests/corpus/captures/oneway/somfy_smoove_am_oneway_switch_to_manual_sx1262.yaml`,
-`tests/corpus/captures/oneway/somfy_smoove_am_oneway_open_in_both_modes_sx1262.yaml`,
-`tests/corpus/captures/oneway/somfy_smoove_am_oneway_identify_after_switch_sx1262.yaml`.
