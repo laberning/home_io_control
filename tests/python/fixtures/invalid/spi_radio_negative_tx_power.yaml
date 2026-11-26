@@ -1,0 +1,9 @@
+# expect-error: tx_power: -3 is outside 0..22 for radio_type: sx1262
+# covers: hub_validators.validate_tx_power
+# The SPI radios keep their 0..22 PA setting; only a bridge takes a dBm value below zero.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  tx_power: -3

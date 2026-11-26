@@ -2,12 +2,13 @@
 """Re-keys a pairing capture YAML using the key recovered from the capture's own 0x32 frame.
 
 `ingest.py --rekey` re-keys a capture you already hold the real system key for (your own
-hardware, `--system-key-from`). This tool covers the other case: a `reference-material` pairing
-capture (ADR 0023) transcribed from someone else's published log, where the system key is a
-third party's and exists nowhere but inside the capture. The `0x32` CMD_KEY_TRANSFER payload is
-encrypted under TRANSFER_KEY — public and identical in every io-homecontrol installation — so
-that key is trivially recoverable from the bytes alone, which is exactly why such a capture can
-never be committed as transcribed.
+hardware, `--system-key-from`). This tool covers the other case: a pairing capture transcribed
+from someone else's log (a `reference-material` capture, ADR 0023, or a contributor's), where the
+system key is a third party's and exists nowhere but inside the capture. The `0x32`
+CMD_KEY_TRANSFER payload (pushed after a 0x31/0x3C, or pulled after a 0x38) is encrypted under
+TRANSFER_KEY — public and identical in every io-homecontrol installation — so that key is
+trivially recoverable from the bytes alone, which is exactly why such a capture can never be
+committed as transcribed.
 
 So: recover it in memory, hand it straight to the same verify-and-rewrite pipeline
 (`ingest.py :: apply_rekey`), write out a capture whose crypto is the public corpus key, and
@@ -24,6 +25,13 @@ whose only crypto is a 0x3D HMAC, hand-assembled from a log rather than piped th
     python3 scripts/corpus/rekey_capture.py --system-key-from config/secrets.yaml \\
         ~/outside-the-repo/exchange.yaml -o tests/corpus/captures/exchange/somfy_awning_exchange_open_sx1262.yaml
 
+`--system-key-from-capture` covers a capture whose only crypto is HMACs, when another raw capture
+of the same installation holds a key transfer: the key is recovered from that capture, in memory,
+exactly as from the capture's own 0x32. Both inputs stay outside the repo (or git-ignored):
+
+    python3 scripts/corpus/rekey_capture.py --system-key-from-capture ~/raw/key_pull.yaml \\
+        ~/raw/execute.yaml -o tests/corpus/captures/exchange/<id>.yaml
+
 Either way this runs **before** the capture's first commit. A capture that reaches `main` still
 holding real key material is deleted and re-recorded, never rewritten in place — see
 tests/corpus/README.md :: "Raw bytes are immutable" for why, and its "Pending re-record" table for
@@ -38,7 +46,6 @@ review rather than silently left contradicting the bytes above it.
 
 import argparse
 import re
-import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,7 +58,6 @@ import protolib  # noqa: E402
 import validate  # noqa: E402
 from ingest import RekeyError, key_fingerprint  # noqa: E402
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 _HEX_LINE_RE = re.compile(r'^(?P<indent>\s*)hex:\s*"(?P<hex>[0-9A-Fa-f ]+)"\s*$')
 _KEY_LINE_RE = re.compile(r"^key:\s*(?P<mode>\S+)\s*$")
@@ -65,15 +71,9 @@ def assert_input_is_not_committable(path: Path) -> None:
     not a supported repair (tests/corpus/README.md :: "Raw bytes are immutable" — such a capture is
     deleted and re-recorded instead), so the tool must not offer a way to do it.
     """
-    try:
-        resolved = path.resolve().relative_to(REPO_ROOT)
-    except ValueError:
-        return  # outside the repo entirely — nothing git could commit
-    ignored = subprocess.run(["git", "check-ignore", str(resolved)], cwd=REPO_ROOT, capture_output=True, text=True,
-                             check=False)
-    if ignored.returncode != 0:
+    if ingest.git_could_commit(path):
         raise RekeyError(
-            f"refusing to read {resolved}: it is inside the repo and not git-ignored, so it either already holds "
+            f"refusing to read {path}: it is inside the repo and not git-ignored, so it either already holds "
             "real key material in git history (delete and re-record it — see tests/corpus/README.md :: 'Raw bytes "
             "are immutable') or is one `git add` from doing so. Keep the pre-re-key capture outside the repo, or "
             "under a git-ignored path, and write the re-keyed result into the corpus with -o")
@@ -87,45 +87,50 @@ def load_frames(capture: dict) -> "list[protolib.RawFrame]":
     return [protolib.RawFrame(frame["dir"], frame["hex"]) for frame in capture["frames"]]
 
 
-def resolve_key(frames: "list[protolib.RawFrame]", system_key_from: "str | None") -> "tuple[bytes, str]":
-    """Get the real key either from an explicit git-ignored key file or from the capture's own
-    0x32 frame. Returns (key, how) for the log line.
+def resolve_key(frames: "list[protolib.RawFrame]", system_key_from: "str | None",
+                key_capture: "str | None" = None) -> "tuple[bytes, str]":
+    """Get the real key from an explicit git-ignored key file, from another raw capture of the
+    same installation, or from the capture's own 0x32 frame. Returns (key, how) for the log line.
 
-    The explicit path exists for captures with no 0x32 to recover from — most importantly an
-    own-hardware capture that was committed without a re-key and still carries HMACs computed
-    under the maintainer's real key. Reuses ingest.resolve_system_key(), so the "key file must be
-    git-ignored" refusal applies identically here.
+    The first two exist for captures with no 0x32 to recover from — an own-hardware capture whose
+    HMACs are under the maintainer's real key, or a contributor's exchange whose key only appears
+    in a separate key-transfer capture. The key file path reuses ingest.resolve_system_key(), and
+    the other capture must pass the same "not committable" check as the input, so neither source
+    can be a file git could commit.
     """
+    if system_key_from is not None and key_capture is not None:
+        raise RekeyError("--system-key-from and --system-key-from-capture are alternatives; pass one")
     if system_key_from is not None:
         key = ingest.resolve_system_key(SimpleNamespace(system_key_from=system_key_from))
         if key == protolib.CORPUS_SYSTEM_KEY:
             raise RekeyError("the supplied key file contains the public corpus key, not a real system key")
         return key, f"supplied key file {system_key_from}"
+    if key_capture is not None:
+        assert_input_is_not_committable(Path(key_capture))
+        other = yaml.safe_load(Path(key_capture).read_text(encoding="utf-8"))
+        return recover_system_key(load_frames(other)), f"the key transfer in {key_capture}"
     return recover_system_key(frames), "the capture's own 0x32 key-transfer frame"
 
 
 def recover_system_key(frames: "list[protolib.RawFrame]") -> bytes:
-    """Decrypt the capture's own 0x32 payload with the public TRANSFER_KEY to recover the system
+    """Decrypt the capture's own 0x32 payload(s) with the public TRANSFER_KEY to recover the system
     key it was captured under. Multiple key-transfer frames must all recover the same key — one
-    capture is one pairing session, so a disagreement means the frames were mis-assembled (or
-    two sessions were spliced together) and the re-key would silently verify against the wrong
-    key for some of them.
+    capture is one installation, so a disagreement means the frames were mis-assembled (or two
+    sessions were spliced together) and the re-key would silently verify against the wrong key for
+    some of them.
     """
-    triples = protolib.find_key_transfer_triples(frames)
-    if not triples:
+    transfers = protolib.find_key_transfers(frames)
+    if not transfers:
         raise RekeyError(
-            "no 0x31/0x3C/0x32 key-transfer triple in this capture — there is no key to recover from it. "
-            "A capture whose only crypto is HMACs must be re-keyed with `ingest.py --rekey --system-key-from` "
-            "by someone who independently holds the key, or stay `key: unknown`")
-    recovered = set()
-    for key_init, challenge, transfer in triples:
-        parts = protolib.key_transfer_parts(key_init, challenge, transfer)
-        recovered.add(protolib.crypt_key(parts.key_init_cmd, parts.challenge, parts.encrypted_payload))
+            "no key transfer (0x31/0x3C/0x32 push or 0x38/0x32 pull) in this capture — there is no key to recover "
+            "from it. A capture whose only crypto is HMACs is re-keyed with --system-key-from (a key file) or "
+            "--system-key-from-capture (a raw key-transfer capture of the same installation), or stays `key: unknown`")
+    recovered = {protolib.crypt_key(t.iv_data, t.challenge, t.encrypted_payload) for t in transfers}
     if len(recovered) > 1:
         raise RekeyError(
-            f"the capture's {len(triples)} key-transfer frames decrypt to {len(recovered)} different keys "
+            f"the capture's {len(transfers)} key-transfer frames decrypt to {len(recovered)} different keys "
             "(fingerprints " + ", ".join(sorted(key_fingerprint(k) for k in recovered)) +
-            ") — this is not one coherent pairing session; aborting")
+            ") — this is not one coherent installation; aborting")
     key = recovered.pop()
     if key == protolib.CORPUS_SYSTEM_KEY:
         raise RekeyError("this capture is already re-keyed (its 0x32 payload decrypts to the public corpus key) "
@@ -190,6 +195,9 @@ def main() -> int:
     parser.add_argument("--system-key-from", default=None,
                         help="path to a git-ignored file holding the real system key (32 hex digits) — for captures "
                              "with no 0x32 frame to recover it from")
+    parser.add_argument("--system-key-from-capture", default=None, metavar="RAW.yaml",
+                        help="another raw capture of the same installation (not committable) whose key transfer "
+                             "gives the real key, held in memory only")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -205,10 +213,8 @@ def main() -> int:
         frames = load_frames(capture)
         original_hex = [frame.hex_bytes for frame in frames]
 
-        real_key, key_source = resolve_key(frames, args.system_key_from)
-        hmac_count = ingest.rekey_hmac_frames(frames, real_key, protolib.CORPUS_SYSTEM_KEY)
-        hmac_count += ingest.rekey_self_authenticated_frames(frames, real_key, protolib.CORPUS_SYSTEM_KEY)
-        transfer_count = ingest.rekey_key_transfer_frames(frames, real_key, protolib.CORPUS_SYSTEM_KEY)
+        real_key, key_source = resolve_key(frames, args.system_key_from, args.system_key_from_capture)
+        hmac_count, transfer_count = ingest.rekey_2w_frames(frames, real_key, protolib.CORPUS_SYSTEM_KEY)
         ingest.assert_no_key_leakage(frames, real_key)
 
         rendered, changed = rewrite_text(text, frames, original_hex)

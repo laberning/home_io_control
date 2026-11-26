@@ -981,7 +981,7 @@ template<class Base> class CcaProbe : public Base {
   int16_t level{-120};
   std::vector<uint32_t> read_freqs;
   int retunes{0};
-  int16_t read_rssi() override {
+  std::optional<int16_t> read_rssi() override {
     this->read_freqs.push_back(this->get_current_freq());
     return this->level;
   }

@@ -11,6 +11,8 @@ INPUT                  = components/home_io_control/ \
                           build/docs/
 USE_MDFILE_AS_MAINPAGE = build/docs/README.md
 RECURSIVE              = YES
+# The generated header of the Bridle release (scripts/bridle-update.sh) is not documented here.
+EXCLUDE                = components/home_io_control/radio_bridle_enums.h
 # The whole staging root is INPUT, not a per-page list: scripts/stage-docs.py wipes build/docs/ on
 # every run, so nothing stale can be picked up, and adding a page costs no Doxyfile edit. *.md is
 # what makes RECURSIVE pick the staged pages up.

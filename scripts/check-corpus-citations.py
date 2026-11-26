@@ -43,6 +43,11 @@ EXAMPLE_IDS: dict[str, frozenset[str]] = {
     "somfy_awning_exchange_position_50": frozenset({"tests/corpus/README.md"}),
     # The scratch capture the ingest self-test writes into a temporary directory.
     "synthetic_probe_scaffold_smoke": frozenset({"scripts/corpus/tests/run_tests.py"}),
+    # The example in the 2.4 GHz ingest tool's usage text.
+    "velux_klr200_statuspoll_example": frozenset({"scripts/corpus/ingest_2g4.py"}),
+    # The scratch captures the 2.4 GHz ingest self-tests write.
+    "velux_klr200_statuspoll_self_test": frozenset({"scripts/corpus/tests/run_tests.py"}),
+    "velux_klr200_exchange_self_test": frozenset({"scripts/corpus/tests/run_tests.py"}),
 }
 
 # This check's own files: the script lists the example ids above, and its self-test feeds it made-up ids on

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -115,6 +116,33 @@ class SpiAccess {
   virtual uint8_t spi_read() = 0;
 };
 
+/// @brief Abstract byte-stream interface for radios reached over a serial link.
+///
+/// The counterpart of @ref SpiAccess for a radio behind a UART (or any reliable, in-order byte
+/// stream): the driver reads and writes bytes without depending on the ESPHome UART framework,
+/// and host tests replace the link with a scripted double. The component that owns the link
+/// implements it.
+/// @ingroup hioc_radio
+class ByteStreamAccess {
+ public:
+  /// The line rate of the Bridle UART the spec fixes (§2.1), in baud.
+  static constexpr uint32_t DEFAULT_BAUD_RATE = 1000000;
+
+  virtual ~ByteStreamAccess() = default;
+  /// Bytes that can be read now without waiting.
+  [[nodiscard]] virtual size_t available() = 0;
+  /// Read up to `max` of the bytes that are available; never waits.
+  /// @return Bytes copied into `buf` (0 when none are available).
+  virtual size_t read(uint8_t *buf, size_t max) = 0;
+  /// Queue `n` bytes for sending. May return before they have left the link; see @ref flush.
+  virtual void write(const uint8_t *buf, size_t n) = 0;
+  /// Block until every queued byte has left the link.
+  virtual void flush() = 0;
+  /// The link's line rate in baud (8N1: ten bit times a byte). A driver derives the UART time of
+  /// its commands from it. @ref DEFAULT_BAUD_RATE unless the stream knows better.
+  [[nodiscard]] virtual uint32_t baud_rate() const { return DEFAULT_BAUD_RATE; }
+};
+
 /// Configuration for transmitting a packet: carrier frequency, preamble length, wake-up level and
 /// clear-channel check.
 struct RadioTxConfig {
@@ -129,12 +157,20 @@ struct RadioTxConfig {
   std::optional<int16_t> cca_threshold_dbm;
 };
 
+/// A signal a bench can ask a radio for that is no io frame (RadioDriver::transmit_test_signal()).
+enum class TestSignal : uint8_t {
+  CARRIER,   ///< An unmodulated carrier.
+  PREAMBLE,  ///< The modulated preamble alone, with no sync word and no payload.
+};
+
 /// What send_packet() did with a frame.
 struct TxResult {
   enum class Status : uint8_t {
     SENT,          ///< The frame went out.
     CHANNEL_BUSY,  ///< The clear-channel check found the channel busy; nothing was sent.
     FAILED,        ///< The radio could not send (invalid frame, TX timeout).
+    NO_READING,    ///< The clear-channel check got no reading; nothing was sent, and it says nothing about the
+                   ///< channel (ADR 0134).
   };
   Status status{Status::FAILED};
   int16_t cca_level_dbm{0};  ///< The level the clear-channel check measured; set with CHANNEL_BUSY.
@@ -143,6 +179,7 @@ struct TxResult {
   [[nodiscard]] static TxResult ok() { return {Status::SENT, 0}; }
   [[nodiscard]] static TxResult failed() { return {Status::FAILED, 0}; }
   [[nodiscard]] static TxResult channel_busy(int16_t level_dbm) { return {Status::CHANNEL_BUSY, level_dbm}; }
+  [[nodiscard]] static TxResult no_reading() { return {Status::NO_READING, 0}; }
 };
 
 /// Raw packet received from the radio.
@@ -211,7 +248,9 @@ class RadioDriver {
   ///
   /// Whatever the result, the receiver is running when it returns: the hub keeps listening and its
   /// next clear-channel check needs a live level. A transmission that failed must not leave the
-  /// chip in standby or transmit.
+  /// chip in standby or transmit. A radio that refuses a command without changing anything (a
+  /// co-processor, ADR 0134) keeps the state it had before the send: the receiver runs when it ran
+  /// before, and the hub's next wait or idle pass restores it otherwise.
   /// @return SENT, CHANNEL_BUSY (with the measured level) or FAILED.
   virtual TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) = 0;
 
@@ -232,21 +271,31 @@ class RadioDriver {
   virtual bool check_for_packet(RadioRxPacket &packet) = 0;
 
   /// Level on @p freq_hz right now, for a clear-channel check that takes several readings before a
-  /// send (ExchangeEngine): retunes the receiver to the channel if it is elsewhere, waits
-  /// cca_settle_us() for the reading to describe it, then reads read_rssi(). The radio stays in RX
-  /// on that channel.
+  /// send (ExchangeEngine): retunes the receiver (retune_for_reading()) to the channel when reading_needs_retune(),
+  /// waits cca_settle_us() for the reading to describe it, then reads read_rssi(). The radio stays in RX on that
+  /// channel.
   /// @param freq_hz Channel to measure.
-  /// @return RSSI in dBm.
-  int16_t measure_channel_level(uint32_t freq_hz);
+  /// @return RSSI in dBm, or nothing when the radio has no reading (see read_rssi()).
+  std::optional<int16_t> measure_channel_level(uint32_t freq_hz);
 
-  /// Wait after a retune before an RSSI reading describes the new channel (a per-chip constant).
+  /// Wait after a retune before an RSSI reading describes the new channel (a per-chip constant; zero
+  /// for a radio that holds the reply until the reading is taken).
   [[nodiscard]] virtual uint32_t cca_settle_us() const = 0;
 
   /// Read instantaneous RSSI (in dBm) on the current channel, while in RX mode. Drivers take their
   /// clear-channel reading inside send_packet() with it, and the idle hop feeds it to the board's
   /// quiet level (ADR 0096), so both sit on the same scale.
-  /// @return RSSI in dBm (negative value).
-  virtual int16_t read_rssi() = 0;
+  /// @return RSSI in dBm (negative value), or nothing when the radio could not take a reading (a
+  ///         co-processor that is busy, faulted or silent; ADR 0134). A chip read over SPI always has
+  ///         one. The caller never reads a missing reading as a quiet or a busy channel.
+  virtual std::optional<int16_t> read_rssi() = 0;
+
+  /// Whether measure_channel_level() sends retune_for_reading() before a reading of @p freq_hz. The default is
+  /// whether the recorded frequency is another: a receiver the host last tuned to @p freq_hz is on it. A radio that
+  /// retunes through a co-processor cannot know that (a scan hides the channel it is on, and an earlier retune may
+  /// still wait behind a frame), so it overrides this and asks for the retune unless its newest command already is that
+  /// retune.
+  [[nodiscard]] virtual bool reading_needs_retune(uint32_t freq_hz) const { return this->current_freq_ != freq_hz; }
 
   /// @brief Check if sync word has been detected (while in RX).
   /// Used to gate frequency hopping — prevents hopping away mid-frame.
@@ -311,6 +360,17 @@ class RadioDriver {
   /// @param tuning Current tuning configuration.
   virtual void apply_tuning(const TuningConfig &tuning) {}
 
+  /// @brief Whether this radio can carry @p tuning.
+  ///
+  /// The hub asks before it keeps a tuning value that the radio's own limits could make useless, at setup (after
+  /// @ref init) and again whenever a numeric value changes at runtime (no select option is a value a radio limits).
+  /// A radio that refuses logs why, naming the value and the limit; the
+  /// hub then fails setup, or at runtime restores the previous value and does not apply the new one. A radio whose
+  /// limits it cannot know before @ref init, or that has none, accepts. The default accepts everything.
+  /// @param tuning The tuning as it would be after the change.
+  /// @return true when the radio can carry it.
+  [[nodiscard]] virtual bool accepts_tuning(const TuningConfig &tuning) const { return true; }
+
   /// @brief Per-channel dwell for a rotating listen that does not name its own dwell.
   ///
   /// Every @ref ListenPolicy::ROTATE_ALL_CHANNELS or @ref ListenPolicy::ROTATE_SKIPPING_REQUEST
@@ -361,6 +421,27 @@ class RadioDriver {
 
   /// Change the carrier frequency using fast hop (no standby transition needed).
   virtual void change_frequency(uint32_t freq_hz) = 0;
+
+  /// Retune to @p freq_hz so that measure_channel_level() can read it. Contract: the receiver is on
+  /// @p freq_hz when this returns or, for a radio that retunes through a co-processor, as soon as the
+  /// command is processed; a frame in progress on the old channel may be dropped, because the reading
+  /// must not wait for it. The default is change_frequency(): the SPI radios retune at once.
+  virtual void retune_for_reading(uint32_t freq_hz) { this->change_frequency(freq_hz); }
+
+  /// Transmit a bench test signal for `duration_ms` and return to standby. For measurements a frame cannot
+  /// give (a bare carrier, a preamble of a known length): never called by the hub itself, only by a
+  /// bench configuration that has set `set_radio_test_mode(true)`. Blocks for the duration. The default
+  /// offers nothing.
+  /// @param signal What to transmit.
+  /// @param freq_hz Carrier frequency in Hz.
+  /// @param duration_ms How long the signal is on air, in ms.
+  /// @return true if the signal was sent; false if this driver cannot send it or the radio refused.
+  virtual bool transmit_test_signal(TestSignal signal, uint32_t freq_hz, uint32_t duration_ms) {
+    (void) signal;
+    (void) freq_hz;
+    (void) duration_ms;
+    return false;
+  }
 
   /// Switch to continuous receive mode.
   virtual void set_mode_rx() = 0;
@@ -490,7 +571,8 @@ class RadioDriver {
 
   /// The clear-channel check a driver runs at the top of send_packet(). Without a threshold in
   /// @p tx_config it does nothing. Otherwise it measures `tx_config.freq_hz` with
-  /// measure_channel_level().
+  /// measure_channel_level(). A radio without a reading never reaches this check: the SPI drivers
+  /// that call it always have one.
   /// @param tx_config The transmission about to be sent.
   /// @return The measured level if it is at or above the threshold (the channel is busy), else
   ///         nothing.

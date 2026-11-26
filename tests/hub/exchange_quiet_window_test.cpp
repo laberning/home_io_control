@@ -207,7 +207,8 @@ TEST(ExchangeQuietWindow, HoldBufferKeepsEveryLineOfOneAuthenticatedExchange) {
   constexpr size_t kAnswerLines = 2;
   constexpr size_t kFinalReplyLines = 4;
   constexpr size_t kExchangeLines = kRequestLines + kChallengeLines + kAnswerLines + kFinalReplyLines;
-  ASSERT_GE(FRAME_LOG_HELD_LINES, kExchangeLines);
+  // What an SPI-radio build holds: the host build sets the larger number of a bridge build (Makefile).
+  ASSERT_GE(FRAME_LOG_OWN_HELD_LINES, kExchangeLines);
 
   static std::vector<std::string> printed;
   printed.clear();

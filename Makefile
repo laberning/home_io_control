@@ -53,7 +53,14 @@ DEVICE_VARIANTS := heltec-wifi-lora-32-v2:v2 \
                     heltec-wifi-lora-32-v4-3:v4-3 \
                     heltec-wifi-lora-32-v4-3:v4 \
                     t3s3-lr1121:t3 \
-                    t3s3-lr1121-monitor:t3-monitor
+                    t3s3-lr1121-monitor:t3-monitor \
+                    esp32c3-supermini-bridle:c3 \
+                    esp32c3-supermini-bridle-868:c3-868 \
+                    esp32c3-supermini-bridle-868-phantom:c3-868-phantom \
+                    esp32c3-supermini-bridle-bench:c3-bench \
+                    esp32c3-supermini-bridle-coex:c3-coex \
+                    esp32c3-supermini-idle:c3-idle \
+                    bench868-ref-v3:ref868-v3
 
 variant_stem = $(word 1,$(subst :, ,$1))
 variant_suffix = $(word 2,$(subst :, ,$1))
@@ -85,13 +92,17 @@ dashboard:
 # dev machine installs as plain `clang-format`), because versions disagree on comment alignment.
 CLANG_FORMAT ?= clang-format
 
+# The generated Bridle headers (scripts/bridle-update.sh) keep the formatting of their release: both
+# targets leave them out.
 format:
 	@echo "Formatting C++ source files with clang-format..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec $(CLANG_FORMAT) -i {} +
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -not -name radio_bridle_enums.h -not -path 'tests/bridle/*' \
+		-exec $(CLANG_FORMAT) -i {} +
 
 format-check:
 	@echo "Checking C++ formatting with clang-format (--dry-run)..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -exec $(CLANG_FORMAT) --dry-run --Werror {} +
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -not -name radio_bridle_enums.h -not -path 'tests/bridle/*' \
+		-exec $(CLANG_FORMAT) --dry-run --Werror {} +
 
 # YAML linting (safe selection, excludes generated .esphome)
 yamllint:
@@ -99,12 +110,16 @@ yamllint:
 	yamllint config/tests/*.yaml config/boards/*.yaml config/*.yaml tests/corpus/captures/ tests/python/fixtures/ .github/workflows/*.yml .github/dependabot.yml
 
 # Golden-frame corpus: schema + self-consistency validation of every capture YAML
-# (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests.
+# (CRC, CTRL0 length, duplicate ids), plus the ingest/build/validate tool self-tests and the
+# bench scripts' unit tests (scripts/bench/).
 # The generated C++ headers are used for unit-tests
-corpus-validate:
+corpus-validate: tools
 	@echo "Validating golden-frame corpus captures..."
-	@python3 scripts/corpus/validate.py
-	@python3 scripts/corpus/tests/run_tests.py
+	@$(PY) scripts/corpus/validate.py
+	@$(PY) scripts/corpus/tests/run_tests.py
+	@$(PY) scripts/bench/ref868_test.py
+	@$(PY) scripts/bench/io2g4_test.py
+	@$(PY) scripts/bench/respond_report_test.py
 	@python3 scripts/lr1121_firmware/tests/run_tests.py
 
 # libFuzzer targets, seeded from the golden-frame corpus. Time-boxed background checks
@@ -114,6 +129,9 @@ corpus-validate:
 #   fuzz-frame     frame parser + its pure decoders (proto_frame/codecs/device_model/device_readings/dhw/device_types/heating_profiles/
 #                  heating/private_registers/value_codecs/crypto, all ESPHome-free; tests/include only
 #                  supplies esp_random.h for proto_crypto.cpp).
+#   fuzz-bridle-codec  Bridle framing, message decode, TLV and `ready` parsing (radio_bridle_codec.cpp);
+#                  seeded from the Bridle release's vectors and the recorded sessions.
+#   fuzz-io2g4-unwrap  2.4 GHz PSDU unwrap (radio_io2g4_phy.cpp), seeded from the io_2g4 captures.
 #   fuzz-soft-phy  software-PHY RX decoder (radio_soft_phy.cpp): raw chip buffers through the
 #                  length peek, UART probe and CRC recovery. radio_soft_phy.h reaches
 #                  esphome/core/hal.h through radio_interface.h, which tests/include stubs.
@@ -121,17 +139,17 @@ corpus-validate:
 FUZZ_TIME ?= 60
 FUZZ_CXX ?= clang++
 FUZZ_CXXFLAGS := -std=c++20 -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -g -O1 \
-	-Icomponents/home_io_control -Itests/include
+	-Icomponents/home_io_control -Itests/include -Itests/bridle -DIOHOME_BRIDLE -DIOHOME_HELD_LOG
 
 # $(1) = binary/target name, $(2) = extract_fuzz_seeds.py flags, $(3) = seed dir name, $(4) = sources
 define FUZZ_RUN
 	@mkdir -p build/fuzz/$(3) build/fuzz/corpus_$(1)
-	@python3 scripts/corpus/extract_fuzz_seeds.py $(2)
+	@$(PY) scripts/corpus/extract_fuzz_seeds.py $(2)
 	$(FUZZ_CXX) $(FUZZ_CXXFLAGS) $(4) -o build/fuzz/$(1)
 	./build/fuzz/$(1) -max_total_time=$(FUZZ_TIME) -print_final_stats=1 build/fuzz/corpus_$(1) build/fuzz/$(3)
 endef
 
-fuzz-frame:
+fuzz-frame: tools
 	$(call FUZZ_RUN,fuzz_frame_parse,,seeds,\
 		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
 		components/home_io_control/proto_device_model.cpp components/home_io_control/proto_device_readings.cpp components/home_io_control/proto_dhw.cpp \
@@ -140,7 +158,17 @@ fuzz-frame:
 		components/home_io_control/proto_private_registers.cpp components/home_io_control/proto_value_codecs.cpp \
 		components/home_io_control/proto_crypto.cpp tests/fuzz/fuzz_frame_parse.cpp)
 
-fuzz-soft-phy:
+fuzz-bridle-codec: tools
+	$(call FUZZ_RUN,fuzz_bridle_codec,--bridle,seeds_bridle,\
+		components/home_io_control/radio_bridle_codec.cpp components/home_io_control/proto_frame.cpp \
+		tests/fuzz/fuzz_bridle_codec.cpp)
+
+fuzz-io2g4-unwrap: tools
+	$(call FUZZ_RUN,fuzz_io2g4_unwrap,--io2g4,seeds_io2g4,\
+		components/home_io_control/radio_io2g4_phy.cpp components/home_io_control/radio_bridle_codec.cpp \
+		components/home_io_control/proto_frame.cpp tests/fuzz/fuzz_io2g4_unwrap.cpp)
+
+fuzz-soft-phy: tools
 	$(call FUZZ_RUN,fuzz_soft_phy_rx,--soft-phy,seeds_soft_phy,\
 		components/home_io_control/radio_soft_phy.cpp components/home_io_control/proto_frame.cpp \
 		tests/fuzz/fuzz_soft_phy_rx.cpp)
@@ -150,11 +178,16 @@ fuzz-soft-phy:
 # or held-log switch or include a header that does (CLANG_TIDY_ONLY_FILES_WITH); the first build has the
 # switch off, so without it the code under IOHOME_FRAME_LOG is never analyzed.
 CLANG_TIDY_FRAME_LOG_CONFIG := config/tests/test-esp32-sx1262-fem.yaml
+# The third pass analyzes the bridge sources (IOHOME_BRIDLE) in a bridge build, which also has the frame log on, so
+# the trace's frame-log code is analyzed with them.
+CLANG_TIDY_BRIDLE_CONFIG := config/tests/test-esp32-bridle.yaml
 clang-tidy:
 	@echo "Running clang-tidy..."
 	@scripts/run-clang-tidy.sh
 	@echo "Running clang-tidy on a frame-log build..."
 	@CLANG_TIDY_ONLY_FILES_WITH='IOHOME_FRAME_LOG|IOHOME_HELD_LOG' scripts/run-clang-tidy.sh $(CLANG_TIDY_FRAME_LOG_CONFIG)
+	@echo "Running clang-tidy on the Bridle sources in a frame-log build..."
+	@CLANG_TIDY_ONLY_FILES_WITH=IOHOME_BRIDLE scripts/run-clang-tidy.sh $(CLANG_TIDY_BRIDLE_CONFIG)
 
 # Cross-language check: tuning parameter names must match between tuning.py and the C++ registry
 tuning-sync:
@@ -265,7 +298,8 @@ clean-test-cache:
 # config/tests/test-*.yaml must be in exactly one group — firmware-test-groups-check fails
 # otherwise, so a new config can never silently drop out of CI.
 FIRMWARE_TEST_GROUP_1 := test-esp32-arduino.yaml test-esp32-esp-idf-tuning.yaml test-esp32-lr1121.yaml
-FIRMWARE_TEST_GROUP_2 := test-esp32-esp-idf.yaml test-esp32-sx1262-fem-xy16p35.yaml test-esp32-sx1262-fem.yaml
+FIRMWARE_TEST_GROUP_2 := test-esp32-bridle.yaml test-esp32-bridle-868.yaml test-esp32-esp-idf.yaml \
+                         test-esp32-sx1262-fem-xy16p35.yaml test-esp32-sx1262-fem.yaml
 FIRMWARE_TEST_EXCLUDED := test-esp32-lr1121-fwupdate.yaml
 
 # Configs compiled by firmware-test; override to compile a subset, e.g.
@@ -323,11 +357,15 @@ COMPONENT_SRCS := $(wildcard components/home_io_control/*.cpp)
 # Test stubs (only global symbols — App, global_preferences, fnv1_hash) plus per-test isolation:
 # test_isolation.cpp resets test_scheduler's pending-timer registry and enforces the ManualClock
 # RAII rule between tests.
-STUB_SRCS := tests/stubs/stubs.cpp tests/support/test_isolation.cpp
+STUB_SRCS := tests/stubs/stubs.cpp tests/support/test_isolation.cpp tests/support/fake_coprocessor.cpp
 
 # All test files (*_test.cpp), one directory per layer under tests/ (proto/, radio/, hub/, platform/,
 # oneway/, tuning/, corpus/, sync/, harness/). tests/fuzz/ holds libFuzzer targets, built separately.
-TEST_SRCS := $(sort $(shell find tests -name '*_test.cpp' -not -path 'tests/fuzz/*'))
+TEST_SRCS := $(sort $(shell find tests -name '*_test.cpp' -not -path 'tests/fuzz/*' -not -path 'tests/fullstack/*'))
+
+# The full-stack suite (tests/fullstack/) needs a simulator and is built and run by `make fullstack` on its own,
+# never into the unit-test binary.
+FULLSTACK_SRCS := $(sort $(wildcard tests/fullstack/*.cpp)) tests/support/io_blind_emulator.cpp tests/support/sim_bridge.cpp
 
 # Include paths (build/corpus holds the generated golden-frame corpus header — see corpus-gen below).
 # -Itests comes last: test files name shared harness headers relative to tests/ ("stubs/…",
@@ -336,6 +374,8 @@ INCLUDES := -Icomponents/home_io_control \
             -Itests/include \
             -Itests/support \
             -Ibuild/corpus \
+            -Ibuild/bridle \
+            -Itests/bridle \
             -Itests
 
 # Mirror the ESPHome API defines that the component injects during firmware codegen.
@@ -348,11 +388,73 @@ INCLUDES := -Icomponents/home_io_control \
 # IOHOME_LR1121_BOOTLOADER_UPDATE is the same story one level down: normally only set when a
 # `bootloader:` sub-block is configured, but the 0x81xx primitives and the three-stage
 # orchestration it gates need to be always-on for their host tests to have anything to link.
+# IOHOME_BRIDLE compiles the Bridle radio sources (a firmware configuration with `radio_type: bridle` sets it). The Bridle
+# driver writes its trace through the held log, so IOHOME_HELD_LOG comes with it (log_frame.h), and the hold takes
+# HOST_HELD_LOG_LINES, the lines of a bridge build: 36 without the frame log (bridle_held_log_lines() in
+# hub_validators.py; radio_bridle_trace.cpp fails to compile on another number). The frame log stays off, as in an SPI
+# build; the framelog variant (unit-test-framelog) runs the tests that need it.
+# USE_WIFI is what ESPHome defines in a build with the wifi component: the hub reads its Wi-Fi channel behind it
+# (tests/include/esphome/components/wifi/wifi_component.h is the stub).
+HOST_HELD_LOG_LINES ?= 36
 UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DUSE_API_CUSTOM_SERVICES \
 			 -DUSE_API_HOMEASSISTANT_SERVICES \
 			 -DIOHOME_LR1121_FIRMWARE_UPDATE \
-			 -DIOHOME_LR1121_BOOTLOADER_UPDATE
+			 -DIOHOME_LR1121_BOOTLOADER_UPDATE \
+			 -DIOHOME_BRIDLE \
+			 -DIOHOME_HELD_LOG \
+			 -DIOHOME_HELD_LOG_LINES=$(HOST_HELD_LOG_LINES) \
+			 -DUSE_WIFI
+
+# Bridle: the generated headers of one Bridle release are committed (components/home_io_control/radio_bridle_enums.h,
+# tests/bridle/) and named by BRIDLE_VERSION; scripts/bridle-update.sh is the only thing that writes them. The Python
+# tools (session linter, header generator for the recorded sessions) come from the release's wheel, pinned in
+# scripts/requirements-dev.txt, into a venv under build/tools/. While the release is not on GitHub, or the repository
+# is private, BRIDLE_WHEEL=<wheel from the Bridle checkout's `make release`> installs the same file (its hash must
+# equal BRIDLE_VERSION's); without it, the sibling checkout's ../bridle/dist/ is used when its wheel is that file.
+TOOLS_VENV := build/tools/venv
+BRIDLE_TOOLS_BIN := $(TOOLS_VENV)/bin
+PY := $(BRIDLE_TOOLS_BIN)/python
+BRIDLE_WHEEL ?=
+
+$(TOOLS_VENV)/.stamp: scripts/requirements-dev.txt BRIDLE_VERSION
+	@python3 -m venv --clear $(TOOLS_VENV)
+	@want=$$(sed -n 's/^wheel_sha256=//p' BRIDLE_VERSION); wheel="$(BRIDLE_WHEEL)"; \
+	if [ -n "$$wheel" ]; then \
+	  [ "$$(sha256sum "$$wheel" | cut -d' ' -f1)" = "$$want" ] || { echo "BRIDLE_WHEEL is not the wheel BRIDLE_VERSION names"; exit 1; }; \
+	else \
+	  for c in ../bridle/dist/bridle_protocol-*.whl; do \
+	    [ -f "$$c" ] && [ "$$(sha256sum "$$c" | cut -d' ' -f1)" = "$$want" ] && wheel="$$c"; \
+	  done; \
+	fi; \
+	if [ -n "$$wheel" ]; then \
+	  grep -v '^bridle-protocol @' scripts/requirements-dev.txt | $(TOOLS_VENV)/bin/pip install -q -r /dev/stdin "$$wheel"; \
+	else $(TOOLS_VENV)/bin/pip install -q -r scripts/requirements-dev.txt \
+	  || { echo "could not fetch the pinned wheel; a private release needs BRIDLE_WHEEL=<wheel>"; exit 1; }; fi
+	@touch $@
+
+tools: $(TOOLS_VENV)/.stamp
+
+# The committed headers and the wheel pin are the ones BRIDLE_VERSION names (no network).
+bridle-check:
+	@scripts/bridle-update.sh --check
+
+# The recorded sessions the playback tests replay (tests/corpus/sessions/), rendered into this repository's own
+# namespace.
+BRIDLE_GEN_DIR := build/bridle
+BRIDLE_SESSION_FILES := $(sort $(wildcard tests/corpus/sessions/*.yaml))
+
+$(BRIDLE_GEN_DIR)/sessions_generated.h: $(TOOLS_VENV)/.stamp $(BRIDLE_SESSION_FILES)
+	@mkdir -p $(BRIDLE_GEN_DIR)
+	@$(BRIDLE_TOOLS_BIN)/bridle-session gen-cpp $@ --namespace esphome::home_io_control::bridle $(BRIDLE_SESSION_FILES)
+
+bridle-gen: $(BRIDLE_GEN_DIR)/sessions_generated.h
+
+# The session linter (Bridle specification section 12.1) over the recorded session fixtures.
+bridle-session-check: tools
+	@echo "Linting the Bridle session fixtures..."
+	@$(BRIDLE_TOOLS_BIN)/bridle-session validate tests/corpus/sessions/*.yaml
+	@for f in tests/corpus/sessions/*.yaml; do $(BRIDLE_TOOLS_BIN)/bridle-session check "$$f" || exit 1; done
 
 # Regenerates build/corpus/corpus_generated.h from tests/corpus/captures/**/*.yaml.
 # see tests/corpus/README.md.
@@ -361,7 +463,8 @@ corpus-gen:
 	@python3 scripts/corpus/build.py
 
 # --- Host unit-test build (incremental; objects mirror source paths) ---
-# HOST_VARIANT selects the object/binary tree; "asan" adds sanitizer flags (see unit-test-asan).
+# HOST_VARIANT selects the object/binary tree; "asan" adds sanitizer flags (see unit-test-asan), "framelog" the frame
+# log (see unit-test-framelog).
 HOST_VARIANT ?= default
 HOST_BUILD_DIR := build/host/$(HOST_VARIANT)
 HOST_OBJ_DIR := $(HOST_BUILD_DIR)/obj
@@ -391,8 +494,15 @@ HOST_SRCS := $(COMPONENT_SRCS) $(STUB_SRCS) $(TEST_SRCS)
 HOST_OBJS := $(patsubst %.cpp,$(HOST_OBJ_DIR)/%.o,$(HOST_SRCS))
 HOST_DEPS := $(HOST_OBJS:.o=.d)
 HOST_TEST_BIN := $(HOST_BUILD_DIR)/test_home_io_control
+# The variant's compile flags, rewritten only when they change. Every object depends on it, so a changed flag (another
+# HOST_HELD_LOG_LINES, say) rebuilds the whole tree instead of linking objects built with different values.
+HOST_FLAGS_STAMP := $(HOST_BUILD_DIR)/cxxflags
 
-$(HOST_OBJ_DIR)/%.o: %.cpp
+$(HOST_FLAGS_STAMP): FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(HOST_CXXFLAGS)' | cmp -s - $@ || echo '$(HOST_CXXFLAGS)' > $@
+
+$(HOST_OBJ_DIR)/%.o: %.cpp $(HOST_FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	g++ $(HOST_CXXFLAGS) -MMD -MP -c $< -o $@
 
@@ -401,38 +511,97 @@ $(HOST_TEST_BIN): $(HOST_OBJS)
 
 -include $(HOST_DEPS)
 
+FORCE:
+
 # Builds $(HOST_TEST_BIN) for the current HOST_VARIANT and runs it. Shared by unit-test and
 # unit-test-asan (invoked as a sub-make with HOST_VARIANT/HOST_EXTRA_FLAGS overridden on the
 # command line, which is what makes $(HOST_TEST_BIN) resolve to the right variant tree below).
+# The default variant also collects the Bridle traces its stand-ins write (bridle-trace-check lints
+# them); the sanitizer variant writes none.
+BRIDLE_TRACE_DIR := $(CURDIR)/build/bridle/traces
+
 host-run: $(HOST_TEST_BIN)
 	@echo "Running tests ($(HOST_VARIANT))..."
-	@UBSAN_OPTIONS=print_stacktrace=1 \
+	@if [ "$(HOST_VARIANT)" = default ]; then rm -rf $(BRIDLE_TRACE_DIR); fi
+	@$(if $(filter default,$(HOST_VARIANT)),HIOC_BRIDLE_TRACE_DIR=$(BRIDLE_TRACE_DIR)) UBSAN_OPTIONS=print_stacktrace=1 \
 		LSAN_OPTIONS=suppressions=$(CURDIR)/tests/asan/lsan.supp \
 		./$(HOST_TEST_BIN)
 
+# Regenerates the session fixtures from the host tests that record them; see the script's docstring
+# for when to, and review the diff before committing.
+bridle-sessions-regen: unit-test tools
+	@$(PY) scripts/regen-bridle-sessions.py
+
+# The session linter (Bridle specification section 12.1) over every trace the default unit-test run wrote:
+# a driver that breaks a rule of the spec fails here even when its C++ test passed.
+bridle-trace-check: unit-test tools
+	@echo "Linting the Bridle traces of the unit tests..."
+	@n=0; for f in $(BRIDLE_TRACE_DIR)/*.log; do \
+	  [ -e "$$f" ] || { echo "no traces in $(BRIDLE_TRACE_DIR)"; exit 1; }; \
+	  $(BRIDLE_TOOLS_BIN)/bridle-session check "$$f" || { echo "^ $$f"; exit 1; }; n=$$((n+1)); \
+	done; echo "bridle-trace-check: OK ($$n traces)"
+
 # Public entry point: corpus-gen runs first (ordering!), then a parallel sub-make builds/links.
 # Parallelism is scoped to this sub-make (not a global -j) so the docker/esphome targets in
-# this Makefile stay serial. After changing HOST_CXXFLAGS, run `make clean-host` — make does
-# not hash command lines, so flag-only changes don't invalidate existing objects.
-unit-test: corpus-gen
+# this Makefile stay serial. A change to HOST_CXXFLAGS rebuilds the variant's objects (HOST_FLAGS_STAMP).
+# The frame-log variant runs with it (unit-test-framelog below).
+unit-test: corpus-gen bridle-gen
 	@echo "Building Google Test unit tests for home_io_control (host-only)..."
 	@$(MAKE) --no-print-directory -j$(shell nproc) host-run
+	@$(MAKE) --no-print-directory -j$(shell nproc) $(FRAME_LOG_VARIANT) host-run
 
 # ASan/UBSan variant: same sources and rules as unit-test, built into a fully separate object
 # tree (build/host/asan/) so the two variants never poison each other. Uninstrumented system
 # libgtest is fine to link against — ASan intercepts allocation globally.
 ASAN_HOST_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all -g -O1 -fno-omit-frame-pointer
 
-unit-test-asan: corpus-gen
+unit-test-asan: corpus-gen bridle-gen
 	@echo "Building Google Test unit tests for home_io_control (ASan/UBSan)..."
 	@$(MAKE) --no-print-directory -j$(shell nproc) \
 		HOST_VARIANT=asan HOST_EXTRA_FLAGS="$(ASAN_HOST_FLAGS)" host-run
+
+# Frame-log variant: a bridge build with `-DIOHOME_FRAME_LOG`, whose hold also takes the frame log's own lines (48).
+# Built into its own object tree (build/host/framelog/) from the component and the tests that cover what the frame log
+# changes on a bridge: its TX and RX lines and the size of the hold with them. The default variant keeps the frame log
+# off, as an SPI build has it.
+FRAME_LOG_TEST_SRCS := tests/radio/radio_bridle_test.cpp tests/hub/exchange_over_bridle_test.cpp
+FRAME_LOG_VARIANT := HOST_VARIANT=framelog HOST_HELD_LOG_LINES=48 HOST_EXTRA_FLAGS=-DIOHOME_FRAME_LOG \
+		     HOST_SRCS="$(COMPONENT_SRCS) $(STUB_SRCS) $(FRAME_LOG_TEST_SRCS)"
+
+unit-test-framelog: corpus-gen bridle-gen
+	@echo "Building Google Test unit tests for home_io_control (frame log)..."
+	@$(MAKE) --no-print-directory -j$(shell nproc) $(FRAME_LOG_VARIANT) host-run
 
 # CodeQL's build (.github/workflows/codeql.yml): the component's translation units only, compiled in
 # parallel with the unit-test flags and not linked. CodeQL analyses what it sees compiled, so leaving out
 # the test sources and gtest keeps the scan on the shipped code and its run short.
 host-component-objs:
 	@$(MAKE) --no-print-directory -j$(shell nproc) $(patsubst %.cpp,$(HOST_OBJ_DIR)/%.o,$(COMPONENT_SRCS))
+
+# === Full-stack tests ===========================================================
+# The hub's exchange engine over the real Bridle driver over a simulated co-processor, with an emulated
+# 2.4 GHz blind on the simulated air (tests/fullstack/, tests/support/sim_bridge.h). The simulator is any
+# program that speaks the simulator control channel of the Bridle specification (section 11.1) and has an
+# 802.15.4 radio: BRIDLE_SIM names its binary. The suite has its own object tree (build/host/fullstack/), so
+# the simulator-dependent sources never reach the unit-test binary. fullstack-build only compiles the suite
+# (no simulator needed), which keeps it building in CI.
+BRIDLE_SIM ?=
+FULLSTACK_VARIANT := HOST_VARIANT=fullstack HOST_SRCS="$(COMPONENT_SRCS) $(STUB_SRCS) $(FULLSTACK_SRCS)"
+
+fullstack-build: corpus-gen bridle-gen
+	@echo "Building the full-stack tests..."
+	@$(MAKE) --no-print-directory -j$(shell nproc) $(FULLSTACK_VARIANT) fullstack-bin
+
+# The binary of the sub-make's variant: HOST_TEST_BIN expands there, not in the caller.
+fullstack-bin: $(HOST_TEST_BIN)
+
+fullstack: fullstack-build
+	@test -x "$(BRIDLE_SIM)" || { echo "fullstack: set BRIDLE_SIM= to the binary of a Bridle simulator (Bridle specification section 11.1)"; exit 1; }
+	@echo "Running the full-stack tests..."
+	@$(MAKE) --no-print-directory $(FULLSTACK_VARIANT) fullstack-run
+
+fullstack-run: $(HOST_TEST_BIN)
+	@BRIDLE_SIM=$(abspath $(BRIDLE_SIM)) ./$(HOST_TEST_BIN)
 
 clean-host:
 	rm -rf build/host
@@ -468,12 +637,14 @@ doxygen:
 #   stub-sync           -> stub-sync
 #   board-pinout-sync   -> board-pinout-sync
 #   corpus-validate     -> corpus-validate
+#   bridle-check        -> bridle-check
+#   bridle-session-check -> bridle-session-check
 #   docs-link-check     -> docs-link-check
 #   corpus-citation-check -> corpus-citation-check
 #   key-material-scan   -> key-material-scan
 #   private-path-check  -> private-path-check
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate docs-link-check corpus-citation-check docs-prose-check key-material-scan private-path-check
-test: unit-test unit-test-asan py-test firmware-test
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate bridle-check bridle-session-check docs-link-check corpus-citation-check docs-prose-check key-material-scan private-path-check
+test: unit-test bridle-trace-check unit-test-asan py-test firmware-test
 check: lint test doxygen
 
 # Backward compatibility aliases (deprecated, use new names)
@@ -489,8 +660,9 @@ test-unit: unit-test
 		include-graph stub-sync \
 		docs-prose-check \
 		key-material-scan private-path-check \
-		fuzz-frame fuzz-soft-phy \
+		fullstack fullstack-build fullstack-bin fullstack-run bridle-sessions-regen \
+		fuzz-frame fuzz-soft-phy fuzz-bridle-codec fuzz-io2g4-unwrap bridle-check bridle-session-check bridle-trace-check bridle-gen tools \
 		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
-		unit-test unit-test-asan py-test host-run host-component-objs clean-host lint test check \
+		unit-test unit-test-asan unit-test-framelog py-test host-run host-component-objs clean-host lint test check FORCE \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

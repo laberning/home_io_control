@@ -37,6 +37,9 @@ template<class Base> class TestableSoftPhy : public Base {
     irq_idx_ = 0;
   }
 
+  /// Latch the driver's sticky failure, as a fatal fault would.
+  void fail_for_test(const char *reason) { this->fail_(reason); }
+
   /// Set the packet read_rx_packet() should hand back when not dispatching to the real path.
   void set_expected_packet(const esphome::home_io_control::RadioRxPacket &pkt) { expected_packet_ = pkt; }
 

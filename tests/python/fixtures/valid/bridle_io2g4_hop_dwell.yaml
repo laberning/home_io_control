@@ -1,0 +1,28 @@
+# expect: valid
+# The 2.4 GHz hop dwell on a bridge, with the tuning entities on.
+packages:
+  common: !include ../_common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+uart:
+  id: bridle_uart
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 1000000
+  rx_buffer_size: 1024
+
+home_io_control:
+  radio_type: bridle
+  uart_id: bridle_uart
+  rst_pin: 4
+  tuning:
+    ui_controls: true
+    io2g4_hop_dwell_ms: 4
+    # Keys the hub reads whatever the radio apply to the 2.4 GHz bridge too.
+    lbt_rssi_threshold_dbm: -80
+    exchange_start_response_wait_ms: 300
+    pairing_discovery_preamble_ms: 300

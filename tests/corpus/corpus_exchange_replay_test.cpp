@@ -32,6 +32,7 @@
 
 #include "corpus_generated.h"
 #include "hub_core.h"
+#include "proto_band.h"
 #include "proto_commands.h"
 #include "proto_constants.h"
 #include "proto_frame.h"
@@ -47,6 +48,7 @@
 #include <esp_random.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -65,19 +67,6 @@ std::vector<const corpus::CorpusCapture *> exchange_replay_captures() {
   });
 }
 
-std::unique_ptr<MockRadio> make_mock_radio(const corpus::CorpusCapture *capture) {
-  // "sx1262" is the only chip whose mock (MockRadioSX1262) differs in exchange-timing behavior
-  // (response_preamble/has_fast_tx_rx_turnaround); every other
-  // captured_with value (sx1276, lr1121, other, synthetic) is fine on the generic MockRadio,
-  // which already mirrors the fast-hopping SX1276-like reference behavior (radio_test_common.h).
-  // LR1121 shares its exchange-flow implementation with SX1262 (SoftPhyDriverBase) but has not
-  // been shown to need SX1262's distinct timing mock for replay purposes -- revisit if an
-  // LR1121-specific exchange-timing difference is ever found.
-  if (std::string(capture->captured_with) == "sx1262")
-    return std::make_unique<MockRadioSX1262>();
-  return std::make_unique<MockRadio>();
-}
-
 /// A capture's attempt request when its real caller is not a plain send_and_receive_() call.
 struct ReplayContext {
   const char *capture_id;
@@ -93,6 +82,17 @@ const ReplayContext REPLAY_CONTEXTS[] = {
      }},
 };
 
+std::string hex_of(const uint8_t *data, size_t len) {
+  static constexpr char DIGITS[] = "0123456789ABCDEF";
+  std::string out;
+  for (size_t i = 0; i < len; i++) {
+    out += DIGITS[data[i] >> 4];
+    out += DIGITS[data[i] & 0x0F];
+    out += ' ';
+  }
+  return out;
+}
+
 decisions::AttemptRequest attempts_for(const corpus::CorpusCapture *capture) {
   for (const ReplayContext &context : REPLAY_CONTEXTS) {
     if (std::strcmp(context.capture_id, capture->id) == 0)
@@ -103,10 +103,32 @@ decisions::AttemptRequest attempts_for(const corpus::CorpusCapture *capture) {
 
 }  // namespace
 
-class CorpusExchangeReplay : public ::testing::TestWithParam<const corpus::CorpusCapture *> {};
+/// A capture, and the radio it is replayed over: the radio it was captured with (a mock, or the 2.4 GHz
+/// bridge), or for a 868 MHz capture also the 868 MHz bridge, whose co-processor reports a reply late.
+struct ReplayCase {
+  const corpus::CorpusCapture *capture;
+  bool over_868_bridge;
+};
+
+std::vector<ReplayCase> replay_cases() {
+  std::vector<ReplayCase> cases;
+  for (const corpus::CorpusCapture *capture : exchange_replay_captures()) {
+    cases.push_back({capture, false});
+    if (capture->phy != corpus::Phy::IO_2G4)
+      cases.push_back({capture, true});
+  }
+  return cases;
+}
+
+std::string replay_case_name(const ::testing::TestParamInfo<ReplayCase> &info) {
+  return std::string(info.param.capture->id) + (info.param.over_868_bridge ? "_over_the_868_bridge" : "");
+}
+
+class CorpusExchangeReplay : public ::testing::TestWithParam<ReplayCase> {};
 
 TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
-  const corpus::CorpusCapture *capture = GetParam();
+  const corpus::CorpusCapture *capture = GetParam().capture;
+  const bool over_bridge = GetParam().over_868_bridge;
   SCOPED_TRACE(::testing::Message() << "capture=" << capture->id);
 
   const corpus::CorpusFrame *origin_cf = nullptr;
@@ -128,27 +150,34 @@ TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
 
   IoFrame request = corpus_test::parse_capture_frame(*origin_cf);
 
-  std::unique_ptr<MockRadio> radio = make_mock_radio(capture);
+  // Constructed for a timed capture, and for any capture over the Bridle driver, whose link and
+  // co-processor live on the manual clock: a ManualClock is opt-in per test (hal.h).
+  std::optional<esphome::test_clock::ManualClock> clock;
+  if (corpus_test::capture_is_timed(*capture) || capture->phy == corpus::Phy::IO_2G4 || over_bridge)
+    clock.emplace();
+  std::unique_ptr<RadioStandIn> radio =
+      over_bridge ? corpus_test::make_868_bridge_stand_in() : corpus_test::make_stand_in(*capture);
   test::TestableHubComponent comp;
   comp.initialized_ = true;
-  comp.radio_ = radio.get();
+  comp.radio_ = &radio->driver();
   std::memcpy(comp.node_id_, request.src, NODE_ID_SIZE);
   std::memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
 
-  // Constructed only for a timed capture: a ManualClock is opt-in per test (hal.h).
-  std::optional<esphome::test_clock::ManualClock> clock;
   if (corpus_test::capture_is_timed(*capture)) {
-    clock.emplace();
     radio->set_model_tx_airtime(true);
     const std::string error = corpus_test::queue_timed_rx(*radio, *capture, corpus_test::ReplayAnchor::SEND_INDEX);
     ASSERT_TRUE(error.empty()) << error;
   } else {
-    for (const corpus::CorpusFrame *rx_cf : rx_frames)
-      radio->queue_rx(corpus_test::to_rx_packet(*rx_cf));
+    for (const corpus::CorpusFrame *rx_cf : rx_frames) {
+      RadioRxPacket packet = corpus_test::to_rx_packet(*rx_cf);
+      packet.freq_hz = corpus_test::logical_freq(*rx_cf, *capture);
+      radio->queue_rx(packet);
+    }
   }
 
   IoFrame response{};
-  const uint32_t tx_freq = origin_cf->freq_hz != 0 ? origin_cf->freq_hz : FREQ_CH2;
+  const uint32_t tx_freq =
+      corpus_test::logical_freq(*origin_cf, *capture) != 0 ? corpus_test::logical_freq(*origin_cf, *capture) : FREQ_CH2;
   const bool ok = comp.send_and_receive_(request, response, tx_freq, attempts_for(capture)) ==
                   ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
@@ -157,13 +186,14 @@ TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
   std::string timeline;
   if (clock.has_value()) {
     timeline += "\nengine sends at ms:";
-    const std::vector<uint32_t> &send_times = radio->send_times_ms();
+    const std::vector<uint32_t> send_times = radio->send_times_ms();
     for (uint32_t t : send_times)
       timeline += " " + std::to_string(t - send_times.front());
     timeline += "\ncaptured sends at ms:";
     for (uint8_t i = 0; i < capture->frame_count; i++) {
       if (capture->frames[i].tx)
-        timeline += " " + std::to_string(capture->frames[i].t_ms - origin_cf->t_ms);
+        timeline += " " + std::to_string(
+                              (corpus_test::stamp_us(capture->frames[i]) - corpus_test::stamp_us(*origin_cf)) / 1000);
     }
     timeline += "\nengine listen windows ms:";
     for (uint32_t w : radio->wait_timeouts())
@@ -183,24 +213,48 @@ TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
   for (const corpus::CorpusFrame *cf : tx_frames_after_origin)
     expected_tx.push_back(cf);
 
-  const auto &sent = radio->get_sent_data();
+  const auto sent = radio->sent_frames();
   ASSERT_EQ(sent.size(), expected_tx.size())
       << "engine transmitted a different number of frames than the capture recorded";
 
-  const auto &tx_configs = radio->get_tx_configs();
+  const auto &tx_configs = radio->tx_configs();
   for (size_t i = 0; i < expected_tx.size(); i++) {
     const corpus::CorpusFrame *cf = expected_tx[i];
     const uint8_t non_crc_len = corpus_test::wire_len(*cf);
     SCOPED_TRACE(::testing::Message() << "tx frame index=" << i);
 
     if (cf->freq_hz != 0) {
-      EXPECT_EQ(tx_configs[i].freq_hz, cf->freq_hz) << "TX frequency mismatch";
+      // On a rotating band the hub draws the channel of each request itself (ADR 0096, ADR 0132), and a retry goes
+      // out on another channel than the attempt before it, where the capture's controller used the one it
+      // began on. Such a request is held to the band's channels and the frame that follows it (the answer to
+      // the device's challenge) to the channel the request used. Every 868 MHz frame stays on the captured channel.
+      const bool is_request = cf->bytes[FRAME_CMD_OFFSET] == origin_cf->bytes[FRAME_CMD_OFFSET];
+      if (capture->phy != corpus::Phy::IO_2G4) {
+        EXPECT_EQ(tx_configs[i].freq_hz, corpus_test::logical_freq(*cf, *capture)) << "TX frequency mismatch";
+      } else if (is_request) {
+        EXPECT_NE(std::find(IO_CHANNELS.begin(), IO_CHANNELS.end(), tx_configs[i].freq_hz), IO_CHANNELS.end())
+            << "a request must stay on a channel of the band";
+        if (i > 0 && expected_tx[i - 1]->bytes[FRAME_CMD_OFFSET] == origin_cf->bytes[FRAME_CMD_OFFSET]) {
+          EXPECT_NE(tx_configs[i].freq_hz, tx_configs[i - 1].freq_hz) << "a retry must leave the previous channel";
+        }
+      } else if (i > 0) {
+        EXPECT_EQ(tx_configs[i].freq_hz, tx_configs[i - 1].freq_hz)
+            << "the answer must go out on the request's channel";
+      }
     }
 
     if (capture->key == corpus::KeyMode::CORPUS) {
       ASSERT_EQ(sent[i].size(), non_crc_len) << "byte-exact length mismatch (key: corpus)";
-      EXPECT_EQ(std::memcmp(sent[i].data(), cf->bytes, non_crc_len), 0)
-          << "byte-exact content mismatch (key: corpus) — engine did not reproduce the captured frame";
+      // One known difference, asserted rather than hidden: the hub marks its 0x3D LOW_POWER (`0E 20 ...`
+      // in its own 868 MHz captures), while the VELUX KLR 200 on 2.4 GHz sends it with CTRL1 0x00
+      // (velux_klr200_exchange_execute_open_2g4; an open hardware question, ADR 0047).
+      // Everything else, the HMAC included, must match to the byte.
+      std::vector<uint8_t> expected(cf->bytes, cf->bytes + non_crc_len);
+      if (capture->phy == corpus::Phy::IO_2G4 && expected[FRAME_CMD_OFFSET] == CMD_CHALLENGE_RESP)
+        expected[1] |= CTRL1_LOW_POWER;
+      EXPECT_EQ(std::memcmp(sent[i].data(), expected.data(), non_crc_len), 0)
+          << "byte-exact content mismatch (key: corpus) — engine did not reproduce the captured frame\n  sent:     "
+          << hex_of(sent[i].data(), sent[i].size()) << "\n  captured: " << hex_of(cf->bytes, non_crc_len);
       continue;
     }
 
@@ -216,10 +270,17 @@ TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
     EXPECT_EQ(is_start(sent_frame), is_start(captured_frame)) << "start-flag mismatch";
     EXPECT_EQ(is_end(sent_frame), is_end(captured_frame)) << "end-flag mismatch";
   }
+
+  // A 2.4 GHz origin frame carries the wake train its controller sent; the level the hub asked
+  // for must be the level that controller used (START + LOW_POWER: the long train).
+  if (capture->phy == corpus::Phy::IO_2G4 && origin_cf->has_wake_train && !tx_configs.empty()) {
+    const TxWake used = (request.ctrl1 & CTRL1_LOW_POWER) != 0 ? TxWake::LONG : TxWake::SHORT;
+    EXPECT_EQ(tx_configs[0].wake, used) << "the hub woke the receiver differently from the captured controller";
+  }
 }
 
-INSTANTIATE_TEST_SUITE_P(CorpusExchangeReplay, CorpusExchangeReplay, ::testing::ValuesIn(exchange_replay_captures()),
-                         corpus_test::capture_name_generator);
+INSTANTIATE_TEST_SUITE_P(CorpusExchangeReplay, CorpusExchangeReplay, ::testing::ValuesIn(replay_cases()),
+                         replay_case_name);
 
 /// Smoke test for tests/include/esp_random.h's test_rng stub — pins the enqueue/reset contract
 /// relied on elsewhere (this file's pairing replay tests; ProtoCrypto.GenerateChallenge* in

@@ -1171,3 +1171,145 @@ TEST(BusyLimit, AFixedThresholdIsTheLimitAndNothingIsLearned) {
   ASSERT_TRUE(rig.engine.transmit_frame(start_frame(), FREQ_CH2, SHORT_PREAMBLE));
   EXPECT_EQ(rig.radio.get_tx_configs()[0].cca_threshold_dbm, -95);
 }
+
+// ============================================================================
+// A radio that has no reading (ADR 0134): a co-processor that answers a reading busy, faulted or not at all. The
+// attempt that wanted it fails; it is neither a free channel nor a busy one.
+// ============================================================================
+
+namespace {
+
+/// How many readings one attempt takes on a radio that finds every channel busy, until its access time is spent.
+size_t readings_until_the_access_time_is_spent() {
+  AccessRig dry;
+  dry.radio.set_rssi_default(-50);
+  dry.run(false, ExchangeOptions{1});
+  return dry.radio.rssi_read_freqs().size();
+}
+
+}  // namespace
+
+TEST(ChannelAccess, AnAttemptWithoutAReadingFailsAndIsCountedNeitherQuietNorBusy) {
+  AccessRig rig;
+  rig.radio.set_rssi_available(false);
+
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 0) << "a channel nobody measured is not a free channel";
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 1u);
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 0u) << "and it is not a busy one";
+  EXPECT_EQ(rig.engine.counters().lbt_retries, 0u) << "no busy check was made, so no back-off was spent";
+  EXPECT_EQ(rig.radio.rssi_read_freqs().size(), 1u) << "the hub does not ask again within the attempt";
+  EXPECT_STREQ(rig.engine.get_debug().stage, "no_reading");
+}
+
+TEST(ChannelAccess, AReadingThatFailsPartWayThroughTheCheckFailsTheAttemptToo) {
+  AccessRig rig;
+  rig.radio.queue_rssi(-120);
+  rig.radio.queue_rssi(-120);
+  rig.radio.queue_no_reading();
+
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 0) << "two quiet readings do not make the third one's absence quiet";
+  EXPECT_EQ(rig.radio.rssi_read_freqs().size(), 3u);
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 1u);
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 0u);
+}
+
+TEST(ChannelAccess, TheNextAttemptOfThePlanFollowsAnAttemptWithoutAReading) {
+  AccessRig rig;
+  rig.radio.queue_no_reading();  // the first attempt's first reading; the second attempt reads quiet
+
+  rig.run(false, ExchangeOptions{EXCHANGE_RETRY_COUNT});
+
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 1u);
+  EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_RETRY_COUNT - 1)
+      << "every later attempt was sent on a measured channel";
+}
+
+TEST(ChannelAccess, AnAttemptWithoutAReadingSpendsNoWakeEvidence) {
+  AccessRig rig;
+  decisions::TargetEvidence evidence{};
+  evidence.last_moving_evidence_ms = esphome::millis() - 1000;  // believed moving: AWAKE
+  rig.engine.set_target_evidence_provider([&evidence](const uint8_t *, decisions::TargetEvidence &out) {
+    out = evidence;
+    return true;
+  });
+  int spent = 0;
+  rig.engine.set_wake_evidence_spent_handler([&spent](const uint8_t *) { spent++; });
+  rig.radio.set_rssi_available(false);
+
+  rig.run(true, ExchangeOptions{1});
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 1u);
+  EXPECT_EQ(spent, 0) << "a request that was never sent says nothing about the receiver";
+}
+
+TEST(ChannelAccess, OpenSessionWithoutAReadingSendsNothingAndSaysWhy) {
+  AccessRig rig;
+  rig.radio.set_rssi_available(false);
+
+  const ExchangeEngine::ChannelTransmit opened = rig.engine.open_session(AccessRig::status_read(false), 8, 0);
+
+  EXPECT_EQ(opened.status, decisions::ChannelAccessStatus::NO_READING);
+  EXPECT_FALSE(decisions::request_was_sent(opened.status));
+  EXPECT_EQ(rig.radio.get_send_count(), 0);
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 1u);
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 0u);
+}
+
+TEST(ChannelAccess, AForcedSendMeasuresEveryChannelAndSendsNothingWhenNoneHasAReading) {
+  // Find how many readings the checks take until the time is spent, then lose the radio's readings right there.
+  const size_t check_readings = readings_until_the_access_time_is_spent();
+
+  AccessRig rig;
+  rig.tuning.lbt_force_when_busy = true;
+  rig.radio.set_rssi_default(-50);
+  rig.radio.set_rssi_available_reads(check_readings);
+
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 0) << "no channel is picked by guessing";
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 1u);
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 0u);
+}
+
+TEST(ChannelAccess, AForcedSendRanksOnlyTheChannelsThatHaveAReading) {
+  const size_t check_readings = readings_until_the_access_time_is_spent();
+
+  AccessRig rig;
+  rig.tuning.lbt_force_when_busy = true;
+  rig.radio.set_rssi_default(-50);
+  rig.radio.set_channel_rssi(FREQ_CH1, -70);
+  rig.radio.set_channel_rssi(FREQ_CH3, -60);
+  // The readings of the checks come first (all busy, as in the dry run), then the forced measurement takes one reading
+  // per channel: channel 2, whose reading is lost, then channels 1 and 3 at their scripted levels.
+  for (size_t i = 0; i < check_readings; i++)
+    rig.radio.queue_rssi(-50);
+  rig.radio.queue_no_reading();
+
+  rig.run(false, ExchangeOptions{1});
+
+  EXPECT_EQ(rig.engine.counters().no_reading_attempts, 0u);
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH1}))
+      << "channel 2 had no reading; channel 1 was the quieter of the rest";
+}
+
+TEST(BusyLimit, AnIdleReadingTheRadioDoesNotGiveTeachesTheQuietLevelNothing) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  rig.radio.set_rssi_default(-113);
+  rig.radio.set_rssi_available(false);
+  const int hops = static_cast<int>(QUIET_LEVEL_MIN_READINGS) * 3 * QUIET_LEVEL_READING_EVERY_N_HOPS + 100;
+  for (int i = 0; i < hops; i++)
+    idle_hop(rig);
+  EXPECT_FALSE(rig.radio.rssi_read_freqs().empty()) << "the readings were asked for";
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -85) << "and none of them counted: enough hops to learn, but no level";
+
+  rig.radio.set_rssi_available(true);
+  const size_t asked = rig.radio.rssi_read_freqs().size();
+  for (int i = 0; i < 20 * QUIET_LEVEL_READING_EVERY_N_HOPS; i++)
+    idle_hop(rig);
+  EXPECT_GT(rig.radio.rssi_read_freqs().size(), asked);
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -85) << "a few readings are still no quiet level";
+}

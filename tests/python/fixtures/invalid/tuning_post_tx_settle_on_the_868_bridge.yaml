@@ -1,0 +1,25 @@
+# expect-error: sx1262_post_tx_settle_us is ignored by the radio of radio_type: bridle with bridle_band: io_868
+# covers: tuning.validate_tuning_for_radio
+# The co-processor owns the turnaround after a transmission.
+packages:
+  common: !include ../_common.yaml
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+uart:
+  id: bridle_uart
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 1000000
+  rx_buffer_size: 1024
+
+home_io_control:
+  radio_type: bridle
+  uart_id: bridle_uart
+  rst_pin: 4
+  bridle_band: io_868
+  tuning:
+    sx1262_post_tx_settle_us: 600

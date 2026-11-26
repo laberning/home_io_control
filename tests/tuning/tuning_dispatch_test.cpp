@@ -7,6 +7,7 @@
 /// are accessed through TestableHubComponent, which promotes them via using declarations.
 
 #include "hub_core.h"
+#include "tuning_entities.h"
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -67,6 +68,9 @@ TEST(TuningDispatch, NumberUpdatesEachParameter) {
 
   comp.update_tuning_number("lr1121_discovery_hop_slice_ms", 250);
   EXPECT_EQ(comp.tuning_.lr1121_discovery_hop_slice_ms, 250);
+
+  comp.update_tuning_number("io2g4_hop_dwell_ms", 4);
+  EXPECT_EQ(comp.tuning_.io2g4_hop_dwell_ms, 4);
 
   comp.update_tuning_number("lbt_rssi_threshold_dbm", -45);
   EXPECT_EQ(comp.tuning_.lbt_rssi_threshold_dbm, -45);
@@ -323,4 +327,38 @@ TEST(TuningDispatch, GetSelectValueUnknownReturnsEmpty) {
   MockRadio radio;
   setup_component(comp, radio);
   EXPECT_EQ(comp.get_tuning_select_value("nope"), "");
+}
+
+// A value the radio cannot carry is refused: the previous value stays and the radio is not told
+// (RadioDriver::accepts_tuning()).
+TEST(TuningDispatch, ANumberTheRadioRefusesKeepsThePreviousValue) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.update_tuning_number("low_power_wake_ms", 450);
+  ASSERT_EQ(comp.tuning_.low_power_wake_ms, 450.0F);
+
+  radio.set_refuses_tuning(true);
+  EXPECT_FALSE(comp.update_tuning_number("low_power_wake_ms", 900));
+  EXPECT_EQ(comp.tuning_.low_power_wake_ms, 450.0F) << "never changed silently";
+  EXPECT_EQ(comp.get_tuning_number_value("low_power_wake_ms"), 450.0F);
+
+  radio.set_refuses_tuning(false);
+  EXPECT_TRUE(comp.update_tuning_number("low_power_wake_ms", 900));
+  EXPECT_EQ(comp.tuning_.low_power_wake_ms, 900.0F);
+}
+
+TEST(TuningDispatch, TheNumberEntityShowsTheValueThatStaysInEffectWhenTheRadioRefuses) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.update_tuning_number("low_power_wake_ms", 450);
+  struct OpenNumber : IOHomeTuningNumber {
+    using IOHomeTuningNumber::control;
+    using IOHomeTuningNumber::IOHomeTuningNumber;
+  };
+  OpenNumber number(&comp, "low_power_wake_ms");
+  radio.set_refuses_tuning(true);
+  number.control(900);
+  EXPECT_EQ(number.state, 450.0F);
 }

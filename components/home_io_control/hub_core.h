@@ -64,7 +64,11 @@
 // Lr1121FirmwareUpdater so lr1121_firmware_decisions.h and radio_lr1121_firmware_updater.h are
 // NOT pulled into hub_core.h — that header weight stays in the collaborator's .cpp alone.
 #include "lr1121_firmware_update_controller.h"
+#ifdef IOHOME_BRIDLE
+#include "uart_byte_stream.h"
+#endif
 #include <map>
+#include <optional>
 #include <span>
 #include <vector>
 #include <functional>
@@ -182,6 +186,8 @@ class IOHomeControlComponent : public Component,
         clear_moving_evidence(*dev);
     });
     this->exchange_engine_.set_overheard_frame_observer(this);
+    // Requests keep their channels away from the hub's own Wi-Fi channel (ADR 0132); 0 without Wi-Fi.
+    this->exchange_engine_.set_avoid_frequency_provider([]() { return wifi_centre_hz(); });
     // Channel access draws its channels and back-offs from ESPHome's random source (a settable value
     // in the host tests, like the poll jitter).
     this->exchange_engine_.set_random_source([]() { return random_uint32(); });
@@ -258,7 +264,18 @@ class IOHomeControlComponent : public Component,
   void set_tx_power(uint8_t power) { this->tx_power_ = power; }
   /// Set PA boost pin configuration.
   void set_pa_pin(uint8_t pa_pin) { this->pa_pin_ = pa_pin; }
-  /// Set radio type ("sx1276", "sx1262", or "lr1121"); required by the YAML schema.
+#ifdef IOHOME_BRIDLE
+  /// Attach the UART bus a `radio_type: bridle` co-processor is reached over (`uart_id:` in YAML).
+  void set_uart_parent(uart::UARTComponent *parent) { this->uart_stream_.set_uart_parent(parent); }
+  /// Set the requested TX power in dBm, which may be negative; leaving it unset asks the co-processor's
+  /// radio for its own maximum (`radio_type: bridle` only).
+  void set_tx_power_dbm(int8_t power) { this->bridle_tx_power_dbm_ = power; }
+  /// Log every Bridle message as a trace line (`bridle_trace:` in YAML).
+  void set_bridle_trace(bool enabled) { this->bridle_trace_ = enabled; }
+  /// Set the band the co-processor is asked for, "io_2g4" or "io_868" (`bridle_band:` in YAML).
+  void set_bridle_band(const std::string &band) { this->bridle_band_ = band; }
+#endif
+  /// Set radio type ("sx1276", "sx1262", "lr1121" or "bridle"); required by the YAML schema.
   void set_radio_type(const std::string &type) { this->radio_type_ = type; }
   /// Set the SX1262/LR1121 TCXO control-voltage code (0-based, `TCXO_VOLTAGE_OPTIONS` in
   /// `hub_validators.py`: `1_6V`=0x00 .. `3_3V`=0x07), or `TCXO_VOLTAGE_NONE` (0xFF) for a board with a
@@ -268,7 +285,8 @@ class IOHomeControlComponent : public Component,
   /// Apply the tuning configuration generated from YAML / UI entities.
   void set_tuning_config(const TuningConfig &config) { this->tuning_ = config; }
   /// Receive a numeric tuning update from a HA `number` entity.
-  void update_tuning_number(const std::string &name, float value);
+  /// @return false when the radio cannot carry the value (RadioDriver::accepts_tuning()): the previous value stays.
+  bool update_tuning_number(const std::string &name, float value);
   /// Receive a select tuning update from a HA `select` entity.
   void update_tuning_select(const std::string &name, const std::string &value);
   /// Current value of a numeric tuning parameter, used to seed a HA `number` entity on boot.
@@ -1376,6 +1394,12 @@ class IOHomeControlComponent : public Component,
   void apply_tuning_to_radio_();
   /// @brief Convert the deprecated byte-denominated preamble keys to durations on this radio (ADR 0097).
   void convert_legacy_preamble_bytes_();
+  /// @brief The part of setup() that follows a successful radio init(): convert the legacy preamble keys, ask the
+  /// radio whether it can carry the tuning (RadioDriver::accepts_tuning()), and only then mark the hub initialized,
+  /// register the actions and apply the tuning. A refused tuning fails setup and leaves the hub uninitialized, so no
+  /// entity or action reaches a radio that would send a wake-up other than the one configured.
+  /// @param chip_name The chip's name for the start-up log line.
+  void start_initialized_radio_(const char *chip_name);
 
   // --- Management actions (the native API calls management_actions_ directly) ---
   /// Register hub-level Home Assistant actions; called from setup().
@@ -1456,7 +1480,15 @@ class IOHomeControlComponent : public Component,
   // --- Configuration (from YAML) ---
   std::string node_id_str_;
   std::string system_key_str_;
-  std::string radio_type_;  ///< "sx1276", "sx1262", or "lr1121"; required by the YAML schema.
+  std::string radio_type_;  ///< "sx1276", "sx1262", "lr1121" or "bridle"; required by the YAML schema.
+#ifdef IOHOME_BRIDLE
+  /// dump_config() lines of a Bridle bridge: its UART, band, trace switch and requested TX power.
+  void dump_bridle_config_();
+  UartByteStream uart_stream_;                 ///< The byte stream to a Bridle co-processor.
+  std::optional<int8_t> bridle_tx_power_dbm_;  ///< Requested TX power; unset = the radio's maximum.
+  bool bridle_trace_{false};                   ///< `bridle_trace:` -- log every Bridle message.
+  std::string bridle_band_{"io_2g4"};          ///< `bridle_band:` -- "io_2g4" or "io_868"; picks the PHY profile.
+#endif
   /// Why setup() gave up on the radio, or empty. Printed by dump_config so log clients that connect
   /// after boot see the cause, not only ESPHome's generic "marked FAILED" line.
   std::string radio_failure_reason_;
@@ -1475,6 +1507,23 @@ class IOHomeControlComponent : public Component,
   uint8_t tcxo_voltage_{DEFAULT_TCXO_VOLTAGE_SETTING_1P8V};  ///< SX1262/LR1121 TCXO voltage setting (default 1.8 V)
 
   // --- Runtime state ---
+  /// Primary channel of the Wi-Fi the hub is connected to, 0 when there is none (Wi-Fi not built in, not connected).
+  [[nodiscard]] static int32_t wifi_channel();
+
+  /// Centre frequency in Hz of the Wi-Fi channel the hub is connected on, 0 when there is no Wi-Fi (not built in, not
+  /// connected, channel unknown). The engine keeps the channels of a request away from it (ADR 0132).
+  [[nodiscard]] static uint32_t wifi_centre_hz();
+
+  /// Logs the Wi-Fi coexistence hint at most once, after Wi-Fi has connected: when the hub's Wi-Fi channel
+  /// takes channels of the radio's band out of the requests (decisions::wifi_coexistence()), one INFO line names
+  /// the io channels given up and the Wi-Fi channels that would keep them. The ESP sees only its primary 20 MHz
+  /// channel; an access point on 40 MHz is wider than the guard. A band the Wi-Fi is far from, 868 MHz included,
+  /// never produces the line.
+  /// @return true when the line was logged on this call.
+  bool log_wifi_coexistence_hint_();
+
+  bool wifi_hint_done_{false};  ///< The hint is evaluated until Wi-Fi has a channel, then never again.
+
   bool initialized_{false};
   bool busy_{false};
   /// millis() when the last pairing attempt ended; 0 before the first one (see queue_discover_and_pair()).

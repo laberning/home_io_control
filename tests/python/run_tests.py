@@ -210,14 +210,161 @@ def manufacturer_takes_a_name_or_a_byte():
 
 
 @case("hub_validators.validate_radio_transport")
-def spi_radio_needs_its_chip_select_pin():
+def radio_transport_keys_follow_the_radio_type():
     from esphome.components.home_io_control import hub_validators as v
 
-    # Every radio type reaches its chip over SPI today; a new one has to be placed deliberately.
-    assert set(v.RADIO_TYPE_OPTIONS) == set(v.SPI_RADIO_TYPES)
+    # Every radio type but the Bridle bridge sits on the SPI bus; a new one has to be placed deliberately.
+    assert set(v.RADIO_TYPE_OPTIONS) - set(v.SPI_RADIO_TYPES) == {"bridle"}
     with_cs = {"radio_type": "sx1262", "cs_pin": 8}
     assert v.validate_radio_transport(with_cs) is with_cs
     expect_invalid(v.validate_radio_transport, {"radio_type": "lr1121"}, "radio_type: lr1121 is an SPI radio")
+    expect_invalid(
+        v.validate_radio_transport, {"radio_type": "sx1276", "cs_pin": 18, "uart_id": "u"}, "only applies to radio_type: bridle"
+    )
+    expect_invalid(v.validate_radio_transport, {"radio_type": "bridle"}, "radio_type: bridle needs uart_id")
+    for key in ("cs_pin", "busy_pin", "dio0_pin", "dio1_pin", "dio4_pin", "tcxo_voltage"):
+        expect_invalid(
+            v.validate_radio_transport, {"radio_type": "bridle", "uart_id": "u", key: 1}, f"{key}: does not apply"
+        )
+    bridge = {"radio_type": "bridle", "uart_id": "u", "spi_id": "generated"}
+    assert "spi_id" not in v.validate_radio_transport(bridge), "the generated spi_id is dropped"
+
+
+@case()
+def the_bridle_bands_are_the_two_the_host_has_a_profile_for():
+    from esphome.components.home_io_control import hub_validators as v
+
+    assert v.BRIDLE_BANDS == ("io_2g4", "io_868")
+    assert v.BRIDLE_DEFAULT_BAND in v.BRIDLE_BANDS
+
+
+@case("hub_validators.validate_tx_power")
+def tx_power_is_per_radio():
+    from esphome.components.home_io_control import hub_validators as v
+
+    assert v.validate_tx_power({"radio_type": "sx1276"})["tx_power"] == 17, "the SPI default"
+    assert v.validate_tx_power({"radio_type": "sx1262", "tx_power": 3})["tx_power"] == 3
+    expect_invalid(v.validate_tx_power, {"radio_type": "sx1262", "tx_power": -5}, "outside 0..22 for radio_type: sx1262")
+    unset = v.validate_tx_power({"radio_type": "bridle"})
+    assert "tx_power" not in unset, "a bridge leaves the power to its radio"
+    assert v.validate_tx_power({"radio_type": "bridle", "tx_power": -20})["tx_power"] == -20
+
+
+@case()
+def a_bridge_build_holds_the_trace_lines_and_those_of_the_frame_log_when_it_has_one():
+    """36 held lines carry the trace of one exchange whose request the co-processor refuses once for a busy channel; a
+    build with the frame log adds the frame log's own 12.
+    radio_bridle_trace.cpp checks the number the build gets, exactly, against the C++ constants."""
+    from esphome.components.home_io_control import hub_validators as v
+
+    assert v.bridle_held_log_lines(frame_log_enabled=False) == 36
+    assert v.bridle_held_log_lines(frame_log_enabled=True) == 48
+
+
+@case("hub_validators.final_validate_no_oneway_on_io_2g4")
+def one_way_transmit_is_refused_on_the_2g4_band_only():
+    from esphome.components.home_io_control import hub_validators as v
+
+    for band in ("io_2g4", None):  # the band defaults to 2.4 GHz
+        cfg = {"radio_type": "bridle", "oneway_controllers": [{"node_id": "C0FFEE"}]}
+        if band:
+            cfg["bridle_band"] = band
+        expect_invalid(v.final_validate_no_oneway_on_io_2g4, cfg, "oneway_controllers: is not available")
+    expect_invalid(
+        v.final_validate_no_oneway_on_io_2g4,
+        {"radio_type": "bridle", "recover_oneway_key": True},
+        "recover_oneway_key: is not available",
+    )
+    for ok in (
+        {"radio_type": "bridle", "bridle_band": "io_868", "oneway_controllers": [{"node_id": "C0FFEE"}]},
+        {"radio_type": "sx1262", "oneway_controllers": [{"node_id": "C0FFEE"}]},
+        {"radio_type": "bridle", "oneway_controllers": [], "recover_oneway_key": False},
+    ):
+        assert v.final_validate_no_oneway_on_io_2g4(ok) is ok
+
+
+@case("tuning.validate_tuning_for_radio")
+def a_tuning_key_names_the_radio_and_band_it_applies_to():
+    """A key the radio ignores on that band (a radio type and, for a bridge, its band) is rejected with a message naming the
+    key and the band, and has no entity ID there. The three SPI radios keep every key but the 2.4 GHz hop dwell,
+    so what they accept does not change."""
+    from esphome.components.home_io_control import tuning as t
+    from esphome.core import ID
+
+    spi = ("sx1276", "sx1262", "lr1121")
+    assert set(t._APPLIES_TO) <= set(t.UI_NAMES) | set(t._LEGACY_PREAMBLE_KEYS), "a row names a tuning key"
+    assert set(t._APPLIES_TO) <= set(t._NUMBER_PARAMS) | set(t._SELECT_OPTIONS) | set(t._LEGACY_PREAMBLE_KEYS)
+
+    # What the 2.4 GHz bridge ignores: the other chips' keys, and every preamble duration whose value cannot change
+    # a train (ADR 0048). The set is spelled out so that a change is a decision.
+    ignored_on_2g4 = {
+        t.CONF_SX1262_RX_BANDWIDTH, t.CONF_SX1262_DISCOVERY_HOP_SLICE_MS, t.CONF_SX1262_POST_TX_SETTLE_US,
+        t.CONF_SX1276_RX_BANDWIDTH, t.CONF_SX1276_DISCOVERY_HOP_SLICE_MS,
+        t.CONF_LR1121_RX_BANDWIDTH, t.CONF_LR1121_POST_TX_SETTLE_US, t.CONF_LR1121_DISCOVERY_HOP_SLICE_MS,
+        t.CONF_RESPONSE_PREAMBLE_MS, t.CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS, t.CONF_START_PREAMBLE_MS,
+        t.CONF_LOW_POWER_WAKE_MS, "low_power_wake_preamble", "normal_start_preamble", "cold_broadcast_reply_preamble",
+        "pairing_discovery_preamble", "sx1262_response_preamble", "sx1276_response_preamble",
+        "lr1121_response_preamble",
+    }
+    assert {k for k in t._APPLIES_TO if not t.key_applies(k, t.PROFILE_BRIDLE_2G4)} == ignored_on_2g4
+    assert t.key_applies(t.CONF_IO2G4_HOP_DWELL_MS, t.PROFILE_BRIDLE_2G4)
+    assert not t.key_applies(t.CONF_IO2G4_HOP_DWELL_MS, t.PROFILE_BRIDLE_868)
+    # The 868 MHz bridge reads two SX1262 keys and the preamble durations; the rest of the chips' keys it ignores.
+    assert {k for k in t._APPLIES_TO if not t.key_applies(k, t.PROFILE_BRIDLE_868)} == {
+        t.CONF_IO2G4_HOP_DWELL_MS, t.CONF_SX1262_POST_TX_SETTLE_US, t.CONF_SX1276_RX_BANDWIDTH,
+        t.CONF_SX1276_DISCOVERY_HOP_SLICE_MS, t.CONF_LR1121_RX_BANDWIDTH, t.CONF_LR1121_POST_TX_SETTLE_US,
+        t.CONF_LR1121_DISCOVERY_HOP_SLICE_MS, "sx1262_response_preamble", "sx1276_response_preamble",
+        "lr1121_response_preamble",
+    }
+    for radio in spi:  # the SPI radios keep today's behaviour: everything but the 2.4 GHz key
+        assert [k for k in t._APPLIES_TO if not t.key_applies(k, radio)] == [t.CONF_IO2G4_HOP_DWELL_MS], radio
+    # Keys the hub reads whatever the radio are in no row and apply everywhere, also the key-extraction responder's
+    # keys on 2.4 GHz, where that feature is refused: the table speaks of the radio only (ADR 0048).
+    for key in (
+        t.CONF_LBT_RSSI_THRESHOLD_DBM, t.CONF_EXCHANGE_START_RESPONSE_WAIT_MS, t.CONF_PAIRING_DISCOVERY_PREAMBLE_MS,
+        t.CONF_KEY_EXTRACTION_TYPE_WORD, t.CONF_KEY_EXTRACTION_MULTI_INFO,
+    ):
+        assert all(t.key_applies(key, p) for p in t._EVERY_PROFILE), key
+
+    assert t.radio_profile({"radio_type": "sx1262"}) == "sx1262"
+    assert t.radio_profile({"radio_type": "bridle"}) == t.PROFILE_BRIDLE_2G4, "the band defaults to 2.4 GHz"
+    assert t.radio_profile({"radio_type": "bridle", "bridle_band": "io_868"}) == t.PROFILE_BRIDLE_868
+
+    def block(radio, band=None, **keys):
+        ids = {
+            t._id_key(k): ID(f"home_io_control_{k}", is_declaration=True)
+            for k in (t.CONF_IO2G4_HOP_DWELL_MS, t.CONF_LR1121_RX_BANDWIDTH, t.CONF_START_PREAMBLE_MS)
+        }
+        config = {"radio_type": radio, t.CONF_TUNING: {t.CONF_UI_CONTROLS: True, **ids, **keys}}
+        if band:
+            config["bridle_band"] = band
+        return config
+
+    expect_invalid(
+        t.validate_tuning_for_radio,
+        block("sx1262", **{t.CONF_IO2G4_HOP_DWELL_MS: 3}),
+        "io2g4_hop_dwell_ms is ignored by the radio of radio_type: sx1262; it applies to radio_type: bridle with bridle_band: io_2g4 only",
+    )
+    expect_invalid(
+        t.validate_tuning_for_radio,
+        block("bridle", "io_2g4", **{t.CONF_START_PREAMBLE_MS: 10}),
+        "start_preamble_ms is ignored by the radio of radio_type: bridle with bridle_band: io_2g4",
+    )
+    expect_invalid(
+        t.validate_tuning_for_radio,
+        block("bridle", "io_868", **{t.CONF_LR1121_RX_BANDWIDTH: "117.3"}),
+        "lr1121_rx_bandwidth is ignored by the radio of radio_type: bridle with bridle_band: io_868",
+    )
+    on_sx = t.validate_tuning_for_radio(block("sx1262"))[t.CONF_TUNING]
+    assert t._id_key(t.CONF_IO2G4_HOP_DWELL_MS) not in on_sx, "no entity ID, so no entity, on an SPI radio"
+    assert t._id_key(t.CONF_LR1121_RX_BANDWIDTH) in on_sx and t._id_key(t.CONF_START_PREAMBLE_MS) in on_sx
+    on_2g4 = t.validate_tuning_for_radio(block("bridle", "io_2g4", **{t.CONF_IO2G4_HOP_DWELL_MS: 3}))[t.CONF_TUNING]
+    assert t._id_key(t.CONF_IO2G4_HOP_DWELL_MS) in on_2g4
+    assert t._id_key(t.CONF_LR1121_RX_BANDWIDTH) not in on_2g4 and t._id_key(t.CONF_START_PREAMBLE_MS) not in on_2g4
+    on_868 = t.validate_tuning_for_radio(block("bridle", "io_868"))[t.CONF_TUNING]
+    assert t._id_key(t.CONF_START_PREAMBLE_MS) in on_868 and t._id_key(t.CONF_IO2G4_HOP_DWELL_MS) not in on_868
+    no_tuning = {"radio_type": "sx1276"}
+    assert t.validate_tuning_for_radio(no_tuning) is no_tuning
 
 
 def opt_in_key(reading_name):

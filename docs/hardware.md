@@ -114,13 +114,15 @@ yet. Notes on single boards:
 
 ### Untested pin mappings
 
-The GPIO mapping comes from vendor documentation and still needs a run against a real
-IO-Homecontrol device.
+The GPIO mapping comes from vendor documentation, or for a radio co-processor is a placeholder for
+your own wiring, and still needs a run against a real IO-Homecontrol device.
 
 | Board | Radio | `spi:` pins | `home_io_control:` pins | Notes |
 |-------|-------|-------------|-------------------------|-------|
 | LilyGO T3-S3 SX1262 | SX1262 | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 33`, `busy_pin: 34` | Should have the same mapping on v1.2 and v1.3 |
 | LilyGO T-Beam 1W SX1262 | SX1262 | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | `fem: xy16p35`, `vfem_pin: 40` ("LDO EN"), `fem_pa_pin: 21` ("LoRa Ctrl"), per LilyGO's own T-Beam 1W SX1262 docs and schematic. The TCXO control voltage is not yet confirmed: do not build from this row until a board package ships |
+| ESP32-C3 SuperMini + a radio co-processor, 2.4 GHz | 802.15.4 radio behind a UART | None (no SPI bus) | `uart:` `tx_pin: 21`, `rx_pin: 20`; `radio_type: bridle`, `uart_id`, `rst_pin: 10`, `bridle_band: io_2g4` | The pins are placeholders for the wiring of your co-processor. The UART runs at 460800 baud or more on this band. Replayed against recorded 2.4 GHz traffic, not yet run against a real device; matches [boards/esp32c3-supermini.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/esp32c3-supermini.yaml); see [ADR 0047](adr/0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md) |
+| ESP32-C3 SuperMini + a co-processor with an SX1262, 868 MHz | SX1262 behind a UART | None (no SPI bus) | The same pins; `bridle_band: io_868` | Not validated against a real device: on a bench its transmissions decode on a Heltec V3 and it receives the V3's frames, but no io-homecontrol device has answered through it. Matches [boards/esp32c3-supermini-868.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/esp32c3-supermini-868.yaml); see [ADR 0048](adr/0048-io-868-over-bridle.md) |
 | Any other ESP32 + SX1276/SX1262/LR1121 | Any | Board-specific | Board-specific | Use the chip pinout and set the matching `radio_type` |
 
 **V2 / V3 clones** (non-Heltec boards with the same silkscreen and pin map) are common and

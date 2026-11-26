@@ -22,9 +22,9 @@ void IOHomeTuningSelect::setup() {
 }
 
 void IOHomeTuningNumber::control(float value) {
-  this->publish_state(value);
-  if (this->parent_ != nullptr)
-    this->parent_->update_tuning_number(this->param_name_, value);
+  // A value the radio cannot carry is refused: the entity shows the value that stays in effect.
+  const bool accepted = this->parent_ == nullptr || this->parent_->update_tuning_number(this->param_name_, value);
+  this->publish_state(accepted ? value : this->parent_->get_tuning_number_value(this->param_name_));
 }
 
 void IOHomeTuningSelect::control(const std::string &value) {

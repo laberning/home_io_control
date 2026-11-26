@@ -13,16 +13,25 @@
 /// component is brought up and driven over time.
 
 #include "hub_internal.h"
+#include "decisions_channel.h"
 #include "decisions_exchange.h"
 
 #include "proto_device_kinds.h"
 #include "radio_sx1276.h"
 #include "radio_sx1262.h"
 #include "radio_lr1121.h"
+#ifdef IOHOME_BRIDLE
+#include "radio_bridle.h"
+#include "radio_io2g4_phy.h"
+#include "radio_io868_gfsk_phy.h"
+#endif
 #include "tuning_config.h"
 #include "tuning_registry.h"
 
 #include "esphome/core/helpers.h"
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -44,6 +53,9 @@ constexpr size_t ENROLLMENT_CLASS_HEX_BUFFER_SIZE = 8;
 /// budget (EXCHANGE_TOTAL_BUDGET_MS): a normal exchange blocks for a few hundred milliseconds and
 /// setup() for the radio init, so only a block longer than a whole exchange is worth a warning.
 constexpr uint8_t BLOCKING_WARNING_THRESHOLD_CS = 250;
+
+/// Room for the io channels the Wi-Fi hint names: up to three "2450 MHz" entries joined by " and ", and the terminator.
+constexpr size_t WIFI_HINT_CHANNELS_BUFFER_SIZE = 48;
 
 /// Random number for the periodic polls' jitter. ESPHome's random_uint32() on firmware, a settable
 /// value in host tests.
@@ -67,9 +79,9 @@ static const char *const TAG = detail::TAG;
 /// This is the main setup entry point called by ESPHome during startup.
 /// The sequence:
 ///   1. Parse node_id and system_key from hex strings (fails early if malformed).
-///   2. Initialize the SPI bus via spi_setup().
+///   2. Initialize the SPI bus via spi_setup() when there is one (a bridge has none).
 ///   3. Construct the driver named by the required `radio_type` YAML field
-///      ("sx1276", "sx1262", or "lr1121").
+///      ("sx1276", "sx1262", "lr1121" or, in a build configured for it, "bridle").
 ///   4. Allocate the appropriate RadioDriver (SX1276 needs DIO0; SX1262/LR1121 need BUSY+DIO1,
 ///      DIO1 carrying the LR1121's DIO9 IRQ line).
 ///   5. Call radio_->init() which performs chip reset, calibration, and register configuration.
@@ -108,7 +120,10 @@ void IOHomeControlComponent::setup() {
       callback(report);
   });
 
-  this->spi_setup();
+  // A UART-attached radio (bridle) has no spi: bus, so there is no SPI parent to register with;
+  // SPIClient::spi_setup() would dereference it.
+  if (this->parent_ != nullptr)
+    this->spi_setup();
 
   const char *chip_name_for_log = nullptr;
   this->radio_ = this->select_and_construct_radio_(&chip_name_for_log);
@@ -152,22 +167,32 @@ void IOHomeControlComponent::setup() {
   this->cache_lr1121_flash_verdict_();
 #endif
 
+  this->start_initialized_radio_(chip_name_for_log);
+}
+
+void IOHomeControlComponent::start_initialized_radio_(const char *chip_name) {
+  this->convert_legacy_preamble_bytes_();
+  if (!this->radio_->accepts_tuning(this->tuning_)) {
+    // The driver's log line names the value and the limit; a wake-up is never shortened without saying so.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — ESPHome's own LOG_STR() macro.
+    this->mark_failed(LOG_STR("The radio cannot carry the configured tuning (see the line above)"));
+    return;
+  }
   this->initialized_ = true;
   this->register_management_actions_();
   this->exchange_engine_.reset_hop_timestamp();
-  this->convert_legacy_preamble_bytes_();
   this->apply_tuning_to_radio_();
   if (this->tuning_.active) {
     std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
     ESP_LOGI(detail::TAG, "%s", snapshot.c_str());
   }
-  ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", chip_name_for_log, this->node_id_str_.c_str());
+  ESP_LOGI(detail::TAG, "Radio initialized (%s), Node ID: %s", chip_name, this->node_id_str_.c_str());
 }
 
 // See the declaration in hub_core.h for the full contract. `radio_type_` is one of "lr1121",
-// "sx1262", or "sx1276" — the YAML schema requires the field and validates it against exactly
-// those three values, so the fallthrough below is unreachable in a config-driven build and
-// exists only to fail loudly rather than guess if this method is ever called some other way.
+// "sx1262", "sx1276" or (in a build configured for it) "bridle" — the YAML schema requires the field and
+// validates it against exactly those values, so the fallthrough below is unreachable in a config-driven
+// build and exists only to fail loudly rather than guess if this method is ever called some other way.
 RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **chip_name_out) {
   if (this->radio_type_ == "lr1121") {
     *chip_name_out = "LR1121";
@@ -208,6 +233,27 @@ RadioDriver *IOHomeControlComponent::select_and_construct_radio_(const char **ch
       ESP_LOGE(detail::TAG, "Failed to allocate SX1276 radio driver");
     return radio;
   }
+
+#ifdef IOHOME_BRIDLE
+  if (this->radio_type_ == "bridle") {
+    *chip_name_out = "Bridle";
+    if (!this->uart_stream_.has_uart()) {
+      ESP_LOGE(detail::TAG, "radio_type: bridle requires uart_id (the UART the co-processor is wired to)");
+      return nullptr;
+    }
+    // The one place that names a band's profile: everything above RadioDriver reads the band the driver describes.
+    const bridle::BridlePhy &phy = this->bridle_band_ == "io_868"
+                                       ? static_cast<const bridle::BridlePhy &>(bridle::io868_gfsk_phy())
+                                       : static_cast<const bridle::BridlePhy &>(bridle::io2g4_phy());
+    auto *radio = new (std::nothrow) RadioBridle(&this->uart_stream_, phy, this->rst_pin_, this->bridle_tx_power_dbm_);
+    if (radio == nullptr) {
+      ESP_LOGE(detail::TAG, "Failed to allocate Bridle radio driver");
+      return nullptr;
+    }
+    radio->set_trace(this->bridle_trace_);
+    return radio;
+  }
+#endif
 
   *chip_name_out = "unknown";
   ESP_LOGE(detail::TAG, "Unrecognized radio_type '%s'", this->radio_type_.c_str());
@@ -270,16 +316,22 @@ void IOHomeControlComponent::convert_legacy_preamble_bytes_() {
 /// configuration. Radio-affecting parameters are forwarded to the active driver
 /// immediately; the change is logged in YAML-compatible form so it can be copied
 /// back into the configuration file.
-void IOHomeControlComponent::update_tuning_number(const std::string &name, float value) {
+bool IOHomeControlComponent::update_tuning_number(const std::string &name, float value) {
   const TuningNumberParam *param = find_tuning_number(name);
   if (param == nullptr) {
     ESP_LOGW(detail::TAG, "Unknown tuning number parameter: %s", name.c_str());
-    return;
+    return true;
   }
+  const float previous = param->get(this->tuning_);
   param->set(this->tuning_, value);
+  if (this->radio_ != nullptr && !this->radio_->accepts_tuning(this->tuning_)) {
+    param->set(this->tuning_, previous);  // the driver has said why
+    return false;
+  }
   if (param->applies_to_radio)
     this->apply_tuning_to_radio_();
   ESP_LOGI(detail::TAG, "%s", tuning_update_log_line(name, format_tuning_number(value)).c_str());
+  return true;
 }
 
 /// Update a select tuning parameter from a Home Assistant `select` entity.
@@ -536,9 +588,54 @@ void IOHomeControlComponent::update_idle_loop_request_() {
   }
 }
 
+int32_t IOHomeControlComponent::wifi_channel() {
+#ifdef USE_WIFI
+  wifi::WiFiComponent *wifi_component = wifi::global_wifi_component;
+  if (wifi_component == nullptr || !wifi_component->is_connected())
+    return 0;
+  return wifi_component->get_wifi_channel();
+#else
+  return 0;
+#endif
+}
+
+uint32_t IOHomeControlComponent::wifi_centre_hz() { return decisions::wifi_channel_centre_hz(wifi_channel()); }
+
+bool IOHomeControlComponent::log_wifi_coexistence_hint_() {
+  const uint32_t centre_hz = wifi_centre_hz();
+  if (centre_hz == 0 || this->radio_ == nullptr)
+    return false;  // Wi-Fi not connected yet: look again on a later loop
+  this->wifi_hint_done_ = true;
+  const decisions::WifiCoexistence coexistence = decisions::wifi_coexistence(this->radio_->band(), centre_hz);
+  if (coexistence.given_up_count == 0)
+    return false;
+  char given_up[WIFI_HINT_CHANNELS_BUFFER_SIZE];
+  size_t used = 0;
+  for (size_t i = 0; i < coexistence.given_up_count; i++) {
+    const int written = snprintf(given_up + used, sizeof(given_up) - used, "%s%" PRIu32 " MHz", i == 0 ? "" : " and ",
+                                 coexistence.given_up_air_hz[i] / decisions::HZ_PER_MHZ);
+    if (written < 0 || static_cast<size_t>(written) >= sizeof(given_up) - used)
+      break;
+    used += static_cast<size_t>(written);
+  }
+  if (coexistence.has_clear_channel) {
+    ESP_LOGI(detail::TAG,
+             "Wi-Fi channel %" PRId32
+             " is close to io channel %s; requests use the other io channels. Wi-Fi channel %" PRId32 " or %" PRId32
+             " keeps %s in use",
+             wifi_channel(), given_up, coexistence.lowest_clear_channel, coexistence.highest_clear_channel, given_up);
+  } else {
+    ESP_LOGI(detail::TAG, "Wi-Fi channel %" PRId32 " is close to io channel %s; requests use the other io channels",
+             wifi_channel(), given_up);
+  }
+  return true;
+}
+
 void IOHomeControlComponent::loop() {
   if (!this->initialized_)
     return;
+  if (!this->wifi_hint_done_)
+    this->log_wifi_coexistence_hint_();
   // A driver that latches a failure after setup (a runtime BUSY timeout) short-circuits every later
   // command while the component keeps running. Say so once, when it happens: an error line, ESPHome's
   // warning status (which drives a configured status_led) and every device's Active Issue sensor,
@@ -712,11 +809,32 @@ void IOHomeControlComponent::queue_due_periodic_polls_() {
   }
 }
 
+#ifdef IOHOME_BRIDLE
+void IOHomeControlComponent::dump_bridle_config_() {
+  ESP_LOGCONFIG(detail::TAG, "  Co-processor link: UART%s, band %s, trace %s",
+                this->uart_stream_.has_uart() ? "" : " (missing)", this->bridle_band_.c_str(),
+                this->bridle_trace_ ? "on" : "off");
+  if (this->bridle_tx_power_dbm_.has_value()) {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: %d dBm requested", *this->bridle_tx_power_dbm_);
+  } else {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: the radio's maximum");
+  }
+}
+#endif
+
 void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "IO-Homecontrol:");
   ESP_LOGCONFIG(detail::TAG, "  Node ID: %s", this->node_id_str_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.c_str());
+#ifdef IOHOME_BRIDLE
+  if (this->radio_type_ == "bridle") {
+    this->dump_bridle_config_();
+  } else {
+    ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+  }
+#else
   ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
+#endif
   // Printed for every board, from the dump rather than from setup(): the durations decide whether a
   // directed start frame is heard at all, and a reporter's pasted log is usually captured after
   // boot, where setup()'s output is already gone. Each is also shown in programmed bytes on this

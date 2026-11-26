@@ -27,6 +27,7 @@ enum class ChannelAccessStatus : uint8_t {
   SENT,          ///< Sent on a channel the check found free.
   SENT_FORCED,   ///< Sent onto a channel measured busy (`lbt_force_when_busy`): no evidence about the receiver.
   CHANNEL_BUSY,  ///< Never sent: the access time ran out with the channel busy.
+  NO_READING,    ///< Never sent: the radio had no reading of the channel (ADR 0134). Neither quiet nor busy.
   FAILED,        ///< The radio could not send (serialization or TX failure).
 };
 
@@ -39,10 +40,47 @@ static constexpr std::array<uint32_t, 3> REQUEST_CHANNELS = IO_CHANNELS;
 /// measured value.
 static constexpr uint32_t WIFI_CHANNEL_GUARD_HZ = 15000000;
 
+/// Highest 2.4 GHz Wi-Fi channel on the regular 5 MHz raster (channel 14, Japan only, is off it).
+static constexpr int32_t WIFI_LAST_REGULAR_CHANNEL = 13;
+/// Wi-Fi channel 14, which sits off the raster.
+static constexpr int32_t WIFI_CHANNEL_14 = 14;
+/// Centre of Wi-Fi channel 0 on the raster in MHz; channel n is centred at this + WIFI_RASTER_STEP_MHZ * n (IEEE
+/// 802.11).
+static constexpr uint32_t WIFI_RASTER_ORIGIN_MHZ = 2407;
+/// Spacing of the regular 2.4 GHz Wi-Fi channel centres in MHz.
+static constexpr uint32_t WIFI_RASTER_STEP_MHZ = 5;
+/// Centre of Wi-Fi channel 14 in Hz.
+static constexpr uint32_t WIFI_CHANNEL_14_CENTRE_HZ = 2484000000U;
+/// Hz per MHz.
+static constexpr uint32_t HZ_PER_MHZ = 1000000U;
+
 /// Back-off ceilings in milliseconds, one per busy check of an attempt; a later check than the table
 /// holds uses the last one. A back-off is drawn uniformly from 1 to its ceiling, so the wait is
 /// random and grows with every busy check. This project's design choice, not a measured value.
 static constexpr std::array<uint8_t, 5> BACKOFF_CEILINGS_MS = {4, 8, 16, 32, 40};
+
+/// The centre frequency of a 2.4 GHz Wi-Fi channel: 2407 MHz + 5 MHz per channel for 1..13, 2484 MHz for 14.
+/// @param channel The primary Wi-Fi channel as the Wi-Fi stack reports it.
+/// @return The centre in Hz, or 0 for 0 and any number outside 1..14 (not connected, 5 GHz, unknown); 0 means
+///         "no Wi-Fi to keep away from" to request_channels().
+[[nodiscard]] inline uint32_t wifi_channel_centre_hz(int32_t channel) {
+  if (channel >= 1 && channel <= WIFI_LAST_REGULAR_CHANNEL)
+    return (WIFI_RASTER_ORIGIN_MHZ + WIFI_RASTER_STEP_MHZ * static_cast<uint32_t>(channel)) * HZ_PER_MHZ;
+  if (channel == WIFI_CHANNEL_14)
+    return WIFI_CHANNEL_14_CENTRE_HZ;
+  return 0;
+}
+
+/// Whether @p air_hz lies within WIFI_CHANNEL_GUARD_HZ of @p avoid_hz, the one definition of the guard (a 2.4 GHz
+/// Wi-Fi centre is never that close to an 868 MHz air frequency, so no band check is needed).
+/// @param air_hz The air frequency of a channel.
+/// @param avoid_hz Air frequency to keep away from; 0 for none.
+[[nodiscard]] inline bool inside_wifi_guard(uint32_t air_hz, uint32_t avoid_hz) {
+  if (avoid_hz == 0)
+    return false;
+  const uint32_t distance_hz = air_hz > avoid_hz ? air_hz - avoid_hz : avoid_hz - air_hz;
+  return distance_hz <= WIFI_CHANNEL_GUARD_HZ;
+}
 
 /// The channels a request may use (ADR 0132): all three; for a request to a low-power receiver the
 /// band's wake-up channels; less every channel whose air frequency lies within WIFI_CHANNEL_GUARD_HZ of
@@ -56,12 +94,50 @@ static constexpr std::array<uint8_t, 5> BACKOFF_CEILINGS_MS = {4, 8, 16, 32, 40}
     return base;
   ChannelSet narrowed = base;
   for (size_t i = 0; i < IO_CHANNELS.size(); i++) {
-    const uint32_t air_hz = band.air_hz[i];
-    const uint32_t distance_hz = air_hz > avoid_hz ? air_hz - avoid_hz : avoid_hz - air_hz;
-    if (distance_hz <= WIFI_CHANNEL_GUARD_HZ)
+    if (inside_wifi_guard(band.air_hz[i], avoid_hz))
       narrowed = narrowed.without_index(i);
   }
   return narrowed.count() == 0 ? base : narrowed;
+}
+
+/// The channels of a band that requests give up because of the Wi-Fi channel the hub is on, and the Wi-Fi channels
+/// that would give none up: what the boot hint tells a user.
+struct WifiCoexistence {
+  /// The air frequencies of the channels request_channels() leaves out for the Wi-Fi channel, in IO_CHANNELS order.
+  std::array<uint32_t, 3> given_up_air_hz{};
+  size_t given_up_count = 0;          ///< Entries of given_up_air_hz in use.
+  bool has_clear_channel = false;     ///< Some Wi-Fi channel 1..13 would give none of them up.
+  int32_t lowest_clear_channel = 0;   ///< The lowest such Wi-Fi channel; valid with has_clear_channel.
+  int32_t highest_clear_channel = 0;  ///< The highest such Wi-Fi channel; valid with has_clear_channel.
+};
+
+/// What the hub's Wi-Fi channel takes from a band: the channels request_channels() drops for it (the rule the
+/// requests follow, so the hint names exactly what the engine does) and the lowest and highest Wi-Fi channel that
+/// would drop none of them. Nothing is given up (count 0) on a band the Wi-Fi is far from, 868 MHz included, or
+/// without Wi-Fi.
+/// @param band The band the radio is on.
+/// @param avoid_hz The hub's Wi-Fi centre (wifi_channel_centre_hz()); 0 for none.
+[[nodiscard]] inline WifiCoexistence wifi_coexistence(const IoBand &band, uint32_t avoid_hz) {
+  WifiCoexistence result;
+  const ChannelSet all = request_channels(false, band, 0);
+  const ChannelSet kept = request_channels(false, band, avoid_hz);
+  for (size_t i = 0; i < IO_CHANNELS.size(); i++) {
+    if (all.contains(IO_CHANNELS[i]) && !kept.contains(IO_CHANNELS[i]))
+      result.given_up_air_hz[result.given_up_count++] = band.air_hz[i];
+  }
+  if (result.given_up_count == 0)
+    return result;
+  for (int32_t channel = 1; channel <= WIFI_LAST_REGULAR_CHANNEL; channel++) {
+    const uint32_t centre_hz = wifi_channel_centre_hz(channel);
+    const auto covers_one = [&](uint32_t air_hz) { return inside_wifi_guard(air_hz, centre_hz); };
+    if (std::any_of(result.given_up_air_hz.begin(), result.given_up_air_hz.begin() + result.given_up_count, covers_one))
+      continue;
+    if (!result.has_clear_channel)
+      result.lowest_clear_channel = channel;
+    result.highest_clear_channel = channel;
+    result.has_clear_channel = true;
+  }
+  return result;
 }
 
 /// The channel for a check: a random one of @p channels other than @p avoid_freq.
@@ -149,19 +225,25 @@ static constexpr std::array<uint8_t, 5> BACKOFF_CEILINGS_MS = {4, 8, 16, 32, 40}
 
 /// The channel a forced send takes once the access time is spent (`lbt_force_when_busy`).
 /// @param channels The channels the request may use (request_channels()); must not be empty.
-/// @param levels_dbm The level measured on each of REQUEST_CHANNELS, in that order; only the entries
-///        of channels in the set are read.
-/// @return The quietest channel of the set (the first of equals in REQUEST_CHANNELS order).
-[[nodiscard]] inline uint32_t forced_send_channel(const ChannelSet &channels,
-                                                  const std::array<int16_t, 3> &levels_dbm) {
-  std::optional<size_t> quietest;
+/// @param levels_dbm The level measured on each of REQUEST_CHANNELS, in that order, or nothing for a
+///        channel the radio gave no reading of (ADR 0134); only the entries of channels in the set are
+///        read.
+/// @return The quietest channel of the set that has a reading (the first of equals in REQUEST_CHANNELS
+///         order); nothing when none of them has one, so that no channel is picked by guessing.
+[[nodiscard]] inline std::optional<uint32_t> forced_send_channel(
+    const ChannelSet &channels, const std::array<std::optional<int16_t>, 3> &levels_dbm) {
+  std::optional<uint32_t> quietest_channel;
+  int16_t quietest_level_dbm = 0;
   for (size_t i = 0; i < levels_dbm.size(); i++) {
-    if (!channels.contains(REQUEST_CHANNELS[i]))
+    const std::optional<int16_t> level = levels_dbm[i];
+    if (!channels.contains(REQUEST_CHANNELS[i]) || !level.has_value())
       continue;
-    if (!quietest.has_value() || levels_dbm[i] < levels_dbm[*quietest])
-      quietest = i;
+    if (!quietest_channel.has_value() || *level < quietest_level_dbm) {
+      quietest_channel = REQUEST_CHANNELS[i];
+      quietest_level_dbm = *level;
+    }
   }
-  return quietest.has_value() ? REQUEST_CHANNELS[*quietest] : channels.nth(0);
+  return quietest_channel;
 }
 
 /// Whether the request of a try went out on the air (on a free channel or forced); a try that did not
@@ -171,9 +253,9 @@ static constexpr std::array<uint8_t, 5> BACKOFF_CEILINGS_MS = {4, 8, 16, 32, 40}
 }
 
 /// Whether a try that ended this way says anything about the receiver when it then got no answer. A
-/// request that was never sent, or went out onto a measured-busy channel (where a collision explains
-/// the silence), is no evidence that the receiver is at rest. A failed transmit keeps the rule that
-/// predates channel access: the try counts.
+/// request that was never sent (channel busy, or no reading to judge the channel by), or went out onto
+/// a measured-busy channel (where a collision explains the silence), is no evidence that the receiver
+/// is at rest. A failed transmit keeps the rule that predates channel access: the try counts.
 [[nodiscard]] inline bool silence_is_evidence(ChannelAccessStatus status) {
   return status == ChannelAccessStatus::SENT || status == ChannelAccessStatus::FAILED;
 }

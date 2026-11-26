@@ -30,8 +30,14 @@ class SendTimeline {
   /// Record one send. Call it when the transmission starts, before any modelled air time moves
   /// the clock, so release offsets stay measured from the start of the transmission.
   void record(const uint8_t *data, uint8_t len) {
+    record_at(data, len, esphome::test_clock::is_manual() ? esphome::test_clock::state().now_us : 0);
+  }
+
+  /// Record one send that started at @p start_us, for a double that knows the frame starts later
+  /// than the command that asked for it (a strobe precedes a 2.4 GHz main frame).
+  void record_at(const uint8_t *data, size_t len, uint64_t start_us) {
     sent_data_.emplace_back(data, data + len);
-    start_us_.push_back(esphome::test_clock::is_manual() ? esphome::test_clock::state().now_us : 0);
+    start_us_.push_back(start_us);
   }
 
   /// Absolute release time of @p timed, or nullopt while its anchor send hasn't happened.

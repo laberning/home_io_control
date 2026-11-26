@@ -3,7 +3,11 @@
 #include "radio_interface.h"
 #include "proto_frame.h"
 #include "esphome/core/component.h"
+#include "esphome/components/wifi/wifi_component.h"
 
+#include "bridle_stand_in.h"
+#include "fake_byte_stream.h"
+#include "fake_coprocessor.h"
 #include "test_helpers.h"
 #include "log_capture.h"
 #include "oneway_controller.h"
@@ -168,6 +172,307 @@ TEST(HubCore, SetupReportsAMissingRequiredPinAsNoDriver) {
   EXPECT_NE(comp.radio_failure_reason_.find("sx1276"), std::string::npos) << comp.radio_failure_reason_;
 }
 
+// === Wi-Fi coexistence: the engine's frequency to avoid and the boot hint ===
+
+namespace {
+/// Points the stubbed Wi-Fi singleton at a component on `channel` for the test's duration.
+struct WifiGuard {
+  esphome::wifi::WiFiComponent component;
+  esphome::wifi::WiFiComponent *saved = esphome::wifi::global_wifi_component;
+  explicit WifiGuard(int32_t channel, bool connected = true) {
+    component.connected_ = connected;
+    component.channel_ = channel;
+    esphome::wifi::global_wifi_component = &component;
+  }
+  ~WifiGuard() { esphome::wifi::global_wifi_component = saved; }
+};
+
+/// A radio that carries the protocol on the 2.4 GHz band of the Bridle driver (2425, 2450 and 2475 MHz).
+class Air2g4Radio : public MockRadio {
+ public:
+  Air2g4Radio() { this->set_band(esphome::home_io_control::bridle::IO_2G4_BAND); }
+};
+
+size_t info_lines_naming_wifi(const test::LogCapture &log) {
+  return static_cast<size_t>(std::count_if(log.lines().begin(), log.lines().end(), [](const auto &line) {
+    return line.level == 'I' && line.text.rfind("Wi-Fi channel", 0) == 0;
+  }));
+}
+}  // namespace
+
+TEST(HubWifi, TheHubGivesTheEngineTheCentreOfItsWifiChannelOrNothing) {
+  TestableHubComponent comp;
+  EXPECT_EQ(comp.wifi_centre_hz(), 0U) << "no Wi-Fi component";
+  {
+    WifiGuard wifi(6, /*connected=*/false);
+    EXPECT_EQ(comp.wifi_centre_hz(), 0U) << "not connected";
+  }
+  WifiGuard wifi(6);
+  EXPECT_EQ(comp.wifi_centre_hz(), 2437000000U);
+}
+
+TEST(HubWifi, TheEngineKeepsARequestOffTheChannelNearTheHubsWifi) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  WifiGuard wifi(8);  // 2447 MHz: 3 MHz from the 2450 MHz channel, 22 and 28 MHz from the others
+  const ChannelSet channels = comp.exchange_engine_.request_channels(false);
+  EXPECT_FALSE(channels.contains(FREQ_CH2));
+  EXPECT_EQ(channels.count(), 2U);
+}
+
+TEST(HubWifi, WithoutWifiTheEngineKeepsEveryChannel) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  EXPECT_EQ(comp.exchange_engine_.request_channels(false), ChannelSet::all());
+}
+
+TEST(HubWifi, TheHintNamesTheIoChannelGivenUpAndTheWifiChannelsThatGiveUpNoneOnce) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  WifiGuard wifi(8);
+  test::LogCapture log(/*with_text=*/true);
+
+  EXPECT_TRUE(comp.log_wifi_coexistence_hint_());
+  EXPECT_TRUE(comp.wifi_hint_done_);
+
+  ASSERT_EQ(info_lines_naming_wifi(log), 1U);
+  const auto line = std::find_if(log.lines().begin(), log.lines().end(),
+                                 [](const auto &l) { return l.text.rfind("Wi-Fi channel", 0) == 0; });
+  EXPECT_EQ(line->text,
+            "Wi-Fi channel 8 is close to io channel 2450 MHz; requests use the other io channels. Wi-Fi channel 1 or "
+            "13 keeps 2450 MHz in use");
+}
+
+TEST(HubWifi, TheHintNamesBothChannelsWhenTheGuardCoversTwo) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  WifiGuard wifi(6);  // 2437 MHz: 12 MHz from 2425 and 13 MHz from 2450
+  test::LogCapture log(/*with_text=*/true);
+
+  EXPECT_TRUE(comp.log_wifi_coexistence_hint_());
+
+  ASSERT_EQ(info_lines_naming_wifi(log), 1U);
+  EXPECT_TRUE(std::any_of(log.lines().begin(), log.lines().end(), [](const auto &l) {
+    return l.text.find("io channel 2450 MHz and 2425 MHz;") != std::string::npos;
+  })) << "channel 2 first, as IO_CHANNELS orders them";
+}
+
+TEST(HubWifi, TheHintWaitsForWifiToConnect) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  {
+    WifiGuard wifi(8, /*connected=*/false);
+    EXPECT_FALSE(comp.log_wifi_coexistence_hint_());
+    EXPECT_FALSE(comp.wifi_hint_done_);
+  }
+  EXPECT_FALSE(comp.log_wifi_coexistence_hint_()) << "no Wi-Fi component at all";
+  EXPECT_FALSE(comp.wifi_hint_done_);
+  WifiGuard wifi(8);
+  EXPECT_TRUE(comp.log_wifi_coexistence_hint_());
+}
+
+TEST(HubWifi, TheHintIsSilentAndNothingChangesOnThe868Band) {
+  TestableHubComponent comp;
+  MockRadio radio;  // the 868 MHz band
+  comp.radio_ = &radio;
+  for (int32_t channel = 1; channel <= 14; channel++) {
+    comp.wifi_hint_done_ = false;
+    WifiGuard wifi(channel);
+    test::LogCapture log(/*with_text=*/true);
+    EXPECT_FALSE(comp.log_wifi_coexistence_hint_()) << channel;
+    EXPECT_EQ(info_lines_naming_wifi(log), 0U) << channel;
+    EXPECT_EQ(comp.exchange_engine_.request_channels(false), ChannelSet::all()) << channel;
+    EXPECT_EQ(comp.exchange_engine_.request_channels(true), ChannelSet::only(FREQ_CH2)) << channel;
+  }
+}
+
+TEST(HubWifi, TheLoopEvaluatesTheHintUntilWifiHasAChannel) {
+  TestableHubComponent comp;
+  Air2g4Radio radio;
+  comp.radio_ = &radio;
+  comp.initialized_ = true;
+  comp.loop();
+  EXPECT_FALSE(comp.wifi_hint_done_) << "no Wi-Fi yet: asked again on the next loop";
+  WifiGuard wifi(8);
+  test::LogCapture log(/*with_text=*/true);
+  comp.loop();
+  EXPECT_TRUE(comp.wifi_hint_done_);
+  comp.loop();
+  EXPECT_EQ(info_lines_naming_wifi(log), 1U) << "decided once, not on every loop";
+  comp.radio_ = nullptr;
+}
+
+// === A Bridle bridge: the composition root builds the driver over the configured UART ===
+
+namespace {
+/// The UART bus the hub is configured with, backed by a scripted co-processor's byte stream.
+class StreamUart : public esphome::uart::UARTComponent {
+ public:
+  explicit StreamUart(FakeByteStream &stream) : stream_(stream) {}
+  void write_array(const uint8_t *data, size_t len) override { stream_.write(data, len); }
+  bool read_array(uint8_t *data, size_t len) override { return stream_.read(data, len) == len; }
+  size_t available() override { return stream_.available(); }
+  esphome::uart::UARTFlushResult flush() override {
+    stream_.flush();
+    return esphome::uart::UARTFlushResult::UART_FLUSH_RESULT_SUCCESS;
+  }
+
+ private:
+  FakeByteStream &stream_;
+};
+
+/// A hub configured for `radio_type: bridle` on one band, over a FakeCoprocessor of that band; `setup()` is the
+/// test's to call.
+template<class Band> struct BridleHub {
+  esphome::test_clock::ManualClock clock;
+  FakeByteStream stream;
+  FakeCoprocessor cp;
+  FakeResetLine reset;
+  MockPin busy;  // only read by the LR1121 boot-time bootloader probe, which the host build always compiles in
+  StreamUart uart;
+  TestableHubComponent comp;
+
+  explicit BridleHub(const char *band) : cp(stream, Band::config()), uart(stream) {
+    reset.on_release = [this] { cp.boot(); };
+    configure_hub_for_setup(comp, "bridle");
+    comp.set_bridle_band(band);
+    comp.set_rst_pin(&reset);
+    comp.set_busy_pin(&busy);
+    comp.set_uart_parent(&uart);
+  }
+};
+}  // namespace
+
+TEST(HubCore, RadioTypeBridleBuildsTheBridleDriverOverTheConfiguredUart) {
+  MockPin rst;
+  esphome::test_clock::ManualClock clock;
+  FakeByteStream stream;
+  StreamUart uart(stream);
+  TestableHubComponent comp;
+  comp.set_radio_type("bridle");
+  comp.set_rst_pin(&rst);
+  comp.set_uart_parent(&uart);
+  const char *chip = nullptr;
+
+  RadioDriver *radio = comp.select_and_construct_radio_(&chip);
+
+  ASSERT_NE(radio, nullptr);
+  EXPECT_STREQ(radio->chip_name(), "bridle");
+  EXPECT_STREQ(chip, "Bridle");
+  EXPECT_EQ(radio->band().air_hz[1], esphome::home_io_control::bridle::IO_2G4_BAND.air_hz[1])
+      << "the 2.4 GHz band is the default";
+  delete radio;
+}
+
+TEST(HubCore, TheBridleBandOfTheConfigurationPicksTheProfile) {
+  MockPin rst;
+  esphome::test_clock::ManualClock clock;
+  FakeByteStream stream;
+  StreamUart uart(stream);
+  TestableHubComponent comp;
+  comp.set_radio_type("bridle");
+  comp.set_rst_pin(&rst);
+  comp.set_uart_parent(&uart);
+  comp.set_bridle_band("io_868");
+  const char *chip = nullptr;
+
+  RadioDriver *radio = comp.select_and_construct_radio_(&chip);
+
+  ASSERT_NE(radio, nullptr);
+  EXPECT_EQ(radio->band().air_hz[1], IO_868_BAND.air_hz[1]);
+  delete radio;
+}
+
+TEST(HubCore, RadioTypeBridleWithoutAUartBuildsNoDriver) {
+  TestableHubComponent comp;
+  configure_hub_for_setup(comp, "bridle");
+
+  comp.setup();
+
+  EXPECT_TRUE(comp.is_failed());
+  EXPECT_EQ(comp.radio_, nullptr);
+  EXPECT_NE(comp.radio_failure_reason_.find("bridle"), std::string::npos) << comp.radio_failure_reason_;
+}
+
+TEST(HubCore, SetupBringsUpTheBridgeAndStartsTheHub) {
+  BridleHub<Bridge2g4> hub("io_2g4");
+
+  hub.comp.setup();
+
+  EXPECT_FALSE(hub.comp.is_failed()) << hub.comp.radio_failure_reason_;
+  EXPECT_TRUE(hub.comp.initialized_);
+  ASSERT_NE(hub.comp.radio_, nullptr);
+  EXPECT_STREQ(hub.comp.radio_->chip_name(), "bridle");
+  EXPECT_FALSE(hub.cp.commands().empty()) << "the driver spoke to the co-processor over the configured UART";
+  delete hub.comp.radio_;
+  hub.comp.radio_ = nullptr;
+}
+
+// The call in setup() that hands the band's default to the registry (ADR 0132): a device that declares no
+// `low_power:` takes it, a declared value stays.
+TEST(HubCore, AfterSetupOnThe2g4BandADeviceWithoutLowPowerIsLowPowerAndOneDeclaringFalseIsNot) {
+  BridleHub<Bridge2g4> hub("io_2g4");
+  hub.comp.setup();
+  ASSERT_TRUE(hub.comp.initialized_) << hub.comp.radio_failure_reason_;
+
+  hub.comp.add_device("AABBCC", DeviceConfig{});
+  DeviceConfig declared_false{};
+  declared_false.low_power = false;
+  hub.comp.add_device("DDEEFF", declared_false);
+  DeviceConfig declared_true{};
+  declared_true.low_power = true;
+  hub.comp.add_device("112233", declared_true);
+
+  EXPECT_TRUE(hub.comp.get_device("AABBCC")->low_power) << "the band's default";
+  EXPECT_FALSE(hub.comp.get_device("DDEEFF")->low_power) << "declared false";
+  EXPECT_TRUE(hub.comp.get_device("112233")->low_power);
+  delete hub.comp.radio_;
+  hub.comp.radio_ = nullptr;
+}
+
+TEST(HubCore, AfterSetupOnThe868BandADeviceWithoutLowPowerIsNotLowPower) {
+  BridleHub<Bridge868> hub("io_868");
+  hub.comp.setup();
+  ASSERT_TRUE(hub.comp.initialized_) << hub.comp.radio_failure_reason_;
+
+  hub.comp.add_device("AABBCC", DeviceConfig{});
+  DeviceConfig declared_true{};
+  declared_true.low_power = true;
+  hub.comp.add_device("112233", declared_true);
+
+  EXPECT_FALSE(hub.comp.get_device("AABBCC")->low_power) << "the 868 MHz band's default";
+  EXPECT_TRUE(hub.comp.get_device("112233")->low_power);
+  delete hub.comp.radio_;
+  hub.comp.radio_ = nullptr;
+}
+
+TEST(HubCore, DumpConfigNamesTheBridgesLinkBandAndTxPower) {
+  TestableHubComponent comp;
+  comp.set_radio_type("bridle");
+  comp.set_bridle_band("io_2g4");
+  comp.set_bridle_trace(true);
+  {
+    test::LogCapture log(/*with_text=*/true);
+    comp.dump_config();
+    const auto has = [&log](const std::string &text) {
+      return std::any_of(log.lines().begin(), log.lines().end(),
+                         [&text](const auto &line) { return line.level == 'C' && line.text == text; });
+    };
+    EXPECT_TRUE(has("  Co-processor link: UART (missing), band io_2g4, trace on"));
+    EXPECT_TRUE(has("  TX Power: the radio's maximum"));
+  }
+  comp.set_tx_power_dbm(-4);
+  test::LogCapture log(/*with_text=*/true);
+  comp.dump_config();
+  EXPECT_TRUE(std::any_of(log.lines().begin(), log.lines().end(),
+                          [](const auto &line) { return line.text == "  TX Power: -4 dBm requested"; }));
+}
+
 TEST(HubCore, SetupKeepsTheDriversOwnReasonWhenInitFails) {
   // The hub's SPI stub reads back zeros, so the SX1276 version check fails inside the real driver.
   MockPin rst, dio0, dio4;
@@ -185,6 +490,35 @@ TEST(HubCore, SetupKeepsTheDriversOwnReasonWhenInitFails) {
   EXPECT_EQ(comp.radio_, nullptr) << "a failed driver must be dropped";
   EXPECT_NE(comp.radio_failure_reason_.find("SX1276 not found"), std::string::npos)
       << "the reason must be copied out before the driver is deleted: " << comp.radio_failure_reason_;
+}
+
+// After the radio's init() the hub asks it whether it can carry the tuning (RadioDriver::accepts_tuning()); a
+// refusal fails setup before anything can reach the radio, and a wake-up is never shortened to fit.
+TEST(HubCore, SetupFailsAndStaysUninitializedWhenTheRadioRefusesTheTuning) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  radio.set_refuses_tuning(true);
+  comp.radio_ = &radio;
+
+  comp.start_initialized_radio_("Mock");
+
+  EXPECT_TRUE(comp.is_failed());
+  EXPECT_FALSE(comp.initialized_) << "no entity or action may reach a radio that refused the tuning";
+  comp.radio_ = nullptr;
+}
+
+TEST(HubCore, SetupAsksAboutTheConvertedLegacyWakeUpAndStartsWhenTheRadioAccepts) {
+  TestableHubComponent comp;
+  comp.tuning_.legacy_preamble_bytes.low_power_wake = 2048;  // 426.67 ms on a raw byte stream
+  MockRadio radio;
+  comp.radio_ = &radio;
+
+  comp.start_initialized_radio_("Mock");
+
+  EXPECT_FALSE(comp.is_failed());
+  EXPECT_TRUE(comp.initialized_);
+  EXPECT_NEAR(radio.checked_wake_ms(), 426.67F, 0.01F) << "the radio judges the wake-up it will be asked to send";
+  comp.radio_ = nullptr;
 }
 
 TEST(HubCore, DumpConfigAsksTheRadioForFrontEndBeforeChipDiagnostics) {

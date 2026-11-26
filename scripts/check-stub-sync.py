@@ -132,6 +132,19 @@ ROWS = (
         "Climate",
         methods=("control", "traits", "publish_state"),
     ),
+    Row(
+        "components/uart/uart.h",
+        "components/uart/uart_component.h",
+        "UARTComponent",
+        methods=("write_array", "read_array", "available", "flush"),
+    ),
+    Row(
+        "components/uart/uart.h",
+        "components/uart/uart.h",
+        "UARTDevice",
+        methods=("set_uart_parent", "write_array", "read_array", "available", "flush"),
+        members=("parent_",),
+    ),
     Row("components/fan/fan.h", "components/fan/fan.h", "Fan", methods=("control", "get_traits", "publish_state")),
     Row(
         "components/water_heater/water_heater.h",

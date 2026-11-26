@@ -226,6 +226,17 @@ static constexpr uint16_t LR1121_POST_TX_SETTLE_US = SX1262_POST_TX_SETTLE_US;
 /// its own literal rather than an alias.
 static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = 7;
 
+/// Per-channel dwell while a 2.4 GHz radio behind a serial link hops across channels.
+///
+/// The dwell of a rotating listen must cover what a retune costs before the radio hears anything.
+/// For 2.4 GHz that is the UART time of the `rx_on` command (12 bytes: 0.12 ms at 1 Mbaud, 1.04 ms at
+/// 115200) and the co-processor's retune and radio ramp-up (about 0.14 ms on the nRF52 radio the
+/// reference co-processor uses); the hub does not wait for the `ack`. That is about 0.3 ms at 1 Mbaud
+/// and 1.2 ms at the slowest rate. 2 ms leaves the co-processor's scheduling roughly seven times the 1 Mbaud figure
+/// in margin and is still short enough to sweep all three channels in 6 ms. Whether a 2.4 GHz
+/// broadcast reply needs a longer dwell is not yet measured.
+static constexpr uint16_t IO2G4_HOP_DWELL_MS = 2;
+
 /// @brief All runtime tunable parameters for pairing and radio diagnostics.
 ///
 /// Values reset to their defaults on every boot. Each field initializes from a
@@ -256,7 +267,8 @@ struct TuningConfig {
   LR1121RxBandwidth lr1121_rx_bandwidth{LR1121RxBandwidth::BW_117_3_KHZ};  ///< LR1121 RX bandwidth selector.
   uint16_t lr1121_post_tx_settle_us{LR1121_POST_TX_SETTLE_US};             ///< Delay after LR1121 TX before RX (µs).
   uint16_t lr1121_discovery_hop_slice_ms{
-      LR1121_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while LR1121 discovery hops.
+      LR1121_DISCOVERY_HOP_SLICE_MS};               ///< Per-channel dwell while LR1121 discovery hops.
+  uint16_t io2g4_hop_dwell_ms{IO2G4_HOP_DWELL_MS};  ///< Per-channel dwell while a 2.4 GHz radio hops (ms).
   // The SX1262 and LR1121 discovery hop-slice defaults above were tuned against the ~13.9 ms
   // preamble real devices put on a discovery reply (SDR capture analysis, issue #65). The default
   // here is sized above that preamble, so a hopping receiver catches this reply at least as

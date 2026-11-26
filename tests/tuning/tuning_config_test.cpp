@@ -23,6 +23,8 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_EQ(cfg.lr1121_rx_bandwidth, LR1121RxBandwidth::BW_117_3_KHZ);
   EXPECT_EQ(cfg.lr1121_post_tx_settle_us, 500);
   EXPECT_EQ(cfg.lr1121_discovery_hop_slice_ms, 7);
+  // 2.4 GHz: a dwell well above one retune of a radio behind a serial link.
+  EXPECT_EQ(cfg.io2g4_hop_dwell_ms, 2);
   // Every preamble is a duration, the same on every radio (ADR 0097).
   EXPECT_EQ(cfg.response_preamble_ms, 3.5F) << "inside a session: longer of the two validated durations";
   EXPECT_EQ(cfg.cold_broadcast_reply_preamble_ms, 20.0F) << "sized for the key-extraction responder's 0x29 broadcast";
