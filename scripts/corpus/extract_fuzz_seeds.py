@@ -39,7 +39,7 @@ SEEDS_DIR = REPO_ROOT / "build" / "fuzz" / "seeds"
 SOFT_PHY_SEEDS_DIR = REPO_ROOT / "build" / "fuzz" / "seeds_soft_phy"
 BRIDLE_SEEDS_DIR = REPO_ROOT / "build" / "fuzz" / "seeds_bridle"
 IO2G4_SEEDS_DIR = REPO_ROOT / "build" / "fuzz" / "seeds_io2g4"
-IO2G4_CRC_OK_SELECTOR = 1  # the target's first byte: CrcState::OK
+IO2G4_CRC_OK_SELECTOR = 1  # the target's first byte: FcsState::OK
 BRIDLE_SESSIONS = REPO_ROOT / "tests" / "corpus" / "sessions"
 
 # Leading idle-high bits placed in front of a UART-encoded frame: 0 aligns the first cell at bit

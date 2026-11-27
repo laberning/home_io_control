@@ -23,7 +23,7 @@ constexpr uint16_t cap_bit(uint32_t mask) { return static_cast<uint16_t>(std::co
 constexpr bool valid_preamble_detect_bits(uint8_t bits) { return bits == 8 || bits == 16 || bits == 24 || bits == 32; }
 
 /// The event-mask bit that admits an event type.
-constexpr uint8_t EVENT_MASK_FRAME_START = event_mask::FRAME_START;
+constexpr uint8_t EVENT_MASK_RX_START = event_mask::RX_START;
 
 }  // namespace
 
@@ -37,29 +37,29 @@ FakeCoprocessor::FakeCoprocessor(FakeByteStream &stream, Config config) : stream
 FakeCoprocessor::RadioDescriptor FakeCoprocessor::reference_802154_radio(uint8_t index) {
   RadioDescriptor d;
   d.radio = index;
-  d.chip = static_cast<uint16_t>(ChipId::NRF52840);
+  d.chip = static_cast<uint16_t>(Chip::NRF52840);
   d.profiles = phy_profiles::IEEE802154_OQPSK_250K;
   d.band_min_hz = 2400000000u;
   d.band_max_hz = 2483500000u;
   d.tx_power_min_dbm = -40;
   d.tx_power_max_dbm = 8;
-  d.max_payload = 125;
+  d.max_payload_bytes = 125;
   d.max_preamble_bytes = 0;
   d.strobe_jitter_us = 2;
-  d.caps = radio_caps::STROBE | radio_caps::SCHEDULED_TX | radio_caps::RX_SCAN | radio_caps::CCA;
+  d.caps = radio_caps::STROBE | radio_caps::AT_TIME | radio_caps::RX_SCAN | radio_caps::CCA;
   return d;
 }
 
 FakeCoprocessor::RadioDescriptor FakeCoprocessor::reference_gfsk_radio(uint8_t index) {
   RadioDescriptor d;
   d.radio = index;
-  d.chip = static_cast<uint16_t>(ChipId::SX1262);
+  d.chip = static_cast<uint16_t>(Chip::SX1262);
   d.profiles = phy_profiles::GFSK_RAW;
   d.band_min_hz = 863000000u;
   d.band_max_hz = 870000000u;
   d.tx_power_min_dbm = -9;
   d.tx_power_max_dbm = 22;
-  d.max_payload = 147;
+  d.max_payload_bytes = 147;
   d.max_preamble_bytes = GFSK_MAX_PREAMBLE_BYTES;
   d.strobe_jitter_us = 0;
   d.caps = radio_caps::RX_SCAN | radio_caps::CCA;
@@ -67,7 +67,7 @@ FakeCoprocessor::RadioDescriptor FakeCoprocessor::reference_gfsk_radio(uint8_t i
 }
 
 bool FakeCoprocessor::configured_(const RadioState &r) {
-  constexpr uint8_t ALL_GFSK_REQUIRED = 0x0F;  // bit rate, deviation, sync word, rx_len
+  constexpr uint8_t ALL_GFSK_REQUIRED = 0x0F;  // bit rate, deviation, sync word, rx_capture_bytes
   if (!r.profile_set)
     return false;
   return r.profile == PhyProfile::GFSK_RAW ? r.gfsk_set == ALL_GFSK_REQUIRED : r.sfd_set;
@@ -124,30 +124,30 @@ void FakeCoprocessor::reject_next(MsgType type, ErrorCode code, uint16_t detail,
   rejections_.push_back({static_cast<uint8_t>(type), code, detail, radio, delay_us});
 }
 
-void FakeCoprocessor::inject_rx(uint32_t freq_hz, const std::vector<uint8_t> &payload, CrcState crc, uint64_t delay_us,
-                                uint8_t radio) {
+void FakeCoprocessor::inject_rx_frame(uint32_t freq_hz, const std::vector<uint8_t> &payload, FcsState fcs,
+                                      uint64_t delay_us, uint8_t radio) {
   if (radio >= radios_.size() || radios_[radio].mode == Mode::IDLE)
     return;  // a radio that is not receiving reports nothing
   if (payload.size() < radios_[radio].rx_min_psdu) {
     rx_short_++;  // dropped before any event, as the co-processor does (spec §4 `rx_min_psdu`)
     return;
   }
-  if (crc == CrcState::BAD && (event_mask_ & event_mask::CRC_ERROR_RX) == 0)
+  if (fcs == FcsState::BAD && (event_mask_ & event_mask::RX_FCS_BAD) == 0)
     return;
-  Rx rx;
+  RxFrame rx;
   rx.radio = radio;
-  rx.t_us = static_cast<uint32_t>(now_us() + delay_us);
+  rx.t_sync_us = static_cast<uint32_t>(now_us() + delay_us);
   rx.freq_hz = freq_hz;
   rx.rssi_dbm = rssi_dbm_;
-  rx.crc = crc;
+  rx.fcs = fcs;
   rx.payload = {payload.data(), payload.size()};
   queue_(rx, now_us() + delay_us);
 }
 
-void FakeCoprocessor::inject_frame_start(uint32_t freq_hz, FrameStage stage, uint64_t delay_us, uint8_t radio) {
-  if ((event_mask_ & EVENT_MASK_FRAME_START) == 0)
+void FakeCoprocessor::inject_rx_start(uint32_t freq_hz, RxStage stage, uint64_t delay_us, uint8_t radio) {
+  if ((event_mask_ & EVENT_MASK_RX_START) == 0)
     return;
-  FrameStart fs;
+  RxStart fs;
   fs.radio = radio;
   fs.t_us = static_cast<uint32_t>(now_us() + delay_us);
   fs.freq_hz = freq_hz;
@@ -168,7 +168,7 @@ void FakeCoprocessor::inject_rx_abort(uint32_t freq_hz, RxAbortReason reason, ui
 
 void FakeCoprocessor::hold_preamble(uint64_t duration_us) {
   preamble_held_until_us_ = now_us() + duration_us;
-  inject_frame_start(radios_.at(0).freq_hz, FrameStage::PREAMBLE);
+  inject_rx_start(radios_.at(0).freq_hz, RxStage::PREAMBLE);
 }
 
 void FakeCoprocessor::settle_preamble_hold_() {
@@ -377,7 +377,7 @@ void FakeCoprocessor::release_timed_() {
       ++it;
       continue;
     }
-    inject_rx(it->freq_hz, it->payload, CrcState::OK, *due > now_us() ? *due - now_us() : 0);
+    inject_rx_frame(it->freq_hz, it->payload, FcsState::OK, *due > now_us() ? *due - now_us() : 0);
     it = timed_.erase(it);
   }
 }
@@ -464,7 +464,7 @@ void FakeCoprocessor::on_host_bytes_(const uint8_t *data, size_t n) {
     } else if (!is_known_command(rec.type)) {
       error_(rec.seq, ErrorCode::UNKNOWN_TYPE);
     } else if (decode_message(rec.message.data(), rec.message.size(), msg) != DecodeStatus::OK) {
-      error_(rec.seq, ErrorCode::BAD_LENGTH);
+      error_(rec.seq, ErrorCode::MALFORMED);
     } else if (const auto *rx_on = std::get_if<RxOn>(&msg.body);
                rx_on != nullptr && refused_rx_on_hz_.has_value() && rx_on->freq_hz == *refused_rx_on_hz_) {
       error_(rec.seq, refused_rx_on_code_, 0);
@@ -512,7 +512,7 @@ void FakeCoprocessor::handle_(const Message &msg) {
       if (!configured_(*r)) {
         error_(seq, ErrorCode::NOT_CONFIGURED);
       } else if (on->freq_hz < d.band_min_hz || on->freq_hz > d.band_max_hz) {
-        error_(seq, ErrorCode::PARAM_RANGE, field::rx_on::FREQ_HZ);
+        error_(seq, ErrorCode::OUT_OF_RANGE, field::rx_on::FREQ_HZ);
       } else {
         settle_preamble_hold_();
         const bool held = on->radio == 0 && now_us() < preamble_held_until_us_;
@@ -547,7 +547,7 @@ void FakeCoprocessor::handle_(const Message &msg) {
       if (!configured_(*r)) {
         error_(seq, ErrorCode::NOT_CONFIGURED);
       } else if (transmitting() || deferred_freq_hz_.has_value()) {
-        error_(seq, ErrorCode::BUSY);
+        error_(seq, ErrorCode::RADIO_BUSY);
       } else if (r->mode == Mode::IDLE) {
         error_(seq, ErrorCode::NOT_RECEIVING);
       } else {
@@ -578,9 +578,9 @@ void FakeCoprocessor::handle_(const Message &msg) {
       } else if (!configured_(*r)) {
         error_(seq, ErrorCode::NOT_CONFIGURED);
       } else if (scan->dwell_us < 200) {
-        error_(seq, ErrorCode::PARAM_RANGE, field::rx_scan::DWELL_US);
+        error_(seq, ErrorCode::OUT_OF_RANGE, field::rx_scan::DWELL_US);
       } else if (scan->num_freqs == 0 || scan->num_freqs > MAX_SCAN_FREQS) {
-        error_(seq, ErrorCode::PARAM_RANGE, field::rx_scan::NUM_FREQS_HZ);
+        error_(seq, ErrorCode::OUT_OF_RANGE, field::rx_scan::NUM_FREQS_HZ);
       } else {
         r->scan = *scan;
         r->freq_hz = scan->freqs_hz[0];
@@ -619,7 +619,7 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
   while (in.next(id, value)) {
     bool const is_profile = id == static_cast<uint8_t>(ParamId::PHY_PROFILE);
     if (is_profile && (!first || profile_seen)) {
-      refuse(ErrorCode::PARAM_RANGE, id);  // `phy_profile` is the first TLV, and only once
+      refuse(ErrorCode::OUT_OF_RANGE, id);  // `phy_profile` is the first TLV, and only once
       return;
     }
     first = false;
@@ -645,7 +645,7 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
           out.add(id, value.data, value.size);
           break;
         }
-        refuse(ErrorCode::PARAM_RANGE, id);
+        refuse(ErrorCode::OUT_OF_RANGE, id);
         return;
       case ParamId::SFD:
         if (!staged.profile_set || staged.profile != PhyProfile::IEEE802154_OQPSK_250K) {
@@ -653,7 +653,7 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
           return;
         }
         if (value.size != 1) {
-          refuse(ErrorCode::PARAM_RANGE, id);
+          refuse(ErrorCode::OUT_OF_RANGE, id);
           return;
         }
         staged.sfd_set = true;
@@ -665,7 +665,7 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
           return;
         }
         if (value.size != 1 || value.data[0] > 127) {
-          refuse(ErrorCode::PARAM_RANGE, id);
+          refuse(ErrorCode::OUT_OF_RANGE, id);
           return;
         }
         staged.rx_min_psdu = value.data[0];
@@ -676,7 +676,7 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
       case ParamId::RX_BW_HZ:
       case ParamId::PULSE_SHAPE:
       case ParamId::SYNC_WORD:
-      case ParamId::RX_LEN:
+      case ParamId::RX_CAPTURE_BYTES:
       case ParamId::PREAMBLE_DETECT_BITS:
       case ParamId::SYNC_TIMEOUT_US: {
         // gfsk_raw params: accepted and echoed on a radio staged to that profile; the four required ones are
@@ -685,15 +685,15 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
           refuse(ErrorCode::UNSUPPORTED, id);
           return;
         }
-        if ((static_cast<ParamId>(id) == ParamId::RX_LEN &&
-             (value.size != 1 || value.data[0] == 0 || value.data[0] > d.max_payload)) ||
+        if ((static_cast<ParamId>(id) == ParamId::RX_CAPTURE_BYTES &&
+             (value.size != 1 || value.data[0] == 0 || value.data[0] > d.max_payload_bytes)) ||
             (static_cast<ParamId>(id) == ParamId::PREAMBLE_DETECT_BITS &&
              (value.size != 1 || !valid_preamble_detect_bits(value.data[0])))) {
-          refuse(ErrorCode::PARAM_RANGE, id);
+          refuse(ErrorCode::OUT_OF_RANGE, id);
           return;
         }
         constexpr uint8_t REQUIRED_BIT_FOR[] = {0x01, 0x02, 0x00,
-                                                0x00, 0x04, 0x08};  // bitrate, fdev, then rx_bw.. rx_len
+                                                0x00, 0x04, 0x08};  // bitrate, fdev, then rx_bw.. rx_capture_bytes
         uint8_t const param =
             static_cast<uint8_t>(static_cast<ParamId>(id)) - static_cast<uint8_t>(ParamId::BITRATE_BPS);
         if (param < sizeof(REQUIRED_BIT_FOR))
@@ -703,7 +703,7 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
       }
       case ParamId::TX_POWER_DBM:
         if (value.size != 1) {
-          refuse(ErrorCode::PARAM_RANGE, id);
+          refuse(ErrorCode::OUT_OF_RANGE, id);
           return;
         }
         staged.tx_power_dbm = std::clamp(static_cast<int8_t>(value.data[0]), d.tx_power_min_dbm, d.tx_power_max_dbm);
@@ -716,7 +716,7 @@ void FakeCoprocessor::handle_set_params_(const SetParams &cmd, uint8_t seq) {
   }
   if (cmd.radio != DEVICE_SCOPE && transmitting()) {
     set_params_during_tx_++;
-    refuse(ErrorCode::BUSY, 0);  // only when every TLV passed; device scope is never busy
+    refuse(ErrorCode::RADIO_BUSY, 0);  // only when every TLV passed; device scope is never busy
     return;
   }
   if (cmd.radio == DEVICE_SCOPE)
@@ -746,8 +746,8 @@ void FakeCoprocessor::handle_tx_(const Tx &cmd, uint8_t seq) {
     error_(seq, ErrorCode::UNSUPPORTED, cap_bit(radio_caps::CCA));
     return;
   }
-  if (cmd.at_time && !(d.caps & radio_caps::SCHEDULED_TX)) {
-    error_(seq, ErrorCode::UNSUPPORTED, cap_bit(radio_caps::SCHEDULED_TX));
+  if (cmd.at_time && !(d.caps & radio_caps::AT_TIME)) {
+    error_(seq, ErrorCode::UNSUPPORTED, cap_bit(radio_caps::AT_TIME));
     return;
   }
   if (!configured_(r)) {
@@ -758,20 +758,20 @@ void FakeCoprocessor::handle_tx_(const Tx &cmd, uint8_t seq) {
   // length up to the radio's `max_preamble_bytes`.
   uint16_t const longest_preamble = r.profile == PhyProfile::GFSK_RAW ? d.max_preamble_bytes : 0;
   if (cmd.preamble_bytes > longest_preamble) {
-    error_(seq, ErrorCode::PARAM_RANGE, field::tx::PREAMBLE_BYTES);
+    error_(seq, ErrorCode::OUT_OF_RANGE, field::tx::PREAMBLE_BYTES);
     return;
   }
-  if (cmd.payload.size > d.max_payload) {
+  if (cmd.payload.size > d.max_payload_bytes) {
     error_(seq, ErrorCode::PAYLOAD_TOO_LONG);
     return;
   }
   if (transmitting()) {
-    error_(seq, ErrorCode::BUSY);
+    error_(seq, ErrorCode::RADIO_BUSY);
     return;
   }
-  if (cmd.has_strobe && (cmd.strobe.count < 1 || cmd.strobe.count > 1024 || cmd.strobe.len_template < 1 ||
-                         cmd.strobe.len_template > MAX_STROBE_TEMPLATE)) {
-    error_(seq, ErrorCode::PARAM_RANGE, field::tx::STROBE);
+  if (cmd.has_strobe && (cmd.strobe.count < 1 || cmd.strobe.count > 1024 || cmd.strobe.len_frame_template < 1 ||
+                         cmd.strobe.len_frame_template > MAX_STROBE_TEMPLATE)) {
+    error_(seq, ErrorCode::OUT_OF_RANGE, field::tx::STROBE);
     return;
   }
   r.freq_hz = cmd.freq_hz;  // tx.freq_hz becomes the radio's frequency (spec §3.1); a scan ends
@@ -829,15 +829,15 @@ void FakeCoprocessor::queue_ready_(uint8_t cmd_seq, uint64_t due_us) {
   for (const RadioDescriptor &d : descriptors_) {
     w.add_radio(d);
   }
-  if (config_.with_rx_queue_depth)
-    w.add_u8(static_cast<uint8_t>(InfoId::RX_QUEUE_DEPTH), 16);
+  if (config_.with_event_queue_depth)
+    w.add_u8(static_cast<uint8_t>(InfoId::EVENT_QUEUE_DEPTH), 16);
   if (config_.with_reset_cause)
     w.add_u8(static_cast<uint8_t>(InfoId::RESET_CAUSE), static_cast<uint8_t>(config_.reset_cause));
   Ready ready;
   ready.cmd_seq = cmd_seq;
   ready.proto_major = config_.proto_major;
   ready.proto_minor = config_.proto_minor;
-  ready.chip_id = config_.chip_id;
+  ready.mcu = config_.mcu;
   ready.caps = 0;
   ready.info = w.span();
   queue_(ready, due_us);

@@ -102,7 +102,7 @@ inline std::unique_ptr<RadioStandIn> make_stand_in(const corpus::CorpusCapture &
 }
 
 /// The 868 MHz bridge a capture is replayed over: the Bridle driver on a scripted `gfsk_raw` co-processor,
-/// which reports each reply `rx_len` bytes after its sync word. Needs an active ManualClock.
+/// which reports each reply `rx_capture_bytes` bytes after its sync word. Needs an active ManualClock.
 inline std::unique_ptr<RadioStandIn> make_868_bridge_stand_in() { return std::make_unique<BridleStandIn868>(); }
 
 /// Corpus captures matching `pred`, e.g. captures_where([](auto *c) { return c->has_exchange; }).

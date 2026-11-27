@@ -55,7 +55,7 @@ TEST(RadioIo2g4Phy, UnwrapRecoversWhatWrapSent) {
   const auto frame = frame_of(20);
   auto psdu = psdu_of(frame);
   uint8_t out[64];
-  UnwrapResult r = io2g4_phy().unwrap(psdu.data(), psdu.size(), CrcState::OK, out, sizeof(out));
+  UnwrapResult r = io2g4_phy().unwrap(psdu.data(), psdu.size(), FcsState::OK, out, sizeof(out));
   ASSERT_EQ(r.status, UnwrapResult::Status::OK);
   ASSERT_EQ(r.frame_len, 20);
   EXPECT_EQ(0, std::memcmp(out, frame.data(), 20));
@@ -66,7 +66,7 @@ TEST(RadioIo2g4Phy, UnwrapStripsTheFcsAndKeepsTheLastFrameByte) {
   frame.back() = 0x77;
   auto psdu = psdu_of(frame);
   uint8_t out[64];
-  UnwrapResult r = io2g4_phy().unwrap(psdu.data(), psdu.size(), CrcState::OK, out, sizeof(out));
+  UnwrapResult r = io2g4_phy().unwrap(psdu.data(), psdu.size(), FcsState::OK, out, sizeof(out));
   ASSERT_EQ(r.status, UnwrapResult::Status::OK);
   EXPECT_EQ(out[r.frame_len - 1], 0x77);
 }
@@ -75,11 +75,11 @@ TEST(RadioIo2g4Phy, UnwrapRejectsAPayloadTooShortForAFrame) {
   uint8_t out[64];
   // 3 header + FRAME_MIN_SIZE (9) + 2 FCS = 14 bytes is the smallest.
   auto psdu = psdu_of(frame_of(9));
-  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), psdu.size(), CrcState::OK, out, sizeof(out)).status,
+  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), psdu.size(), FcsState::OK, out, sizeof(out)).status,
             UnwrapResult::Status::OK);
-  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), psdu.size() - 1, CrcState::OK, out, sizeof(out)).status,
+  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), psdu.size() - 1, FcsState::OK, out, sizeof(out)).status,
             UnwrapResult::Status::TOO_SHORT);
-  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), 0, CrcState::OK, out, sizeof(out)).status, UnwrapResult::Status::TOO_SHORT);
+  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), 0, FcsState::OK, out, sizeof(out)).status, UnwrapResult::Status::TOO_SHORT);
 }
 
 TEST(RadioIo2g4Phy, UnwrapReturnsTheThreeBytesOfAHeaderMismatch) {
@@ -88,7 +88,7 @@ TEST(RadioIo2g4Phy, UnwrapReturnsTheThreeBytesOfAHeaderMismatch) {
   psdu[1] = 0x99;
   psdu[2] = 0x98;
   uint8_t out[64];
-  UnwrapResult r = io2g4_phy().unwrap(psdu.data(), psdu.size(), CrcState::OK, out, sizeof(out));
+  UnwrapResult r = io2g4_phy().unwrap(psdu.data(), psdu.size(), FcsState::OK, out, sizeof(out));
   ASSERT_EQ(r.status, UnwrapResult::Status::HEADER_MISMATCH);
   EXPECT_EQ(r.header[0], 0x02);
   EXPECT_EQ(r.header[1], 0x99);
@@ -99,14 +99,14 @@ TEST(RadioIo2g4Phy, UnwrapReportsABadFcsBeforeLookingAtTheHeader) {
   auto psdu = psdu_of(frame_of(12));
   psdu[0] = 0x02;
   uint8_t out[64];
-  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), psdu.size(), CrcState::BAD, out, sizeof(out)).status,
+  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), psdu.size(), FcsState::BAD, out, sizeof(out)).status,
             UnwrapResult::Status::BAD_CRC);
 }
 
 TEST(RadioIo2g4Phy, UnwrapRefusesAFrameThatDoesNotFitTheOutput) {
   auto psdu = psdu_of(frame_of(30));
   uint8_t out[16];
-  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), psdu.size(), CrcState::OK, out, sizeof(out)).status,
+  EXPECT_EQ(io2g4_phy().unwrap(psdu.data(), psdu.size(), FcsState::OK, out, sizeof(out)).status,
             UnwrapResult::Status::TOO_LONG);
 }
 
@@ -148,7 +148,7 @@ TEST(RadioIo2g4Phy, LongWakeIsA510FrameStrobe) {
 }
 
 TEST(RadioIo2g4Phy, StrobeFramesCountDownToZeroFromATemplateOfThreeBytes) {
-  // Spec §5 vector tx_io_wake_strobe: template 00 00 00, a 16-bit counter at offset 1, adjust -1,
+  // Spec §5 vector tx_io2g4_wake_strobe: template 00 00 00, a 16-bit counter at offset 1, adjust -1,
   // period and counter unit 1 000 000 ns, main frame 1 036 000 ns after the last strobe start.
   const StrobeSpec &st = io2g4_phy().tx_shape(TxWake::LONG, 0).strobe;
   EXPECT_EQ(st.period_ns, 1000000u);
@@ -157,14 +157,14 @@ TEST(RadioIo2g4Phy, StrobeFramesCountDownToZeroFromATemplateOfThreeBytes) {
   EXPECT_EQ(st.counter_width, 2);
   EXPECT_EQ(st.counter_unit_ns, 1000000u);
   EXPECT_EQ(st.counter_adjust, -1);
-  ASSERT_EQ(st.len_template, 3);
-  EXPECT_EQ(st.template_bytes[0], 0);
-  EXPECT_EQ(st.template_bytes[1], 0);
-  EXPECT_EQ(st.template_bytes[2], 0);
+  ASSERT_EQ(st.len_frame_template, 3);
+  EXPECT_EQ(st.frame_template[0], 0);
+  EXPECT_EQ(st.frame_template[1], 0);
+  EXPECT_EQ(st.frame_template[2], 0);
 }
 
 TEST(RadioIo2g4Phy, ShapeOfTheSpecVectorMatchesTheVectorsFields) {
-  // The same numbers as vector tx_io_short_wake_strobe (count 8) apart from the count.
+  // The same numbers as vector tx_io2g4_short_wake_strobe (count 8) apart from the count.
   EXPECT_EQ(io2g4_phy().tx_shape(TxWake::SHORT, 0).strobe.period_ns,
             io2g4_phy().tx_shape(TxWake::LONG, 0).strobe.period_ns);
 }
@@ -205,7 +205,7 @@ TEST(RadioIo2g4Phy, IdleScanCyclesThreeChannelsAndHoldsForAnExchange) {
   EXPECT_EQ(scan.freqs_hz[2], 2475000000u);
 }
 
-TEST(RadioIo2g4Phy, AFrameIsArrivingFromTheSfd) { EXPECT_EQ(io2g4_phy().frame_arriving_stage(), FrameStage::SYNC); }
+TEST(RadioIo2g4Phy, AFrameIsArrivingFromTheSfd) { EXPECT_EQ(io2g4_phy().frame_arriving_stage(), RxStage::SYNC); }
 
 // === What the driver asks the co-processor for ===
 

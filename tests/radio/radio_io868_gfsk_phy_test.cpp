@@ -57,14 +57,14 @@ std::vector<uint8_t> wrapped(const std::vector<uint8_t> &frame) {
 }
 
 /// The coded bytes shifted `bits` bits into the stream (idle ones in front, as a line that was high), padded with
-/// deterministic noise to `rx_len` bytes: what a radio hands over when the sync word ends mid-cell.
+/// deterministic noise to `rx_capture_bytes` bytes: what a radio hands over when the sync word ends mid-cell.
 std::vector<uint8_t> raw_at_offset(const std::vector<uint8_t> &coded, unsigned bits) {
   std::vector<bool> stream(bits, true);
   for (uint8_t byte : coded) {
     for (int bit = 7; bit >= 0; bit--)
       stream.push_back(((byte >> bit) & 1U) != 0);
   }
-  std::vector<uint8_t> raw(IO868_RX_LEN, 0);
+  std::vector<uint8_t> raw(IO868_RX_CAPTURE_BYTES, 0);
   for (size_t i = 0; i < raw.size() * 8; i++) {
     const bool value = i < stream.size() ? stream[i] : ((i * 2654435761U) >> 7) & 1U;  // noise past the frame
     raw[i / 8] = static_cast<uint8_t>(raw[i / 8] | (value ? 0x80U >> (i % 8) : 0));
@@ -107,9 +107,9 @@ TEST(RadioIo868GfskPhy, TheReceiverBandwidthFollowsTheTuning) {
 }
 
 TEST(RadioIo868GfskPhy, ItsConstantsMatchTheSoftPhysProbeLengthAndLineRate) {
-  EXPECT_EQ(IO868_RX_LEN, SOFT_PHY_RX_PROBE_PACKET_LEN);
+  EXPECT_EQ(IO868_RX_CAPTURE_BYTES, SOFT_PHY_RX_PROBE_PACKET_LEN);
   EXPECT_EQ(IO868_BITRATE_BPS, IO868_LINE_RATE_BPS);
-  EXPECT_LE(SOFT_PHY_MAX_WIRE_FRAME_RAW_BYTES, IO868_RX_LEN)
+  EXPECT_LE(SOFT_PHY_MAX_WIRE_FRAME_RAW_BYTES, IO868_RX_CAPTURE_BYTES)
       << "the longest frame the hub has to recover (a 1W add-controller with its MAC) fits what the radio captures";
 }
 
@@ -159,7 +159,7 @@ TEST(RadioIo868GfskPhy, TheBandMustCoverAllThreeChannels) {
 }
 
 TEST(RadioIo868GfskPhy, ARadioWhosePayloadCannotHoldTheLongestFrameIsNotChosen) {
-  EXPECT_FALSE(io868_gfsk_phy().radio_fits(gfsk_radio_with([](RadioDescriptor &d) { d.max_payload = 34; })));
+  EXPECT_FALSE(io868_gfsk_phy().radio_fits(gfsk_radio_with([](RadioDescriptor &d) { d.max_payload_bytes = 34; })));
 }
 
 // === Frequencies ===
@@ -211,7 +211,7 @@ TEST(RadioIo868GfskPhy, UnwrapRecoversTheFrameAtEveryBitAlignmentWithNoiseBehind
   for (unsigned offset = 0; offset < UART_PROBE_MAX_BIT_OFFSET; offset++) {
     const auto raw = raw_at_offset(coded, offset);
     uint8_t out[RADIO_PACKET_BUFFER_SIZE];
-    const UnwrapResult r = io868_gfsk_phy().unwrap(raw.data(), raw.size(), CrcState::NOT_CHECKED, out, sizeof(out));
+    const UnwrapResult r = io868_gfsk_phy().unwrap(raw.data(), raw.size(), FcsState::NOT_CHECKED, out, sizeof(out));
     ASSERT_EQ(r.status, UnwrapResult::Status::OK) << "offset " << offset;
     ASSERT_EQ(r.frame_len, kFrame.size()) << "offset " << offset;
     EXPECT_EQ(std::vector<uint8_t>(out, out + r.frame_len), kFrame) << "offset " << offset;
@@ -219,13 +219,13 @@ TEST(RadioIo868GfskPhy, UnwrapRecoversTheFrameAtEveryBitAlignmentWithNoiseBehind
 }
 
 TEST(RadioIo868GfskPhy, NoiseIsNotAFrame) {
-  std::vector<uint8_t> noise(IO868_RX_LEN);
+  std::vector<uint8_t> noise(IO868_RX_CAPTURE_BYTES);
   for (size_t i = 0; i < noise.size(); i++)
     noise[i] = static_cast<uint8_t>(0x5A + i * 37);
   uint8_t out[RADIO_PACKET_BUFFER_SIZE];
-  EXPECT_EQ(io868_gfsk_phy().unwrap(noise.data(), noise.size(), CrcState::NOT_CHECKED, out, sizeof(out)).status,
+  EXPECT_EQ(io868_gfsk_phy().unwrap(noise.data(), noise.size(), FcsState::NOT_CHECKED, out, sizeof(out)).status,
             UnwrapResult::Status::BAD_CRC);
-  EXPECT_EQ(io868_gfsk_phy().unwrap(noise.data(), 0, CrcState::NOT_CHECKED, out, sizeof(out)).status,
+  EXPECT_EQ(io868_gfsk_phy().unwrap(noise.data(), 0, FcsState::NOT_CHECKED, out, sizeof(out)).status,
             UnwrapResult::Status::TOO_SHORT);
 }
 
@@ -234,14 +234,14 @@ TEST(RadioIo868GfskPhy, AFrameWithAWrongCrcIsNotAFrame) {
   coded[coded.size() - 2] = static_cast<uint8_t>(coded[coded.size() - 2] ^ 0x18);  // a bit of a CRC cell
   const auto raw = raw_at_offset(coded, 0);
   uint8_t out[RADIO_PACKET_BUFFER_SIZE];
-  EXPECT_EQ(io868_gfsk_phy().unwrap(raw.data(), raw.size(), CrcState::NOT_CHECKED, out, sizeof(out)).status,
+  EXPECT_EQ(io868_gfsk_phy().unwrap(raw.data(), raw.size(), FcsState::NOT_CHECKED, out, sizeof(out)).status,
             UnwrapResult::Status::BAD_CRC);
 }
 
 TEST(RadioIo868GfskPhy, AnOutputBufferThatIsTooSmallIsTooLong) {
   const auto raw = raw_at_offset(wrapped(kFrame), 3);
   uint8_t out[4];
-  EXPECT_EQ(io868_gfsk_phy().unwrap(raw.data(), raw.size(), CrcState::NOT_CHECKED, out, sizeof(out)).status,
+  EXPECT_EQ(io868_gfsk_phy().unwrap(raw.data(), raw.size(), FcsState::NOT_CHECKED, out, sizeof(out)).status,
             UnwrapResult::Status::TOO_LONG);
 }
 
@@ -291,7 +291,7 @@ TEST(RadioIo868GfskPhy, TheIdleScanIsTheSpecsVector) {
 }
 
 TEST(RadioIo868GfskPhy, AFrameIsArrivingFromItsPreambleOn) {
-  EXPECT_EQ(io868_gfsk_phy().frame_arriving_stage(), FrameStage::PREAMBLE);
+  EXPECT_EQ(io868_gfsk_phy().frame_arriving_stage(), RxStage::PREAMBLE);
 }
 
 TEST(RadioIo868GfskPhy, TheHopDwellComesFromTheSx1262TuningField) {

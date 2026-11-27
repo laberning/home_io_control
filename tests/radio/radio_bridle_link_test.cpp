@@ -436,7 +436,7 @@ TEST(RadioBridleLink, AnUnsolicitedReadyReconfiguresWithoutAnotherResetPulse) {
 TEST(RadioBridleLink, FramesQueuedBeforeARebootAreNotDeliveredAfterIt) {
   Rig rig;
   rig.radio.set_mode_rx();
-  rig.cp.inject_rx(2450000000u, {0x01, 0x69, 0x6F, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xAA, 0xBB});
+  rig.cp.inject_rx_frame(2450000000u, {0x01, 0x69, 0x6F, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xAA, 0xBB});
   rig.radio.is_sync_detected();  // drains the frame into the FIFO without taking it
   ASSERT_EQ(rig.radio.fifo_count(), 1u);
   rig.cp.reboot(ResetCause::SOFT);
@@ -505,7 +505,7 @@ TEST(RadioBridleLink, ARefusedRxScanIsRetriedAfterTheHoldOffAndNotBefore) {
 
 TEST(RadioBridleLink, ARefusedRxOnClearsReceiveAndIsNotSentAgainBeforeTheHoldOff) {
   Rig rig;
-  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, field::rx_on::FREQ_HZ);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, field::rx_on::FREQ_HZ);
   rig.radio.set_mode_rx();
   rig.pass();
   EXPECT_FALSE(rig.radio.rx_on_active());
@@ -520,7 +520,7 @@ TEST(RadioBridleLink, ARefusedRxOnClearsReceiveAndIsNotSentAgainBeforeTheHoldOff
 
 TEST(RadioBridleLink, ARefusalThatALaterTxOvertookChangesNoState) {
   Rig rig;
-  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, field::rx_on::FREQ_HZ);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, field::rx_on::FREQ_HZ);
   rig.radio.set_mode_rx();
   const auto frame = some_frame();
   ASSERT_TRUE(rig.radio.send_packet(frame.data(), frame.size(), channel_2()).sent());
@@ -574,7 +574,7 @@ TEST(RadioBridleLink, AReplyWithinTheCommandReplyTimeoutIsAReadingAlsoAtTheFirst
 
 TEST(RadioBridleLink, ABusyAnswerIsNoReadingAndIsNotAskedAgainOrTreatedAsAFault) {
   Rig rig;
-  rig.cp.reject_next(MsgType::GET_RSSI, ErrorCode::BUSY);
+  rig.cp.reject_next(MsgType::GET_RSSI, ErrorCode::RADIO_BUSY);
 
   EXPECT_FALSE(rig.radio.read_rssi().has_value());
 

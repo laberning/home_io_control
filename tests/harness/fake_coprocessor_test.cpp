@@ -111,7 +111,7 @@ TEST(FakeCoprocessor, BootSendsAReadyWithCounterZeroAndEveryRequiredTlv) {
   rig.cp.boot();
   rig.listen(500);
   ASSERT_EQ(rig.heard.size(), 1u);
-  EXPECT_EQ(rig.heard[0][1], 0) << "the event counter starts at 0 with the boot ready";
+  EXPECT_EQ(rig.heard[0][1], 0) << "the message counter starts at 0 with the boot ready";
   Ready ready = rig.get<Ready>(0);
   EXPECT_EQ(ready.cmd_seq, 0);
   EXPECT_EQ(ready.proto_minor, PROTO_MINOR);
@@ -239,7 +239,7 @@ TEST(FakeCoprocessor, AnUnknownParamRefusesTheWholeSetParamsAndNothingApplies) {
   EXPECT_EQ(rig.get<Error>(1).code, ErrorCode::NOT_CONFIGURED) << "the profile before the bad TLV did not apply";
 }
 
-TEST(FakeCoprocessor, APhyProfileThatIsNotTheFirstTlvIsParamRangeAndNothingApplies) {
+TEST(FakeCoprocessor, APhyProfileThatIsNotTheFirstTlvIsOutOfRangeAndNothingApplies) {
   Rig rig;
   uint8_t buf[16];
   TlvWriter w(buf, sizeof(buf));
@@ -252,7 +252,7 @@ TEST(FakeCoprocessor, APhyProfileThatIsNotTheFirstTlvIsParamRangeAndNothingAppli
   rig.listen(500);
   ASSERT_EQ(rig.heard.size(), 1u);
   Error err = rig.get<Error>(0);
-  EXPECT_EQ(err.code, ErrorCode::PARAM_RANGE);
+  EXPECT_EQ(err.code, ErrorCode::OUT_OF_RANGE);
   EXPECT_EQ(err.detail, static_cast<uint8_t>(ParamId::PHY_PROFILE));
   EXPECT_EQ(rig.cp.tx_power_dbm(), 8) << "the power TLV before it did not apply either";
 }
@@ -279,7 +279,7 @@ TEST(FakeCoprocessor, ABadRadioIndexIsNoSuchRadioWithTheIndex) {
 
 // === Errors in the specified order ===
 
-TEST(FakeCoprocessor, UnknownTypeThenBadLengthThenNotConfigured) {
+TEST(FakeCoprocessor, UnknownTypeThenMalformedThenNotConfigured) {
   Rig rig;
   uint8_t msg[MAX_MESSAGE_SIZE];
   auto send_raw = [&](uint8_t type, const std::vector<uint8_t> &body) {
@@ -294,7 +294,7 @@ TEST(FakeCoprocessor, UnknownTypeThenBadLengthThenNotConfigured) {
   rig.listen(500);
   ASSERT_EQ(rig.heard.size(), 3u);
   EXPECT_EQ(rig.get<Error>(0).code, ErrorCode::UNKNOWN_TYPE);
-  EXPECT_EQ(rig.get<Error>(1).code, ErrorCode::BAD_LENGTH);
+  EXPECT_EQ(rig.get<Error>(1).code, ErrorCode::MALFORMED);
   EXPECT_EQ(rig.get<Error>(2).code, ErrorCode::NOT_CONFIGURED);
 }
 
@@ -319,7 +319,7 @@ TEST(FakeCoprocessor, GetRssiIsNotReceivingWhileIdleAndBusyWhileTransmitting) {
   rig.send(Rig::tx_of(payload));
   rig.send(probe);
   rig.listen(100);
-  EXPECT_EQ(rig.get<Error>(rig.heard.size() - 1).code, ErrorCode::BUSY);
+  EXPECT_EQ(rig.get<Error>(rig.heard.size() - 1).code, ErrorCode::RADIO_BUSY);
 }
 
 TEST(FakeCoprocessor, EveryCommandWithNothingToReportGetsOneAckNamingItsSeq) {
@@ -350,7 +350,7 @@ TEST(FakeCoprocessor, ASoftResetAcksBeforeItRebootsAndTheBootReadyFollowsWithCou
   ASSERT_EQ(rig.heard.size(), 2u);
   EXPECT_EQ(rig.get<Ack>(0).cmd_seq, seq);
   EXPECT_EQ(rig.get<Ready>(1).cmd_seq, 0);
-  EXPECT_EQ(rig.heard[1][1], 0) << "the boot ready restarts the event counter";
+  EXPECT_EQ(rig.heard[1][1], 0) << "the boot ready restarts the message counter";
   EXPECT_EQ(rig.cp.event_mask(), 0);
 }
 
@@ -378,7 +378,7 @@ TEST(FakeCoprocessor, ARefusedRxScanKeepsTheRadioWhereItWas) {
   rig.listen(500);
   ASSERT_EQ(rig.heard.size(), 2u);
   Error err = rig.get<Error>(1);
-  EXPECT_EQ(err.code, ErrorCode::PARAM_RANGE);
+  EXPECT_EQ(err.code, ErrorCode::OUT_OF_RANGE);
   EXPECT_EQ(err.detail, field::rx_scan::DWELL_US);
   EXPECT_FALSE(rig.cp.scanning());
   EXPECT_EQ(rig.cp.freq_hz(), 2450000000u);
@@ -402,7 +402,7 @@ TEST(FakeCoprocessor, RxOnOutsideTheBandNamesItsFrequencyFieldAndSetsNothing) {
   rig.listen(500);
   ASSERT_EQ(rig.heard.size(), 1u);
   Error err = rig.get<Error>(0);
-  EXPECT_EQ(err.code, ErrorCode::PARAM_RANGE);
+  EXPECT_EQ(err.code, ErrorCode::OUT_OF_RANGE);
   EXPECT_EQ(err.detail, field::rx_on::FREQ_HZ);
   EXPECT_FALSE(rig.cp.receiving());
 }
@@ -421,7 +421,7 @@ TEST(FakeCoprocessor, AScriptedRejectionAnswersOnlyTheNextCommandOfThatType) {
   EXPECT_TRUE(rig.cp.receiving()) << "the second one went through";
 }
 
-TEST(FakeCoprocessor, ARxScanOutsideTheLimitsIsParamRange) {
+TEST(FakeCoprocessor, ARxScanOutsideTheLimitsIsOutOfRange) {
   Rig rig;
   rig.configure();
   RxScan scan;
@@ -431,7 +431,7 @@ TEST(FakeCoprocessor, ARxScanOutsideTheLimitsIsParamRange) {
   rig.send(scan);
   rig.listen(500);
   ASSERT_EQ(rig.heard.size(), 1u);
-  EXPECT_EQ(rig.get<Error>(0).code, ErrorCode::PARAM_RANGE);
+  EXPECT_EQ(rig.get<Error>(0).code, ErrorCode::OUT_OF_RANGE);
   EXPECT_FALSE(rig.cp.scanning());
 }
 
@@ -524,7 +524,7 @@ TEST(FakeCoprocessor, ASecondTxDuringATransmissionIsBusy) {
   rig.send(Rig::tx_of(PAYLOAD));
   rig.listen(100);
   ASSERT_EQ(rig.heard.size(), 1u);
-  EXPECT_EQ(rig.get<Error>(0).code, ErrorCode::BUSY);
+  EXPECT_EQ(rig.get<Error>(0).code, ErrorCode::RADIO_BUSY);
 }
 
 TEST(FakeCoprocessor, ARadioScopeSetParamsDuringATxIsBusyAndNotApplied) {
@@ -543,7 +543,7 @@ TEST(FakeCoprocessor, ARadioScopeSetParamsDuringATxIsBusyAndNotApplied) {
   EXPECT_EQ(rig.cp.set_params_during_tx(), 1u);
   EXPECT_EQ(rig.cp.tx_power_dbm(), 8) << "not applied";
   rig.listen(2000);
-  EXPECT_EQ(rig.get<Error>(0).code, ErrorCode::BUSY);
+  EXPECT_EQ(rig.get<Error>(0).code, ErrorCode::RADIO_BUSY);
   EXPECT_EQ(Rig::type_of(rig.heard.back()), static_cast<uint8_t>(MsgType::TX_DONE)) << "the tx still finishes";
 }
 
@@ -576,26 +576,26 @@ TEST(FakeCoprocessor, InjectedFramesReachTheHostOnlyWhileTheRadioReceivesAndTheM
   Rig rig;
   rig.configure(0x00);  // no events enabled beyond good rx
   std::vector<uint8_t> frame(16, 0x22);
-  rig.cp.inject_rx(2450000000u, frame);
+  rig.cp.inject_rx_frame(2450000000u, frame);
   rig.listen(100);
   EXPECT_TRUE(rig.heard.empty()) << "the radio is idle";
 
   rig.send(Rig::rx_on());
   rig.listen(100);
   rig.heard.clear();  // the ack
-  rig.cp.inject_rx(2450000000u, frame);
-  rig.cp.inject_rx(2450000000u, frame, CrcState::BAD);
-  rig.cp.inject_frame_start(2450000000u, FrameStage::SYNC);
+  rig.cp.inject_rx_frame(2450000000u, frame);
+  rig.cp.inject_rx_frame(2450000000u, frame, FcsState::BAD);
+  rig.cp.inject_rx_start(2450000000u, RxStage::SYNC);
   rig.listen(100);
-  ASSERT_EQ(rig.heard.size(), 1u) << "a bad-CRC rx and frame_start need their mask bits";
-  EXPECT_EQ(rig.get<Rx>(0).crc, CrcState::OK);
+  ASSERT_EQ(rig.heard.size(), 1u) << "a bad-CRC rx and rx_start need their mask bits";
+  EXPECT_EQ(rig.get<RxFrame>(0).fcs, FcsState::OK);
 
   rig.configure(0x0F);
   rig.send(Rig::rx_on());
   rig.listen(100);
   rig.heard.clear();
-  rig.cp.inject_rx(2450000000u, frame, CrcState::BAD);
-  rig.cp.inject_frame_start(2450000000u, FrameStage::SYNC);
+  rig.cp.inject_rx_frame(2450000000u, frame, FcsState::BAD);
+  rig.cp.inject_rx_start(2450000000u, RxStage::SYNC);
   rig.cp.inject_rx_abort(2450000000u, RxAbortReason::FORCED_RETUNE);
   rig.cp.inject_log(LogLevel::WARN, "hello");
   rig.listen(100);
@@ -612,11 +612,11 @@ TEST(FakeCoprocessor, TimedRepliesAreAnchoredAtTheMainFrameOfTheirSend) {
   rig.listen(5000);
   size_t rx_index = 0;
   for (size_t i = 0; i < rig.heard.size(); i++) {
-    if (Rig::type_of(rig.heard[i]) == static_cast<uint8_t>(MsgType::RX))
+    if (Rig::type_of(rig.heard[i]) == static_cast<uint8_t>(MsgType::RX_FRAME))
       rx_index = i;
   }
-  Rx rx = rig.get<Rx>(rx_index);
-  EXPECT_EQ(rx.t_us, static_cast<uint32_t>(start + 3000));
+  RxFrame rx = rig.get<RxFrame>(rx_index);
+  EXPECT_EQ(rx.t_sync_us, static_cast<uint32_t>(start + 3000));
   EXPECT_GT(rx_index, 0u) << "after tx_done, as the ordering rule needs";
 }
 
@@ -641,10 +641,10 @@ TEST(FakeCoprocessor, ScenarioRepliesCarryTheDriversSeqAndTheFakesCounter) {
   uint8_t const seq = rig.send(Rig::tx_of(PAYLOAD));
   rig.listen(7000);
   ASSERT_EQ(rig.heard.size(), 3u);
-  EXPECT_EQ(Rig::type_of(rig.heard[0]), static_cast<uint8_t>(MsgType::RX));
+  EXPECT_EQ(Rig::type_of(rig.heard[0]), static_cast<uint8_t>(MsgType::RX_FRAME));
   EXPECT_EQ(Rig::type_of(rig.heard[1]), static_cast<uint8_t>(MsgType::TX_DONE));
   EXPECT_EQ(rig.get<TxDone>(1).cmd_seq, seq) << "rewritten to the driver's command";
-  EXPECT_EQ(Rig::type_of(rig.heard[2]), static_cast<uint8_t>(MsgType::RX));
+  EXPECT_EQ(Rig::type_of(rig.heard[2]), static_cast<uint8_t>(MsgType::RX_FRAME));
   EXPECT_EQ(rig.heard[1][1], static_cast<uint8_t>(rig.heard[0][1] + 1)) << "the fake's own counter";
 }
 
@@ -720,7 +720,7 @@ TEST(FakeCoprocessorPlayback, ARepliesSeqIsRewrittenToTheDriversCommandAndTheCou
   uint8_t const idle_seq = rig.send(Idle{0});
   rig.listen(20000);
   ASSERT_EQ(rig.heard.size(), 2u);
-  EXPECT_EQ(rig.heard[0][1], 0) << "the fake's own event counter";
+  EXPECT_EQ(rig.heard[0][1], 0) << "the fake's own message counter";
   EXPECT_EQ(rig.heard[1][1], 1);
   EXPECT_EQ(rig.get<Stats>(1).cmd_seq, idle_seq) << "the recording's cmd_seq 2 is the driver's second command";
   EXPECT_TRUE(rig.cp.playback_errors().empty());

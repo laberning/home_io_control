@@ -359,7 +359,7 @@ FILE_REGEX="^($(printf '%s\n' "${FILES_ARRAY[@]}" | sed -e 's/[][\\.*^$+?(){}|]/
 
 HEADER_FILTER='(^|.*/)components/home_io_control/.*'
 # The generated header of a Bridle release (scripts/bridle-update.sh) is not linted here.
-EXCLUDE_HEADER_FILTER='(^|.*/)radio_bridle_enums\.h$'
+EXCLUDE_HEADER_FILTER='(^|.*/)radio_bridle_protocol\.h$'
 JOBS="${CLANG_TIDY_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)}"
 
 filter_tidy_output() {

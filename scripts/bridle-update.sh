@@ -19,7 +19,7 @@ BRIDLE_REPO="laberning/bridle"
 BRIDLE_CHECKOUT="${BRIDLE_CHECKOUT:-$REPO_ROOT/../bridle}"  # --dist only: where the tag's commit id is read from
 
 # === Where this repository keeps the release ===
-ENUMS_DEST="components/home_io_control/radio_bridle_enums.h"      # the header the firmware includes
+PROTOCOL_DEST="components/home_io_control/radio_bridle_protocol.h"      # the header the firmware includes
 TEST_DIR="tests/bridle"          # vectors and scenarios headers, used by the host tests
 VERSION_FILE="$REPO_ROOT/BRIDLE_VERSION"
 REQUIREMENTS="$REPO_ROOT/scripts/requirements-dev.txt"
@@ -42,7 +42,7 @@ field() { sed -n "s/^$1=//p" "$VERSION_FILE"; }
 
 if [[ "$mode" == "check" ]]; then
   status=0
-  for pair in "bridle_enums.h:$ENUMS_DEST" "bridle_vectors.h:$TEST_DIR/bridle_vectors.h" "bridle_scenarios.h:$TEST_DIR/bridle_scenarios.h"; do
+  for pair in "bridle_protocol.h:$PROTOCOL_DEST" "bridle_vectors.h:$TEST_DIR/bridle_vectors.h" "bridle_scenarios.h:$TEST_DIR/bridle_scenarios.h"; do
     name="${pair%%:*}"; path="$REPO_ROOT/${pair#*:}"
     want="$(sed -n "s/^$name sha256=//p" "$VERSION_FILE")"
     have="$(sha256sum "$path" | cut -d' ' -f1)"
@@ -50,7 +50,7 @@ if [[ "$mode" == "check" ]]; then
   done
   want_pin="bridle-protocol @ https://github.com/$BRIDLE_REPO/releases/download/$(field tag)/"
   # The release names the protocol it carries; the committed header says the same.
-  header_proto="$(sed -n 's/.*PROTO_MAJOR = \([0-9]*\);.*/\1/p' "$REPO_ROOT/$ENUMS_DEST").$(sed -n 's/.*PROTO_MINOR = \([0-9]*\);.*/\1/p' "$REPO_ROOT/$ENUMS_DEST")"
+  header_proto="$(sed -n 's/.*PROTO_MAJOR = \([0-9]*\);.*/\1/p' "$REPO_ROOT/$PROTOCOL_DEST").$(sed -n 's/.*PROTO_MINOR = \([0-9]*\);.*/\1/p' "$REPO_ROOT/$PROTOCOL_DEST")"
   [[ "$(field protocol)" == "$header_proto" ]] \
     || { echo "bridle-check: BRIDLE_VERSION says protocol $(field protocol), the header $header_proto; run scripts/bridle-update.sh" >&2; status=1; }
   grep -q "^$want_pin.*#sha256=$(field wheel_sha256)\$" "$REQUIREMENTS" \
@@ -110,8 +110,8 @@ else
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die "cannot find the commit of $tag (no checkout at $BRIDLE_CHECKOUT, tag not on GitHub)"
 fi
 
-mkdir -p "$(dirname "$REPO_ROOT/$ENUMS_DEST")" "$REPO_ROOT/$TEST_DIR"
-cp "$WORK/headers/bridle_enums.h" "$REPO_ROOT/$ENUMS_DEST"
+mkdir -p "$(dirname "$REPO_ROOT/$PROTOCOL_DEST")" "$REPO_ROOT/$TEST_DIR"
+cp "$WORK/headers/bridle_protocol.h" "$REPO_ROOT/$PROTOCOL_DEST"
 cp "$WORK/headers/bridle_vectors.h" "$WORK/headers/bridle_scenarios.h" "$REPO_ROOT/$TEST_DIR/"
 {
   cat "$WORK/headers/BRIDLE_VERSION"

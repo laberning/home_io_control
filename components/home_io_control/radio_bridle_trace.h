@@ -47,7 +47,8 @@ static constexpr size_t TRACE_LINE_MAX = 320;
 /// itself (all of a check's CHANNEL_CHECK_READINGS but the last, which the co-processor takes with the `tx`).
 static constexpr size_t TRACE_CHANNEL_CHECK_LINES = 2 + (2 * (CHANNEL_CHECK_READINGS - 1));
 /// Trace lines of an authenticated exchange after its channel check: the request's `tx` and `tx_done`, the
-/// challenge's `frame_start` and `rx`, the answer's `tx` and `tx_done` and the final reply's `frame_start` and `rx`.
+/// challenge's `rx_start` and `rx_frame`, the answer's `tx` and `tx_done` and the final reply's `rx_start` and
+/// `rx_frame`.
 static constexpr size_t TRACE_EXCHANGE_LINES = 8;
 /// Held lines of a `tx` the co-processor refuses for a busy channel after the hub's own readings found it clear: the
 /// `tx`, its `error`, the co-processor's `log` event and the warning that prints it. The request then takes a second

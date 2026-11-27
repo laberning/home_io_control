@@ -127,7 +127,7 @@ void write_radio(Writer &w, const RadioDescriptor &d) {
   w.u32(d.band_max_hz);
   w.u8(static_cast<uint8_t>(d.tx_power_min_dbm));
   w.u8(static_cast<uint8_t>(d.tx_power_max_dbm));
-  w.u8(d.max_payload);
+  w.u8(d.max_payload_bytes);
   w.u16(d.max_preamble_bytes);
   w.u16(d.strobe_jitter_us);
   w.u32(d.caps);
@@ -141,7 +141,7 @@ void read_radio(Reader &r, RadioDescriptor &d) {
   d.band_max_hz = r.u32();
   d.tx_power_min_dbm = static_cast<int8_t>(r.u8());
   d.tx_power_max_dbm = static_cast<int8_t>(r.u8());
-  d.max_payload = r.u8();
+  d.max_payload_bytes = r.u8();
   d.max_preamble_bytes = r.u16();
   d.strobe_jitter_us = r.u16();
   d.caps = r.u32();
@@ -187,7 +187,7 @@ bool read(Reader &r, GetRssi &m) {
 }
 
 void write(Writer &w, const StrobeSpec &s) {
-  if (s.len_template > MAX_STROBE_TEMPLATE)
+  if (s.len_frame_template > MAX_STROBE_TEMPLATE)
     w.fail();
   w.u16(s.count);
   w.u32(s.period_ns);
@@ -196,7 +196,7 @@ void write(Writer &w, const StrobeSpec &s) {
   w.u8(s.counter_width);
   w.u32(s.counter_unit_ns);
   w.u16(static_cast<uint16_t>(s.counter_adjust));
-  w.prefixed({s.template_bytes, s.len_template});
+  w.prefixed({s.frame_template, s.len_frame_template});
 }
 void read(Reader &r, StrobeSpec &s) {
   s.count = r.u16();
@@ -206,13 +206,13 @@ void read(Reader &r, StrobeSpec &s) {
   s.counter_width = r.u8();
   s.counter_unit_ns = r.u32();
   s.counter_adjust = static_cast<int16_t>(r.u16());
-  s.len_template = r.u8();
-  ByteSpan const tmpl = r.bytes(s.len_template);
-  // A template over the limit is a value error (param_range) for the receiver, not a layout
-  // error, so the codec keeps what fits and leaves len_template to report it.
+  s.len_frame_template = r.u8();
+  ByteSpan const tmpl = r.bytes(s.len_frame_template);
+  // A template over the limit is a value error (out_of_range) for the receiver, not a layout
+  // error, so the codec keeps what fits and leaves len_frame_template to report it.
   size_t const kept = tmpl.size < MAX_STROBE_TEMPLATE ? tmpl.size : MAX_STROBE_TEMPLATE;
   if (kept > 0)
-    std::memcpy(s.template_bytes, tmpl.data, kept);
+    std::memcpy(s.frame_template, tmpl.data, kept);
 }
 
 void write(Writer &w, const Tx &m) {
@@ -222,7 +222,7 @@ void write(Writer &w, const Tx &m) {
        flag(m.at_time, tx_flags::AT_TIME) | flag(m.cca, tx_flags::CCA));
   w.u16(m.preamble_bytes);
   if (m.at_time)
-    w.u32(m.t_main_us);
+    w.u32(m.t_main_start_us);
   if (m.cca)
     w.u8(static_cast<uint8_t>(m.cca_threshold_dbm));
   if (m.has_strobe)
@@ -239,7 +239,7 @@ bool read(Reader &r, Tx &m) {
   m.cca = (flags & tx_flags::CCA) != 0;
   m.preamble_bytes = r.u16();
   if (m.at_time)
-    m.t_main_us = r.u32();
+    m.t_main_start_us = r.u32();
   if (m.cca)
     m.cca_threshold_dbm = static_cast<int8_t>(r.u8());
   if (m.has_strobe)
@@ -278,7 +278,7 @@ bool read(Reader &r, RxScan &m) {
   m.hold_us = r.u16();
   m.num_freqs = r.u8();
   // Frequencies past the limit are still consumed so the layout check sees the true length; the
-  // receiver answers them with param_range.
+  // receiver answers them with out_of_range.
   for (size_t i = 0; i < m.num_freqs; i++) {
     uint32_t const freq = r.u32();
     if (i < MAX_SCAN_FREQS)
@@ -291,7 +291,7 @@ void write(Writer &w, const Ready &m) {
   w.u8(m.cmd_seq);
   w.u8(m.proto_major);
   w.u8(m.proto_minor);
-  w.u16(m.chip_id);
+  w.u16(m.mcu);
   w.u32(m.caps);
   w.span(m.info);
 }
@@ -299,7 +299,7 @@ bool read(Reader &r, Ready &m) {
   m.cmd_seq = r.u8();
   m.proto_major = r.u8();
   m.proto_minor = r.u8();
-  m.chip_id = r.u16();
+  m.mcu = r.u16();
   m.caps = r.u32();
   m.info = r.rest();
   return r.done() && tlv_list_valid(m.info);
@@ -323,36 +323,36 @@ bool read(Reader &r, ParamsAck &m) {
   return r.done() && tlv_list_valid(m.applied);
 }
 
-void write(Writer &w, const FrameStart &m) {
+void write(Writer &w, const RxStart &m) {
   w.u8(m.radio);
   w.u32(m.t_us);
   w.u32(m.freq_hz);
   w.u8(static_cast<uint8_t>(m.stage));
 }
-bool read(Reader &r, FrameStart &m) {
+bool read(Reader &r, RxStart &m) {
   m.radio = r.u8();
   m.t_us = r.u32();
   m.freq_hz = r.u32();
-  m.stage = static_cast<FrameStage>(r.u8());
+  m.stage = static_cast<RxStage>(r.u8());
   return r.done();
 }
 
-void write(Writer &w, const Rx &m) {
+void write(Writer &w, const RxFrame &m) {
   w.u8(m.radio);
-  w.u32(m.t_us);
+  w.u32(m.t_sync_us);
   w.u32(m.freq_hz);
   w.u8(static_cast<uint8_t>(m.rssi_dbm));
   w.u8(m.lqi);
-  w.u8(static_cast<uint8_t>(m.crc));
+  w.u8(static_cast<uint8_t>(m.fcs));
   w.prefixed(m.payload);
 }
-bool read(Reader &r, Rx &m) {
+bool read(Reader &r, RxFrame &m) {
   m.radio = r.u8();
-  m.t_us = r.u32();
+  m.t_sync_us = r.u32();
   m.freq_hz = r.u32();
   m.rssi_dbm = static_cast<int8_t>(r.u8());
   m.lqi = r.u8();
-  m.crc = static_cast<CrcState>(r.u8());
+  m.fcs = static_cast<FcsState>(r.u8());
   m.payload = r.prefixed();
   return r.done();
 }
@@ -454,7 +454,7 @@ void write(Writer &w, const Unknown &m) { w.span(m.body); }
 template<class T> DecodeStatus decode_as(Reader &r, Body &body) {
   T value{};
   if (!read(r, value))
-    return DecodeStatus::BAD_LENGTH;
+    return DecodeStatus::MALFORMED;
   body = value;
   return DecodeStatus::OK;
 }
@@ -563,7 +563,7 @@ size_t encode_frame(uint8_t seq, const Body &body, uint8_t *out, size_t cap) {
 
 DecodeStatus decode_message(const uint8_t *msg, size_t n, Message &out) {
   if (n < MIN_MESSAGE_SIZE)
-    return DecodeStatus::BAD_LENGTH;
+    return DecodeStatus::MALFORMED;
   uint8_t const type = msg[0];
   out.seq = msg[1];
   Reader r(msg + 2, n - MIN_MESSAGE_SIZE);
@@ -594,10 +594,10 @@ DecodeStatus decode_message(const uint8_t *msg, size_t n, Message &out) {
       return decode_as<ParamsAck>(r, out.body);
     case MsgType::ACK:
       return decode_as<Ack>(r, out.body);
-    case MsgType::FRAME_START:
-      return decode_as<FrameStart>(r, out.body);
-    case MsgType::RX:
-      return decode_as<Rx>(r, out.body);
+    case MsgType::RX_START:
+      return decode_as<RxStart>(r, out.body);
+    case MsgType::RX_FRAME:
+      return decode_as<RxFrame>(r, out.body);
     case MsgType::RX_ABORT:
       return decode_as<RxAbort>(r, out.body);
     case MsgType::TX_DONE:
@@ -785,11 +785,11 @@ ReadyInfoStatus parse_ready_info(ByteSpan info, ReadyInfo &out) {
         if (out.radio_count < MAX_RADIOS)
           read_radio(r, out.radios[out.radio_count++]);
         break;
-      case InfoId::RX_QUEUE_DEPTH:
+      case InfoId::EVENT_QUEUE_DEPTH:
         if (value.size != 1)
           return ReadyInfoStatus::BAD_TLV;
-        out.rx_queue_depth = r.u8();
-        out.has_rx_queue_depth = true;
+        out.event_queue_depth = r.u8();
+        out.has_event_queue_depth = true;
         break;
       case InfoId::RESET_CAUSE:
         if (value.size != 1)

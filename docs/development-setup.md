@@ -43,7 +43,7 @@ tests the host stubs themselves. The doubles the suites share are in `tests/supp
 Makefile finds it there. Any compiler warning fails the host build.
 
 `tests/fullstack/` is the exception: its tests need a Bridle simulator, a program that speaks the
-[simulator control channel](https://github.com/laberning/bridle/blob/bridle-v0.8.0/README.md#111-simulator-control-channel)
+[simulator control channel](https://github.com/laberning/bridle/blob/bridle-v0.9.0/README.md#111-simulator-control-channel)
 of the Bridle specification and has an 802.15.4 radio. `make fullstack` builds and runs them against the
 simulator that `BRIDLE_SIM` names, and `make unit-test` does not build them.
 

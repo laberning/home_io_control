@@ -19,9 +19,9 @@ For each PSDU the ingester checks the FCS (CRC-16/KERMIT, protolib.crc_ccitt()),
   `freq` from the channel and `t_us` rebased to the log's first timestamp.
 
 A Bridle trace of a co-processor listen session (spec §12.1) is read with `--from-trace`: its
-`rx` events with a good FCS become the same lines (the payload already holds the FCS; `t_us` marks the SFD
+`rx_frame` events with a good FCS become the same lines (the payload already holds the FCS; `t_sync_us` marks the SFD
 and has a 1 µs tick, which the capture records as `t_us_stamp`), and `--window FROM:TO` keeps the seconds
-of the session, counted from the first frame of the trace (the first `rx` event, whatever its FCS, or with `--with-tx` the first frame sent, if earlier), that hold the wanted exchange.
+of the session, counted from the first frame of the trace (the first `rx_frame` event, whatever its FCS, or with `--with-tx` the first frame sent, if earlier), that hold the wanted exchange.
 
 `--with-tx` adds the frames the host commanded in that session (a bench tool's requests and answers): each `tx`
 command is read with its `tx_done`, and a strobe in the command becomes the wake train in front of the frame, as the
@@ -141,7 +141,7 @@ def _tx_lines(command: dict, done: dict) -> "list[tuple[int, int, str]]":
             raise SnifferLogError(f"a transmission of the trace had {done['strobe_late']} late strobe frames, so its "
                                   "train has no commanded schedule to read")
         count, period_ns, gap_ns = strobe["count"], strobe["period_ns"], strobe["main_gap_ns"]
-        if strobe["template"] != "000000" or strobe["counter_offset"] != 1 or strobe["counter_width"] != 2:
+        if strobe["frame_template"] != "000000" or strobe["counter_offset"] != 1 or strobe["counter_width"] != 2:
             raise SnifferLogError("a strobe of the trace has a template other than `00` + a 16-bit counter")
         for i in range(done["strobe_sent"]):
             counter = count - 1 - i
@@ -179,10 +179,10 @@ def trace_to_sniffer_log(text: str, window_s: "tuple[float, float] | None" = Non
 
     for message in messages:
         fields = message["fields"]
-        if message["msg_type"] == "rx":
-            t_us = unwrapped(fields["t_us"])
+        if message["msg_type"] == "rx_frame":
+            t_us = unwrapped(fields["t_sync_us"])
             first_us = t_us if first_us is None else min(first_us, t_us)
-            if fields["crc"] == "ok":
+            if fields["fcs"] == "ok":
                 channel = protolib.ieee802154_channel_of_freq_hz(fields["freq_hz"])
                 timed.append((t_us, channel, bytes.fromhex(fields["payload"]).hex(" ").upper()))
         elif with_tx and message["msg_type"] == "tx_done" and fields["cmd_seq"] in pending:

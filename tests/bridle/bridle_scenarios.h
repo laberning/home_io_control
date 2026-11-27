@@ -15,7 +15,7 @@ struct ScenarioHostStep {
 
 /// A message the co-processor emits in a scenario, complete with CRC.
 ///
-/// Byte 1 of `message` is the event counter and, for a reply, byte 2 the answered command's
+/// Byte 1 of `message` is the message counter and, for a reply, byte 2 the answered command's
 /// `seq`: both belong to the scenario's own numbering, so a player rewrites them to match the
 /// driver under test and recomputes the CRC.
 struct ScenarioEvent {
@@ -53,9 +53,9 @@ inline constexpr ScenarioHostStep SCENARIO_0_HOST[] = {
     {1000, 0x06, 10},  // tx
 };
 inline constexpr ScenarioEvent SCENARIO_0_EVENTS[] = {
-    {2000, -1, SCENARIO_0_EVENT_0, 33},  // rx
+    {2000, -1, SCENARIO_0_EVENT_0, 33},  // rx_frame
     {4000, 0, SCENARIO_0_EVENT_1, 18},  // tx_done
-    {6000, -1, SCENARIO_0_EVENT_2, 33},  // rx
+    {6000, -1, SCENARIO_0_EVENT_2, 33},  // rx_frame
 };
 
 // retune_deferred_during_frame
@@ -77,8 +77,8 @@ inline constexpr ScenarioHostStep SCENARIO_1_HOST[] = {
 };
 inline constexpr ScenarioEvent SCENARIO_1_EVENTS[] = {
     {800, 0, SCENARIO_1_EVENT_0, 5},  // ack
-    {1500, -1, SCENARIO_1_EVENT_1, 33},  // rx
-    {4000, -1, SCENARIO_1_EVENT_2, 33},  // rx
+    {1500, -1, SCENARIO_1_EVENT_1, 33},  // rx_frame
+    {4000, -1, SCENARIO_1_EVENT_2, 33},  // rx_frame
 };
 
 // retune_forced_during_frame
@@ -99,7 +99,7 @@ inline constexpr ScenarioHostStep SCENARIO_2_HOST[] = {
 inline constexpr ScenarioEvent SCENARIO_2_EVENTS[] = {
     {800, 0, SCENARIO_2_EVENT_0, 5},  // ack
     {1000, -1, SCENARIO_2_EVENT_1, 14},  // rx_abort
-    {4000, -1, SCENARIO_2_EVENT_2, 33},  // rx
+    {4000, -1, SCENARIO_2_EVENT_2, 33},  // rx_frame
 };
 
 // idle_drops_a_frame_in_progress
@@ -207,27 +207,27 @@ inline constexpr ScenarioHostStep SCENARIO_4_HOST[] = {
 };
 inline constexpr ScenarioEvent SCENARIO_4_EVENTS[] = {
     {500, 0, SCENARIO_4_EVENT_0, 5},  // ack
-    {14380, -1, SCENARIO_4_EVENT_1, 22},  // rx
-    {14380, -1, SCENARIO_4_EVENT_2, 22},  // rx
-    {14380, -1, SCENARIO_4_EVENT_3, 22},  // rx
-    {14380, -1, SCENARIO_4_EVENT_4, 22},  // rx
-    {14380, -1, SCENARIO_4_EVENT_5, 22},  // rx
-    {14380, -1, SCENARIO_4_EVENT_6, 22},  // rx
-    {14380, -1, SCENARIO_4_EVENT_7, 22},  // rx
-    {14380, -1, SCENARIO_4_EVENT_8, 22},  // rx
-    {14380, -1, SCENARIO_4_EVENT_9, 33},  // rx
-    {25600, -1, SCENARIO_4_EVENT_10, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_11, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_12, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_13, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_14, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_15, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_16, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_17, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_18, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_19, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_20, 22},  // rx
-    {25600, -1, SCENARIO_4_EVENT_21, 22},  // rx
+    {14380, -1, SCENARIO_4_EVENT_1, 22},  // rx_frame
+    {14380, -1, SCENARIO_4_EVENT_2, 22},  // rx_frame
+    {14380, -1, SCENARIO_4_EVENT_3, 22},  // rx_frame
+    {14380, -1, SCENARIO_4_EVENT_4, 22},  // rx_frame
+    {14380, -1, SCENARIO_4_EVENT_5, 22},  // rx_frame
+    {14380, -1, SCENARIO_4_EVENT_6, 22},  // rx_frame
+    {14380, -1, SCENARIO_4_EVENT_7, 22},  // rx_frame
+    {14380, -1, SCENARIO_4_EVENT_8, 22},  // rx_frame
+    {14380, -1, SCENARIO_4_EVENT_9, 33},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_10, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_11, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_12, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_13, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_14, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_15, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_16, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_17, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_18, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_19, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_20, 22},  // rx_frame
+    {25600, -1, SCENARIO_4_EVENT_21, 22},  // rx_frame
 };
 
 // short_frames_below_rx_min_psdu_are_dropped
@@ -260,10 +260,10 @@ inline constexpr ScenarioHostStep SCENARIO_5_HOST[] = {
 };
 inline constexpr ScenarioEvent SCENARIO_5_EVENTS[] = {
     {500, 0, SCENARIO_5_EVENT_0, 5},  // ack
-    {12500, -1, SCENARIO_5_EVENT_1, 14},  // frame_start
-    {14380, -1, SCENARIO_5_EVENT_2, 33},  // rx
-    {14900, -1, SCENARIO_5_EVENT_3, 14},  // frame_start
-    {16300, -1, SCENARIO_5_EVENT_4, 23},  // rx
+    {12500, -1, SCENARIO_5_EVENT_1, 14},  // rx_start
+    {14380, -1, SCENARIO_5_EVENT_2, 33},  // rx_frame
+    {14900, -1, SCENARIO_5_EVENT_3, 14},  // rx_start
+    {16300, -1, SCENARIO_5_EVENT_4, 23},  // rx_frame
     {19000, 1, SCENARIO_5_EVENT_5, 45},  // stats
 };
 
@@ -289,8 +289,8 @@ inline constexpr ScenarioHostStep SCENARIO_6_HOST[] = {
 };
 inline constexpr ScenarioEvent SCENARIO_6_EVENTS[] = {
     {600, 0, SCENARIO_6_EVENT_0, 5},  // ack
-    {5400, -1, SCENARIO_6_EVENT_1, 14},  // frame_start
-    {6800, -1, SCENARIO_6_EVENT_2, 23},  // rx
+    {5400, -1, SCENARIO_6_EVENT_1, 14},  // rx_start
+    {6800, -1, SCENARIO_6_EVENT_2, 23},  // rx_frame
     {9000, 1, SCENARIO_6_EVENT_3, 45},  // stats
 };
 
@@ -340,7 +340,7 @@ inline constexpr ScenarioEvent SCENARIO_9_EVENTS[] = {
     {7000, 1, SCENARIO_9_EVENT_1, 18},  // tx_done
 };
 
-// newer_rx_on_replaces_a_pending_retune
+// newer_rx_on_replaces_a_waiting_retune
 inline constexpr uint8_t SCENARIO_10_EVENT_0[] = {
     0x82, 0x00, 0x16, 0xE3, 0xCC,
 };
@@ -364,11 +364,11 @@ inline constexpr ScenarioHostStep SCENARIO_10_HOST[] = {
 inline constexpr ScenarioEvent SCENARIO_10_EVENTS[] = {
     {900, 0, SCENARIO_10_EVENT_0, 5},  // ack
     {1000, 1, SCENARIO_10_EVENT_1, 5},  // ack
-    {1500, -1, SCENARIO_10_EVENT_2, 33},  // rx
-    {4000, -1, SCENARIO_10_EVENT_3, 33},  // rx
+    {1500, -1, SCENARIO_10_EVENT_2, 33},  // rx_frame
+    {4000, -1, SCENARIO_10_EVENT_3, 33},  // rx_frame
 };
 
-// rx_on_to_the_current_frequency_cancels_a_pending_retune
+// rx_on_to_the_current_frequency_cancels_a_waiting_retune
 inline constexpr uint8_t SCENARIO_11_EVENT_0[] = {
     0x82, 0x00, 0x18, 0x9D, 0x25,
 };
@@ -392,8 +392,8 @@ inline constexpr ScenarioHostStep SCENARIO_11_HOST[] = {
 inline constexpr ScenarioEvent SCENARIO_11_EVENTS[] = {
     {900, 0, SCENARIO_11_EVENT_0, 5},  // ack
     {1000, 1, SCENARIO_11_EVENT_1, 5},  // ack
-    {1500, -1, SCENARIO_11_EVENT_2, 33},  // rx
-    {4000, -1, SCENARIO_11_EVENT_3, 33},  // rx
+    {1500, -1, SCENARIO_11_EVENT_2, 33},  // rx_frame
+    {4000, -1, SCENARIO_11_EVENT_3, 33},  // rx_frame
 };
 
 // rx_scan_refused_keeps_receive_state
@@ -414,9 +414,9 @@ inline constexpr ScenarioHostStep SCENARIO_12_HOST[] = {
     {2000, 0x04, 31},  // rx_scan
 };
 inline constexpr ScenarioEvent SCENARIO_12_EVENTS[] = {
-    {1500, -1, SCENARIO_12_EVENT_0, 33},  // rx
+    {1500, -1, SCENARIO_12_EVENT_0, 33},  // rx_frame
     {2500, 0, SCENARIO_12_EVENT_1, 8},  // error
-    {4500, -1, SCENARIO_12_EVENT_2, 33},  // rx
+    {4500, -1, SCENARIO_12_EVENT_2, 33},  // rx_frame
 };
 
 // commands_during_a_transmission_are_acked_at_once_and_applied_after_it
@@ -462,12 +462,12 @@ inline constexpr ScenarioHostStep SCENARIO_13_HOST[] = {
 inline constexpr ScenarioEvent SCENARIO_13_EVENTS[] = {
     {1700, 1, SCENARIO_13_EVENT_0, 5},  // ack
     {3000, 0, SCENARIO_13_EVENT_1, 18},  // tx_done
-    {6000, -1, SCENARIO_13_EVENT_2, 33},  // rx
+    {6000, -1, SCENARIO_13_EVENT_2, 33},  // rx_frame
     {8700, 3, SCENARIO_13_EVENT_3, 5},  // ack
     {10000, 2, SCENARIO_13_EVENT_4, 18},  // tx_done
     {13700, 5, SCENARIO_13_EVENT_5, 5},  // ack
     {15000, 4, SCENARIO_13_EVENT_6, 18},  // tx_done
-    {18000, -1, SCENARIO_13_EVENT_7, 33},  // rx
+    {18000, -1, SCENARIO_13_EVENT_7, 33},  // rx_frame
 };
 
 // rx_on_listens_within_the_start_bound
@@ -484,7 +484,7 @@ inline constexpr ScenarioHostStep SCENARIO_14_HOST[] = {
 };
 inline constexpr ScenarioEvent SCENARIO_14_EVENTS[] = {
     {600, 0, SCENARIO_14_EVENT_0, 5},  // ack
-    {3000, -1, SCENARIO_14_EVENT_1, 33},  // rx
+    {3000, -1, SCENARIO_14_EVENT_1, 33},  // rx_frame
 };
 
 // get_rssi_behind_a_waiting_retune_is_busy
@@ -515,8 +515,8 @@ inline constexpr ScenarioHostStep SCENARIO_15_HOST[] = {
 inline constexpr ScenarioEvent SCENARIO_15_EVENTS[] = {
     {800, 0, SCENARIO_15_EVENT_0, 5},  // ack
     {900, 1, SCENARIO_15_EVENT_1, 8},  // error
-    {1500, -1, SCENARIO_15_EVENT_2, 33},  // rx
-    {4000, -1, SCENARIO_15_EVENT_3, 33},  // rx
+    {1500, -1, SCENARIO_15_EVENT_2, 33},  // rx_frame
+    {4000, -1, SCENARIO_15_EVENT_3, 33},  // rx_frame
     {5000, 2, SCENARIO_15_EVENT_4, 7},  // rssi
 };
 
@@ -548,8 +548,8 @@ inline constexpr ScenarioHostStep SCENARIO_16_HOST[] = {
 inline constexpr ScenarioEvent SCENARIO_16_EVENTS[] = {
     {800, 0, SCENARIO_16_EVENT_0, 5},  // ack
     {900, 1, SCENARIO_16_EVENT_1, 8},  // error
-    {1500, -1, SCENARIO_16_EVENT_2, 33},  // rx
-    {4000, -1, SCENARIO_16_EVENT_3, 33},  // rx
+    {1500, -1, SCENARIO_16_EVENT_2, 33},  // rx_frame
+    {4000, -1, SCENARIO_16_EVENT_3, 33},  // rx_frame
     {5000, 2, SCENARIO_16_EVENT_4, 7},  // rssi
 };
 
@@ -600,11 +600,11 @@ inline constexpr ScenarioEvent SCENARIO_17_EVENTS[] = {
     {800, 1, SCENARIO_17_EVENT_1, 5},  // ack
     {900, 2, SCENARIO_17_EVENT_2, 5},  // ack
     {3500, 3, SCENARIO_17_EVENT_3, 7},  // rssi
-    {5500, -1, SCENARIO_17_EVENT_4, 33},  // rx
+    {5500, -1, SCENARIO_17_EVENT_4, 33},  // rx_frame
     {7700, 4, SCENARIO_17_EVENT_5, 5},  // ack
     {7800, 5, SCENARIO_17_EVENT_6, 5},  // ack
-    {8500, -1, SCENARIO_17_EVENT_7, 33},  // rx
-    {11500, -1, SCENARIO_17_EVENT_8, 33},  // rx
+    {8500, -1, SCENARIO_17_EVENT_7, 33},  // rx_frame
+    {11500, -1, SCENARIO_17_EVENT_8, 33},  // rx_frame
 };
 
 // a_refused_command_leaves_a_waiting_one_waiting
@@ -649,12 +649,12 @@ inline constexpr ScenarioHostStep SCENARIO_18_HOST[] = {
 inline constexpr ScenarioEvent SCENARIO_18_EVENTS[] = {
     {700, 0, SCENARIO_18_EVENT_0, 5},  // ack
     {800, 1, SCENARIO_18_EVENT_1, 8},  // error
-    {1500, -1, SCENARIO_18_EVENT_2, 33},  // rx
-    {3000, -1, SCENARIO_18_EVENT_3, 33},  // rx
+    {1500, -1, SCENARIO_18_EVENT_2, 33},  // rx_frame
+    {3000, -1, SCENARIO_18_EVENT_3, 33},  // rx_frame
     {5700, 3, SCENARIO_18_EVENT_4, 5},  // ack
     {5800, 4, SCENARIO_18_EVENT_5, 8},  // error
     {9000, 2, SCENARIO_18_EVENT_6, 18},  // tx_done
-    {12000, -1, SCENARIO_18_EVENT_7, 33},  // rx
+    {12000, -1, SCENARIO_18_EVENT_7, 33},  // rx_frame
 };
 
 // get_rssi_during_the_shortest_scan_dwell
@@ -683,7 +683,7 @@ inline constexpr ScenarioHostStep SCENARIO_20_HOST[] = {
     {0, 0, 0},
 };
 inline constexpr ScenarioEvent SCENARIO_20_EVENTS[] = {
-    {1500, -1, SCENARIO_20_EVENT_0, 33},  // rx
+    {1500, -1, SCENARIO_20_EVENT_0, 33},  // rx_frame
 };
 
 // forced_rx_on_to_the_current_frequency_keeps_the_frame
@@ -705,8 +705,8 @@ inline constexpr ScenarioHostStep SCENARIO_21_HOST[] = {
 };
 inline constexpr ScenarioEvent SCENARIO_21_EVENTS[] = {
     {800, 0, SCENARIO_21_EVENT_0, 5},  // ack
-    {1500, -1, SCENARIO_21_EVENT_1, 33},  // rx
-    {4000, -1, SCENARIO_21_EVENT_2, 33},  // rx
+    {1500, -1, SCENARIO_21_EVENT_1, 33},  // rx_frame
+    {4000, -1, SCENARIO_21_EVENT_2, 33},  // rx_frame
 };
 
 // forced_rx_on_to_the_current_frequency_cancels_a_waiting_retune
@@ -733,8 +733,8 @@ inline constexpr ScenarioHostStep SCENARIO_22_HOST[] = {
 inline constexpr ScenarioEvent SCENARIO_22_EVENTS[] = {
     {700, 0, SCENARIO_22_EVENT_0, 5},  // ack
     {800, 1, SCENARIO_22_EVENT_1, 5},  // ack
-    {1500, -1, SCENARIO_22_EVENT_2, 33},  // rx
-    {4000, -1, SCENARIO_22_EVENT_3, 33},  // rx
+    {1500, -1, SCENARIO_22_EVENT_2, 33},  // rx_frame
+    {4000, -1, SCENARIO_22_EVENT_3, 33},  // rx_frame
 };
 
 // forced_rx_on_replaces_a_waiting_retune
@@ -760,10 +760,10 @@ inline constexpr ScenarioEvent SCENARIO_23_EVENTS[] = {
     {700, 0, SCENARIO_23_EVENT_0, 5},  // ack
     {800, 1, SCENARIO_23_EVENT_1, 5},  // ack
     {1000, -1, SCENARIO_23_EVENT_2, 14},  // rx_abort
-    {4000, -1, SCENARIO_23_EVENT_3, 33},  // rx
+    {4000, -1, SCENARIO_23_EVENT_3, 33},  // rx_frame
 };
 
-/// The ieee802154_oqpsk_250k scenarios of scenarios.yaml, protocol 0.8, in file order.
+/// The ieee802154_oqpsk_250k scenarios of scenarios.yaml, protocol 0.9, in file order.
 inline constexpr Scenario SCENARIOS[] = {
     {"ordering_around_tx", SCENARIO_0_HOST, 1, SCENARIO_0_EVENTS, 3},
     {"retune_deferred_during_frame", SCENARIO_1_HOST, 1, SCENARIO_1_EVENTS, 3},
@@ -775,8 +775,8 @@ inline constexpr Scenario SCENARIOS[] = {
     {"short_strobe_slot_times", SCENARIO_7_HOST, 1, SCENARIO_7_EVENTS, 1},
     {"tx_while_transmitting_is_busy", SCENARIO_8_HOST, 2, SCENARIO_8_EVENTS, 2},
     {"tx_cca_busy_then_clear", SCENARIO_9_HOST, 2, SCENARIO_9_EVENTS, 2},
-    {"newer_rx_on_replaces_a_pending_retune", SCENARIO_10_HOST, 2, SCENARIO_10_EVENTS, 4},
-    {"rx_on_to_the_current_frequency_cancels_a_pending_retune", SCENARIO_11_HOST, 2, SCENARIO_11_EVENTS, 4},
+    {"newer_rx_on_replaces_a_waiting_retune", SCENARIO_10_HOST, 2, SCENARIO_10_EVENTS, 4},
+    {"rx_on_to_the_current_frequency_cancels_a_waiting_retune", SCENARIO_11_HOST, 2, SCENARIO_11_EVENTS, 4},
     {"rx_scan_refused_keeps_receive_state", SCENARIO_12_HOST, 1, SCENARIO_12_EVENTS, 3},
     {"commands_during_a_transmission_are_acked_at_once_and_applied_after_it", SCENARIO_13_HOST, 6, SCENARIO_13_EVENTS, 8},
     {"rx_on_listens_within_the_start_bound", SCENARIO_14_HOST, 1, SCENARIO_14_EVENTS, 2},

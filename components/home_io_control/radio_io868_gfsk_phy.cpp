@@ -35,7 +35,7 @@ void Io868GfskPhy::write_params(TlvWriter &params, const TuningConfig &tuning) c
                  static_cast<uint32_t>(std::lround(sx1262_bandwidth_to_khz(tuning.sx1262_rx_bandwidth) * HZ_PER_KHZ)));
   params.add_u8(static_cast<uint8_t>(ParamId::PULSE_SHAPE), static_cast<uint8_t>(PulseShape::GAUSSIAN_BT_1_0));
   params.add(static_cast<uint8_t>(ParamId::SYNC_WORD), IO868_SYNC_WORD, sizeof(IO868_SYNC_WORD));
-  params.add_u8(static_cast<uint8_t>(ParamId::RX_LEN), IO868_RX_LEN);
+  params.add_u8(static_cast<uint8_t>(ParamId::RX_CAPTURE_BYTES), IO868_RX_CAPTURE_BYTES);
   params.add_u8(static_cast<uint8_t>(ParamId::PREAMBLE_DETECT_BITS), IO868_PREAMBLE_DETECT_BITS);
   params.add_u32(static_cast<uint8_t>(ParamId::SYNC_TIMEOUT_US), IO868_SYNC_TIMEOUT_US);
 }
@@ -66,7 +66,7 @@ size_t Io868GfskPhy::wrap(const uint8_t *frame, uint8_t len, uint8_t *out, size_
   return uart_encode_packet(with_crc, len + FRAME_CRC_SIZE, out, static_cast<uint8_t>(cap));
 }
 
-UnwrapResult Io868GfskPhy::unwrap(const uint8_t *payload, size_t len, CrcState /*crc*/, uint8_t *out,
+UnwrapResult Io868GfskPhy::unwrap(const uint8_t *payload, size_t len, FcsState /*fcs*/, uint8_t *out,
                                   size_t cap) const {
   UnwrapResult result;
   if (len == 0 || len > UINT8_MAX) {

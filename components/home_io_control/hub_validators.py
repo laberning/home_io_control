@@ -96,7 +96,7 @@ BRIDLE_BAUD_RATE = 1000000
 BRIDLE_REDUCED_BAUD_RATES = (115200, 230400, 460800, 921600)
 BRIDLE_BAUD_RATES = (*BRIDLE_REDUCED_BAUD_RATES, BRIDLE_BAUD_RATE)
 # The slowest link a 2.4 GHz band may use (Bridle specification section 2.1): another controller's wake train
-# puts a frame on the air every millisecond, and each one reaches the hub as a frame_start and an rx event,
+# puts a frame on the air every millisecond, and each one reaches the hub as an rx_start and an rx_frame event,
 # about 36 bytes, which 230400 baud cannot carry in a millisecond, so the co-processor's event queue overflows.
 BRIDLE_802154_MIN_BAUD_RATE = 460800
 # Receive buffer that holds a burst of frames between two loop() passes at 1 Mbaud (100 bytes/ms).

@@ -135,7 +135,7 @@ TEST(RadioBridle, ConfigurationCommandsGoOutInTheSpecifiedOrder) {
   EXPECT_EQ(sets[0].second.radio, DEVICE_SCOPE) << "the event mask first";
   ByteSpan v;
   ASSERT_TRUE(find_tlv(sets[0].second.tlvs, static_cast<uint8_t>(ParamId::EVENT_MASK), v));
-  EXPECT_EQ(v.data[0], event_mask::FRAME_START | event_mask::CRC_ERROR_RX | event_mask::RX_ABORT | event_mask::LOG);
+  EXPECT_EQ(v.data[0], event_mask::RX_START | event_mask::RX_FCS_BAD | event_mask::RX_ABORT | event_mask::LOG);
 
   EXPECT_EQ(sets[1].second.radio, 0);
   TlvReader r(sets[1].second.tlvs);
@@ -275,7 +275,7 @@ TEST(RadioBridle, ARadioWhoseBandMissesAnIoChannelIsNotUsed) {
 TEST(RadioBridle, ARadioWithATooSmallPayloadLimitIsRefused) {
   FakeCoprocessor::Config cfg;
   auto tiny = FakeCoprocessor::reference_802154_radio(0);
-  tiny.max_payload = 30;
+  tiny.max_payload_bytes = 30;
   cfg.radios = {tiny};
   Rig rig(cfg);
   EXPECT_FALSE(rig.radio.init());
@@ -296,14 +296,14 @@ TEST(RadioBridle, ARefusedRadioConfigurationEndsTheHandshakeAtOnceAndNamesTheTlv
     rig.cp.boot();
     // The radio-scope set_params (radio 0) is refused naming the `sfd` TLV the 2.4 GHz profile sends; the device-scope
     // one (radio 0xFF) before it is accepted.
-    rig.cp.reject_next(MsgType::SET_PARAMS, ErrorCode::PARAM_RANGE, static_cast<uint16_t>(ParamId::SFD), 0);
+    rig.cp.reject_next(MsgType::SET_PARAMS, ErrorCode::OUT_OF_RANGE, static_cast<uint16_t>(ParamId::SFD), 0);
   };
   uint64_t const start = Rig::now();
   EXPECT_FALSE(rig.radio.init());
   EXPECT_LT(Rig::now() - start, uint64_t{RadioBridle::ACK_TIMEOUT_MS} * 1000)
       << "the refusal is read when it arrives, not after a timeout";
   EXPECT_STREQ(rig.radio.failure_reason(), "radio configuration refused");
-  EXPECT_EQ(rig.radio.last_error_code(), ErrorCode::PARAM_RANGE);
+  EXPECT_EQ(rig.radio.last_error_code(), ErrorCode::OUT_OF_RANGE);
   EXPECT_EQ(rig.radio.last_error_detail(), static_cast<int16_t>(ParamId::SFD)) << "the TLV the log names";
 }
 
@@ -400,7 +400,7 @@ TEST(RadioBridle, TheReceiverRunsAfterAFailedSendToo) {
     Rig rig;  // a refused tx leaves a running scan running, and the driver's own state says so
     rig.start();
     ASSERT_TRUE(rig.radio.run_idle_scan());
-    rig.cp.reject_next(MsgType::TX, ErrorCode::BUSY);
+    rig.cp.reject_next(MsgType::TX, ErrorCode::RADIO_BUSY);
     const auto frame = io_frame(1);
     EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), {}).status, TxResult::Status::FAILED);
     EXPECT_TRUE(rig.radio.scanning()) << "the scan the co-processor still runs";
@@ -440,7 +440,7 @@ TEST(RadioBridle, ARefusedTxDoesNotRestoreTheStateOfAnUnawaitedRxOnRefusedDuring
   // `rx_on` again instead of believing the radio listens.
   Rig rig;
   rig.start();
-  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::BUSY, 0, -1, 500);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::RADIO_BUSY, 0, -1, 500);
   rig.cp.reject_next(MsgType::TX, ErrorCode::PAYLOAD_TOO_LONG, 0, -1, 20000);
   listen_on(rig);
   const auto frame = io_frame(1);
@@ -459,7 +459,7 @@ TEST(RadioBridle, ARefusedTxDoesNotRestoreTheStateOfAnUnawaitedRxScanRefusedDuri
   // radio neither scans nor receives, and the driver must not believe it scans, or the idle pass starts nothing.
   Rig rig;
   rig.start();
-  rig.cp.reject_next(MsgType::RX_SCAN, ErrorCode::BUSY, 0, -1, 500);
+  rig.cp.reject_next(MsgType::RX_SCAN, ErrorCode::RADIO_BUSY, 0, -1, 500);
   rig.cp.reject_next(MsgType::TX, ErrorCode::PAYLOAD_TOO_LONG, 0, -1, 20000);
   ASSERT_TRUE(rig.radio.run_idle_scan());
   const auto frame = io_frame(1);
@@ -477,7 +477,7 @@ TEST(RadioBridle, ARefusedUnawaitedCommandIsUndoneBeforeATxAndSupersededByASentO
   {
     Rig rig;  // the refusal is read before the `tx` is sent: the `tx`'s restore starts from the undone state
     rig.start();
-    rig.cp.reject_next(MsgType::RX_ON, ErrorCode::BUSY);
+    rig.cp.reject_next(MsgType::RX_ON, ErrorCode::RADIO_BUSY);
     rig.cp.reject_next(MsgType::TX, ErrorCode::PAYLOAD_TOO_LONG, 0, -1, 20000);
     listen_on(rig);
     RadioRxPacket packet;
@@ -490,7 +490,7 @@ TEST(RadioBridle, ARefusedUnawaitedCommandIsUndoneBeforeATxAndSupersededByASentO
   {
     Rig rig;  // the refusal arrives during the wait of a `tx` that is sent: the `tx` defines the state
     rig.start();
-    rig.cp.reject_next(MsgType::RX_SCAN, ErrorCode::BUSY, 0, -1, 500);
+    rig.cp.reject_next(MsgType::RX_SCAN, ErrorCode::RADIO_BUSY, 0, -1, 500);
     ASSERT_TRUE(rig.radio.run_idle_scan());
     EXPECT_EQ(rig.radio.send_packet(frame.data(), frame.size(), {}).status, TxResult::Status::SENT);
     EXPECT_TRUE(rig.cp.receiving()) << "the tx returns to receive by itself (then_rx)";
@@ -548,12 +548,12 @@ TEST(RadioBridleHeldTrace, OneAuthenticatedExchangeWritesEightTraceLinesAndTheHo
 
   frame_log_hold();
   ASSERT_TRUE(rig.radio.send_packet(request.data(), request.size(), {}).sent());  // tx, tx_done
-  rig.cp.inject_frame_start(2450000000u, FrameStage::SYNC, 2000);
-  rig.cp.inject_rx(2450000000u, psdu(0x20), CrcState::OK, 2500);  // the challenge
+  rig.cp.inject_rx_start(2450000000u, RxStage::SYNC, 2000);
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x20), FcsState::OK, 2500);  // the challenge
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 20));
   ASSERT_TRUE(rig.radio.send_packet(answer.data(), answer.size(), {}).sent());  // tx, tx_done
-  rig.cp.inject_frame_start(2450000000u, FrameStage::SYNC, 2000);
-  rig.cp.inject_rx(2450000000u, psdu(0x30), CrcState::OK, 2500);  // the final reply
+  rig.cp.inject_rx_start(2450000000u, RxStage::SYNC, 2000);
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x30), FcsState::OK, 2500);  // the final reply
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 20));
   EXPECT_TRUE(log.lines().empty());
   frame_log_release();
@@ -619,7 +619,7 @@ TEST(RadioBridleFrameLog, AReceivedFrameIsLoggedWithTheAirFrequencyItCameInOnAft
   RadioRxPacket packet;
 
   frame_log_hold();
-  rig.cp.inject_rx(2425000000u, psdu(0x20, 12));
+  rig.cp.inject_rx_frame(2425000000u, psdu(0x20, 12));
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_EQ(packet.freq_hz, FREQ_CH1);
   EXPECT_TRUE(log.lines().empty()) << "the hub is waiting for the reply: nothing may be printed";
@@ -637,7 +637,7 @@ TEST(RadioBridleFrameLog, AFrameWithABadCrcIsNotLoggedAsReceived) {
   rig.radio.set_mode_rx();
   test::LogCapture log(true);
   RadioRxPacket packet;
-  rig.cp.inject_rx(2450000000u, psdu(0x20, 12), CrcState::BAD);
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x20, 12), FcsState::BAD);
   EXPECT_FALSE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_TRUE(frame_lines_of(log).empty());
 }
@@ -738,7 +738,7 @@ TEST(RadioBridle, ABusyChannelIsReportedWithItsLevelAndKeepsQueuedFrames) {
   Rig rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_rx(2450000000u, psdu(0x10));  // arrives before the send
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x10));  // arrives before the send
   rig.cp.set_channel_level_dbm(-60);
   RadioTxConfig cfg;
   cfg.cca_threshold_dbm = -75;
@@ -850,7 +850,7 @@ TEST(RadioBridle, AReceivedFrameArrivesWithItsLogicalChannelAndTheCaptureWithIts
   listen_on(rig);
   auto p = psdu(0x20, 12);
   rig.cp.set_rssi_dbm(-71);
-  rig.cp.inject_rx(2475000000u, p);
+  rig.cp.inject_rx_frame(2475000000u, p);
   RadioRxPacket packet;
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_EQ(packet.freq_hz, FREQ_CH3);
@@ -890,7 +890,7 @@ TEST(RadioBridle, ABadCrcFrameIsNotDeliveredButShowsInTheCapture) {
   Rig rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_rx(2450000000u, psdu(0x30), CrcState::BAD);
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x30), FcsState::BAD);
   RadioRxPacket packet;
   EXPECT_FALSE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_TRUE(rig.radio.get_last_capture().crc_error);
@@ -903,7 +903,7 @@ TEST(RadioBridle, AHeaderMismatchIsDroppedAndCounted) {
   listen_on(rig);
   auto p = psdu(0x30);
   p[0] = 0x02;
-  rig.cp.inject_rx(2450000000u, p);
+  rig.cp.inject_rx_frame(2450000000u, p);
   RadioRxPacket packet;
   EXPECT_FALSE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_EQ(rig.radio.header_mismatches(), 1u);
@@ -913,7 +913,7 @@ TEST(RadioBridle, AnOversizePayloadIsDroppedAndCounted) {
   Rig rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_rx(2450000000u, std::vector<uint8_t>(MAX_MESSAGE_SIZE - 20, 0x55));
+  rig.cp.inject_rx_frame(2450000000u, std::vector<uint8_t>(MAX_MESSAGE_SIZE - 20, 0x55));
   RadioRxPacket packet;
   EXPECT_FALSE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_EQ(rig.radio.oversize_dropped(), 1u);
@@ -943,8 +943,8 @@ TEST(RadioBridle, AStrobeOfShortFramesGivesTheHostNoEventAndTheFrameBehindItIsDe
   rig.start();
   listen_on(rig);
   for (int i = 0; i < 8; i++)
-    rig.cp.inject_rx(2450000000u, {0x00, 0x00, static_cast<uint8_t>(7 - i), 0xAA, 0xBB}, CrcState::OK, i * 100);
-  rig.cp.inject_rx(2450000000u, psdu(0x50), CrcState::OK, 1000);
+    rig.cp.inject_rx_frame(2450000000u, {0x00, 0x00, static_cast<uint8_t>(7 - i), 0xAA, 0xBB}, FcsState::OK, i * 100);
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x50), FcsState::OK, 1000);
   RadioRxPacket packet;
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_EQ(packet.data[0], 0x50);
@@ -957,7 +957,7 @@ TEST(RadioBridle, TheRxShortCounterOfTheHeartbeatIsKeptForTheDump) {
   rig.start();
   listen_on(rig);
   for (int i = 0; i < 5; i++)
-    rig.cp.inject_rx(2450000000u, {0x00, 0x00, static_cast<uint8_t>(i), 0xAA, 0xBB});
+    rig.cp.inject_rx_frame(2450000000u, {0x00, 0x00, static_cast<uint8_t>(i), 0xAA, 0xBB});
   EXPECT_FALSE(rig.radio.have_rx_short());
   Rig::advance_to(Rig::now() + 30100 * 1000ull);
   RadioRxPacket packet;
@@ -974,7 +974,7 @@ TEST(RadioBridle, TheFifoDropsTheOldestWhenFull) {
   rig.start();
   listen_on(rig);
   for (uint8_t i = 0; i < 10; i++)
-    rig.cp.inject_rx(2450000000u, psdu(static_cast<uint8_t>(0x60 + i * 16)));
+    rig.cp.inject_rx_frame(2450000000u, psdu(static_cast<uint8_t>(0x60 + i * 16)));
   RadioRxPacket packet;
   std::vector<uint8_t> tags;
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 5));
@@ -994,8 +994,8 @@ TEST(RadioBridle, ARxBeforeTheOwnTxDoneIsNotTheReply) {
   RadioTxConfig cfg;
   const auto frame = io_frame(1);
   // One frame lands during the transmission (which lasts ~700 µs), one after it ends.
-  rig.cp.inject_rx(2450000000u, psdu(0x70), CrcState::OK, 300);
-  rig.cp.inject_rx(2450000000u, psdu(0x80), CrcState::OK, 3000);
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x70), FcsState::OK, 300);
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x80), FcsState::OK, 3000);
   ASSERT_TRUE(rig.radio.send_packet(frame.data(), frame.size(), cfg).sent());
   EXPECT_EQ(rig.radio.dropped_before_tx_done(), 1u);
   RadioRxPacket packet;
@@ -1008,7 +1008,7 @@ TEST(RadioBridle, AFrameReceivedBeforeTheSendIsAlsoStale) {
   Rig rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_rx(2450000000u, psdu(0x90));
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x90));
   RadioTxConfig cfg;
   const auto frame = io_frame(1);
   ASSERT_TRUE(rig.radio.send_packet(frame.data(), frame.size(), cfg).sent());
@@ -1022,11 +1022,11 @@ TEST(RadioBridle, TheGettersDrainBeforeTheyAnswer) {
   Rig rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_frame_start(2450000000u, FrameStage::SYNC);
+  rig.cp.inject_rx_start(2450000000u, RxStage::SYNC);
   EXPECT_TRUE(rig.radio.is_sync_detected());
   EXPECT_FALSE(rig.radio.is_preamble_detected());
   EXPECT_TRUE(rig.radio.reception_in_progress());
-  rig.cp.inject_rx(2450000000u, psdu(0x10));
+  rig.cp.inject_rx_frame(2450000000u, psdu(0x10));
   EXPECT_FALSE(rig.radio.is_sync_detected()) << "the frame ended";
   EXPECT_FALSE(rig.radio.reception_in_progress());
 }
@@ -1035,7 +1035,7 @@ TEST(RadioBridle, IdleDropsAFrameInProgressWithoutAnAbort) {
   Rig rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_frame_start(2450000000u, FrameStage::SYNC);
+  rig.cp.inject_rx_start(2450000000u, RxStage::SYNC);
   ASSERT_TRUE(rig.radio.reception_in_progress());
   rig.radio.set_mode_standby();
   EXPECT_FALSE(rig.radio.reception_in_progress());
@@ -1046,7 +1046,7 @@ TEST(RadioBridle, AnAbortEndsTheReceptionState) {
   Rig rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_frame_start(2450000000u, FrameStage::SYNC);
+  rig.cp.inject_rx_start(2450000000u, RxStage::SYNC);
   ASSERT_TRUE(rig.radio.is_sync_detected());
   rig.cp.inject_rx_abort(2450000000u, RxAbortReason::NO_END_AFTER_SYNC);
   EXPECT_FALSE(rig.radio.is_sync_detected());
@@ -1057,7 +1057,7 @@ TEST(RadioBridle, ThePreambleStageIsReportedAsAPreamble) {
   Rig rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_frame_start(2450000000u, FrameStage::PREAMBLE);
+  rig.cp.inject_rx_start(2450000000u, RxStage::PREAMBLE);
   EXPECT_TRUE(rig.radio.is_preamble_detected());
   EXPECT_FALSE(rig.radio.is_sync_detected());
 }
@@ -1145,7 +1145,7 @@ TEST(RadioBridle, OnlyAChannelChecksRetuneIsForced) {
 
 // The race: an unforced retune (idle hop, rotating listen) went out before the driver saw the preamble that holds it,
 // and the request's check follows on that very channel. The recorded frequency already is the checked one, so the
-// forced retune must still go out: it replaces the waiting one and the reading is not `busy`.
+// forced retune must still go out: it replaces the waiting one and the reading is not `radio_busy`.
 TEST(RadioBridle, AChannelCheckOnTheChannelAWaitingRetuneAsksForGivesAReadingNotBusy) {
   Rig rig;
   rig.start();
@@ -1172,7 +1172,7 @@ TEST(RadioBridle, ARefusedForcedRetuneToTheRecordedChannelLeavesTheRecordMatchin
   listen_on(rig);
   rig.radio.change_frequency(FREQ_CH3);
   uint32_t const cp_freq_before = rig.cp.freq_hz();
-  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, 1, 0);
   rig.cp.set_channel_rssi_dbm(-90);
 
   EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH3).has_value()) << "the retune the reading follows was refused";
@@ -1197,7 +1197,7 @@ TEST(RadioBridle, ARefusedUnforcedRetuneLeavesTheReadingThatFollowsWithoutALevel
   rig.cp.set_channel_rssi_dbm(-90);
   ASSERT_EQ(rig.radio.read_rssi(), -90) << "the same reading without the refusal is a level";
 
-  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, 1, 0);
   rig.radio.change_frequency(FREQ_CH1);
   uint32_t const refused_before = rig.radio.rssi_refused();
   EXPECT_FALSE(rig.radio.read_rssi().has_value()) << "the old channel's level is not the new channel's";
@@ -1211,7 +1211,7 @@ TEST(RadioBridle, ARefusedForcedRetuneToAnotherChannelLeavesTheReadingWithoutALe
   listen_on(rig);
   rig.radio.change_frequency(FREQ_CH3);
   rig.cp.set_channel_rssi_dbm(-90);
-  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, 1, 0);
 
   EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH2).has_value());
   EXPECT_EQ(rig.cp.freq_hz(), rig.radio.band().air_hz_of(FREQ_CH3)) << "the radio stayed on the old channel";
@@ -1222,7 +1222,7 @@ TEST(RadioBridle, ALaterAcceptedRetuneGivesReadingsAgain) {
   rig.start();
   listen_on(rig);
   rig.cp.set_channel_rssi_dbm(-90);
-  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, 1, 0);
   EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH2).has_value());
 
   rig.radio.set_mode_rx();  // a new command: the refusal no longer describes the radio
@@ -1246,7 +1246,7 @@ TEST(RadioBridle, AChannelCheckOnAnIdleRadioStartsTheReceiverWithItsForcedRetune
   EXPECT_EQ(start.freq_hz, rig.radio.band().air_hz_of(FREQ_CH2));
 
   rig.radio.set_mode_standby();
-  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+  rig.cp.reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, 1, 0);
   EXPECT_FALSE(rig.radio.measure_channel_level(FREQ_CH3).has_value()) << "the refusal reaches the reading's wait";
   size_t const refused = rig.cp.commands_of(MsgType::RX_ON).size();
   rig.radio.set_mode_standby();
@@ -1264,7 +1264,7 @@ TEST(RadioBridle, AChannelCheckOnTheChannelAFrameArrivesOnKeepsTheFrame) {
   rig.cp.set_channel_rssi_dbm(-60);
   rig.cp.hold_preamble(1000000);  // on CH3, where the radio receives
   RadioRxPacket none;
-  EXPECT_FALSE(rig.radio.check_for_packet(none));  // takes the frame_start in
+  EXPECT_FALSE(rig.radio.check_for_packet(none));  // takes the rx_start in
   ASSERT_TRUE(rig.radio.is_preamble_detected());
 
   EXPECT_EQ(rig.radio.measure_channel_level(FREQ_CH3), -60);
@@ -1332,7 +1332,7 @@ TEST(RadioBridle, ACommandThatReusesTheIdOfARefusedRetuneGivesReadings) {
     rig.start();
     listen_on(rig);
     rig.cp.set_channel_rssi_dbm(-90);
-    rig.cp.reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0);
+    rig.cp.reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, 1, 0);
     rig.radio.set_mode_rx();
     uint8_t const refused_seq = rig.commands_of<RxOn>(MsgType::RX_ON).back().first.seq;
     ASSERT_FALSE(rig.radio.read_rssi().has_value()) << "the refusal is taken in";
@@ -1366,7 +1366,7 @@ TEST(RadioBridle, AChannelCheckDuringAHeldPreambleGivesAReadingAndTheAbortIsNoFa
   rig.cp.set_channel_rssi_dbm(-90);
   rig.cp.hold_preamble(1000000);  // a preamble without a sync word, held for the profile's sync_timeout_us
   RadioRxPacket none;
-  EXPECT_FALSE(rig.radio.check_for_packet(none));  // takes the frame_start in
+  EXPECT_FALSE(rig.radio.check_for_packet(none));  // takes the rx_start in
   ASSERT_TRUE(rig.radio.is_preamble_detected());
   uint32_t const busy_before = rig.radio.rssi_busy();
 
@@ -1380,7 +1380,7 @@ TEST(RadioBridle, AChannelCheckDuringAHeldPreambleGivesAReadingAndTheAbortIsNoFa
   EXPECT_EQ(rig.radio.link_state(), TestableRadioBridle::Link::RUNNING);
 
   // The reply listening that follows is not affected: a frame on the new channel arrives.
-  rig.cp.inject_rx(rig.cp.freq_hz(), psdu(0x30), CrcState::OK, 100);
+  rig.cp.inject_rx_frame(rig.cp.freq_hz(), psdu(0x30), FcsState::OK, 100);
   RadioRxPacket packet;
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 5));
   EXPECT_EQ(packet.freq_hz, FREQ_CH3);
@@ -1604,11 +1604,11 @@ TEST(RadioBridle868, TheConfigurationIsTheProfileThenTheModemParamsThenTheTxPowe
   Rig868 rig;
   rig.start();
   const std::vector<uint8_t> expected = {
-      static_cast<uint8_t>(ParamId::PHY_PROFILE),     static_cast<uint8_t>(ParamId::BITRATE_BPS),
-      static_cast<uint8_t>(ParamId::FDEV_HZ),         static_cast<uint8_t>(ParamId::RX_BW_HZ),
-      static_cast<uint8_t>(ParamId::PULSE_SHAPE),     static_cast<uint8_t>(ParamId::SYNC_WORD),
-      static_cast<uint8_t>(ParamId::RX_LEN),          static_cast<uint8_t>(ParamId::PREAMBLE_DETECT_BITS),
-      static_cast<uint8_t>(ParamId::SYNC_TIMEOUT_US), static_cast<uint8_t>(ParamId::TX_POWER_DBM)};
+      static_cast<uint8_t>(ParamId::PHY_PROFILE),      static_cast<uint8_t>(ParamId::BITRATE_BPS),
+      static_cast<uint8_t>(ParamId::FDEV_HZ),          static_cast<uint8_t>(ParamId::RX_BW_HZ),
+      static_cast<uint8_t>(ParamId::PULSE_SHAPE),      static_cast<uint8_t>(ParamId::SYNC_WORD),
+      static_cast<uint8_t>(ParamId::RX_CAPTURE_BYTES), static_cast<uint8_t>(ParamId::PREAMBLE_DETECT_BITS),
+      static_cast<uint8_t>(ParamId::SYNC_TIMEOUT_US),  static_cast<uint8_t>(ParamId::TX_POWER_DBM)};
   EXPECT_EQ(radio_param_ids(rig), expected);
   EXPECT_EQ(rig.radio.applied_tx_power_dbm(), 22) << "no TX power asked: the radio's own maximum";
 }
@@ -1750,7 +1750,7 @@ TEST(RadioBridle868, AFrameIsArrivingFromThePreambleOnAndTheReceptionEndsWithThe
   Rig868 rig;
   rig.start();
   listen_on(rig);
-  rig.cp.inject_frame_start(FREQ_CH2, FrameStage::PREAMBLE);
+  rig.cp.inject_rx_start(FREQ_CH2, RxStage::PREAMBLE);
   EXPECT_TRUE(rig.radio.is_preamble_detected());
   EXPECT_TRUE(rig.radio.reception_in_progress());
   rig.cp.inject_rx_abort(FREQ_CH2, RxAbortReason::NO_SYNC_AFTER_PREAMBLE);
@@ -1764,7 +1764,7 @@ TEST(RadioBridle868, AReceivedFrameIsFoundInItsRawBytes) {
   listen_on(rig);
   const auto frame =
       std::vector<uint8_t>{0x0E, 0x00, 0xD1, 0xD4, 0xFF, 0x8C, 0x08, 0x3C, 0x3C, 0x45, 0x51, 0x6F, 0xFE, 0x59, 0x80};
-  rig.cp.inject_rx(FREQ_CH2, Bridge868::reply_payload(frame), CrcState::NOT_CHECKED);
+  rig.cp.inject_rx_frame(FREQ_CH2, Bridge868::reply_payload(frame), FcsState::NOT_CHECKED);
   RadioRxPacket packet;
   ASSERT_TRUE(rig.radio.wait_for_packet(packet, 50));
   EXPECT_EQ(std::vector<uint8_t>(packet.data, packet.data + packet.len), frame);
@@ -1775,19 +1775,19 @@ TEST(RadioBridle868, NoiseThatIsNoFrameIsCountedAsABadCrcNotDelivered) {
   Rig868 rig;
   rig.start();
   listen_on(rig);
-  std::vector<uint8_t> noise(IO868_RX_LEN);
+  std::vector<uint8_t> noise(IO868_RX_CAPTURE_BYTES);
   for (size_t i = 0; i < noise.size(); i++)
     noise[i] = static_cast<uint8_t>(0x5A + 37 * i);
-  rig.cp.inject_rx(FREQ_CH2, noise, CrcState::NOT_CHECKED);
+  rig.cp.inject_rx_frame(FREQ_CH2, noise, FcsState::NOT_CHECKED);
   RadioRxPacket packet;
   EXPECT_FALSE(rig.radio.wait_for_packet(packet, 20));
   EXPECT_EQ(rig.radio.bad_crc_frames(), 1u);
 }
 
-TEST(RadioBridle868, ATxTheCoprocessorRefusesWithParamRangeIsAFailedSendAtOnce) {
+TEST(RadioBridle868, ATxTheCoprocessorRefusesWithOutOfRangeIsAFailedSendAtOnce) {
   Rig868 rig;
   rig.start();
-  rig.cp.reject_next(MsgType::TX, ErrorCode::PARAM_RANGE, 7);
+  rig.cp.reject_next(MsgType::TX, ErrorCode::OUT_OF_RANGE, 7);
   const auto frame = io_frame(0x20, 12);
   RadioTxConfig cfg{};
   cfg.freq_hz = FREQ_CH2;
@@ -1857,7 +1857,7 @@ TEST(RadioBridle868, A802154RadioNeverGetsAResendForATuning) {
 TEST(RadioBridle868, ARefusedResendKeepsTheOldParamsAndTheLinkUp) {
   Rig868 rig;
   rig.start();
-  rig.cp.reject_next(MsgType::SET_PARAMS, ErrorCode::PARAM_RANGE, static_cast<uint8_t>(ParamId::RX_BW_HZ));
+  rig.cp.reject_next(MsgType::SET_PARAMS, ErrorCode::OUT_OF_RANGE, static_cast<uint8_t>(ParamId::RX_BW_HZ));
   TuningConfig tuning;
   tuning.sx1262_rx_bandwidth = SX1262RxBandwidth::BW_156_2_KHZ;
   rig.radio.apply_tuning(tuning);

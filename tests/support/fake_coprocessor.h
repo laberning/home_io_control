@@ -6,10 +6,10 @@
 /// It decodes the host's commands with the production codec and answers the way a conforming
 /// co-processor does (Bridle specification §2.2–§7): `ready`, `params_ack` with clamping, `tx` → `tx_done`
 /// after the modelled air time, `ack` for the commands that have nothing to report, `error` in the
-/// specified check order, atomic `set_params`, the `busy` rule, the event counter. Message
+/// specified check order, atomic `set_params`, the `radio_busy` rule, the message counter. Message
 /// directions and command validity come from the generated header, never from a list kept here. Faults are scriptable
 /// (silence, a counter gap, a corrupt frame, an unsolicited `ready`, `log`, `rx_overflow`, a busy channel). Scenario
-/// mode plays the events of a spec scenario (bridle_scenarios.h), rewriting the event counter and the answered
+/// mode plays the events of a spec scenario (bridle_scenarios.h), rewriting the message counter and the answered
 /// `cmd_seq` to what the driver under test actually sent.
 ///
 /// Time is the manual test clock: events are released when their due time has passed, on every
@@ -40,12 +40,12 @@ class FakeCoprocessor {
     std::vector<RadioDescriptor> radios;  ///< Empty: one 802.15.4 radio as the reference co-processor has it.
     uint8_t proto_major{esphome::home_io_control::bridle::PROTO_MAJOR};
     uint8_t proto_minor{esphome::home_io_control::bridle::PROTO_MINOR};
-    uint16_t chip_id{static_cast<uint16_t>(esphome::home_io_control::bridle::ChipId::NRF52840)};
+    uint16_t mcu{static_cast<uint16_t>(esphome::home_io_control::bridle::Chip::NRF52840)};
     std::string fw_version{"fake-0.0"};
     std::string board{"fake-board"};
     bool with_fw_version{true};
     bool with_reset_cause{true};
-    bool with_rx_queue_depth{true};
+    bool with_event_queue_depth{true};
     /// A reply scripted `offset` after a transmission is anchored at the end of that transmission, not at the
     /// start of its main frame: the SPI drivers' captures stamp a frame once it is out, so a capture of an
     /// 868 MHz exchange replays this way; the 2.4 GHz captures stamp the main frame's start.
@@ -65,7 +65,7 @@ class FakeCoprocessor {
   explicit FakeCoprocessor(FakeByteStream &stream) : FakeCoprocessor(stream, Config{}) {}
 
   /// The reference 802.15.4 radio: nRF52840, the capabilities of the reference co-processor (`strobe`,
-  /// `scheduled_tx`, `rx_scan`, `cca`), TX power -40…+8 dBm, 125-byte payloads.
+  /// `at_time`, `rx_scan`, `cca`), TX power -40…+8 dBm, 125-byte payloads.
   [[nodiscard]] static RadioDescriptor reference_802154_radio(uint8_t index = 0);
   /// The SX1262 behind a bridge: `gfsk_raw` in 863-870 MHz, TX power -9…+22 dBm, 147-byte payloads,
   /// preambles up to 8191 bytes, capabilities `rx_scan` and `cca`; no strobe, no scheduled transmission.
@@ -79,7 +79,7 @@ class FakeCoprocessor {
 
   // === Scripting ===
 
-  /// Emit the unsolicited `ready` a boot produces (event counter 0).
+  /// Emit the unsolicited `ready` a boot produces (message counter 0).
   void boot();
   /// A reboot in the middle of a session: state is lost, `ready` follows with `cause`.
   void reboot(esphome::home_io_control::bridle::ResetCause cause);
@@ -87,9 +87,9 @@ class FakeCoprocessor {
   void set_advertised_minor(uint8_t minor) { config_.proto_minor = minor; }
   /// Swallow the next `ack` the fake would send, as a command or reply lost on the link would.
   void drop_next_ack() { drop_next_ack_ = true; }
-  /// Refuse the next `rx_scan` with `error(code, detail)` (default: `param_range` naming `dwell_us`).
+  /// Refuse the next `rx_scan` with `error(code, detail)` (default: `out_of_range` naming `dwell_us`).
   void refuse_next_rx_scan(
-      esphome::home_io_control::bridle::ErrorCode code = esphome::home_io_control::bridle::ErrorCode::PARAM_RANGE,
+      esphome::home_io_control::bridle::ErrorCode code = esphome::home_io_control::bridle::ErrorCode::OUT_OF_RANGE,
       uint16_t detail = esphome::home_io_control::bridle::field::rx_scan::DWELL_US) {
     reject_next(esphome::home_io_control::bridle::MsgType::RX_SCAN, code, detail);
   }
@@ -99,7 +99,7 @@ class FakeCoprocessor {
   /// host link (spec §2.1). Commands are still recorded.
   void set_link_in_use(bool refusing) { link_in_use_ = refusing; }
   /// Take the next `hello` as a takeover of the host link: the protocol state restarts without a reboot and the
-  /// `ready` that answers carries event counter 0 and `reset_cause` `link_takeover` (spec §2.1).
+  /// `ready` that answers carries message counter 0 and `reset_cause` `link_takeover` (spec §2.1).
   void take_over_on_next_hello() { take_over_on_hello_ = true; }
   /// Stop answering (and emitting anything); commands are still recorded.
   void set_silent(bool silent) { silent_ = silent; }
@@ -122,9 +122,9 @@ class FakeCoprocessor {
   /// (specification §3.1's reply bound is measured on such a delay).
   void set_rssi_reply_delay_us(uint64_t delay_us) { rssi_reply_delay_us_ = delay_us; }
   /// A preamble detected on the channel the first radio listens on, held for @p duration_us (`sync_timeout_us`):
-  /// it reports `frame_start(preamble)`. Until the hold ends, an `rx_on` without `force` to another frequency is
-  /// acknowledged but waits (and a `get_rssi` meanwhile answers `error(busy)`, spec §2.2); an `rx_on` with `force`
-  /// retunes at once and reports `rx_abort(forced_retune)` on the old frequency.
+  /// it reports `rx_start(preamble)`. Until the hold ends, an `rx_on` without `force` to another frequency is
+  /// acknowledged but waits (and a `get_rssi` meanwhile answers `error(radio_busy)`, spec §2.2); an `rx_on` with
+  /// `force` retunes at once and reports `rx_abort(forced_retune)` on the old frequency.
   void hold_preamble(uint64_t duration_us);
   /// The energy `tx` with `cca` measures (default -100 dBm: a quiet channel).
   void set_channel_level_dbm(int16_t level) { channel_level_dbm_ = level; }
@@ -147,18 +147,18 @@ class FakeCoprocessor {
   void set_channel_rssi_dbm(int8_t rssi) { channel_rssi_dbm_ = rssi; }
   /// Queue a received frame (payload including FCS) for `radio` at the current time plus `delay_us`.
   /// A frame shorter than the radio's `rx_min_psdu` is counted in `stats.rx_short` and reported as nothing.
-  /// Events the host has not enabled (`frame_start`, a bad-CRC `rx`, `rx_abort`) are dropped, as a
+  /// Events the host has not enabled (`rx_start`, an `rx_frame` with a bad FCS, `rx_abort`) are dropped, as a
   /// real co-processor does.
-  void inject_rx(uint32_t freq_hz, const std::vector<uint8_t> &payload,
-                 esphome::home_io_control::bridle::CrcState crc = esphome::home_io_control::bridle::CrcState::OK,
-                 uint64_t delay_us = 0, uint8_t radio = 0);
-  void inject_frame_start(uint32_t freq_hz, esphome::home_io_control::bridle::FrameStage stage, uint64_t delay_us = 0,
-                          uint8_t radio = 0);
+  void inject_rx_frame(uint32_t freq_hz, const std::vector<uint8_t> &payload,
+                       esphome::home_io_control::bridle::FcsState fcs = esphome::home_io_control::bridle::FcsState::OK,
+                       uint64_t delay_us = 0, uint8_t radio = 0);
+  void inject_rx_start(uint32_t freq_hz, esphome::home_io_control::bridle::RxStage stage, uint64_t delay_us = 0,
+                       uint8_t radio = 0);
   void inject_rx_abort(uint32_t freq_hz, esphome::home_io_control::bridle::RxAbortReason reason, uint64_t delay_us = 0,
                        uint8_t radio = 0);
   void inject_log(esphome::home_io_control::bridle::LogLevel level, const std::string &text, uint64_t delay_us = 0);
   void inject_rx_overflow(uint16_t dropped, uint64_t delay_us = 0);
-  /// Emit an arbitrary event after `delay_us` (event counter and, for a reply, `cmd_seq` are up to the caller).
+  /// Emit an arbitrary event after `delay_us` (message counter and, for a reply, `cmd_seq` are up to the caller).
   void inject_event(const esphome::home_io_control::bridle::Body &body, uint64_t delay_us = 0);
   /// A timed reply the way MockRadio releases one: `offset_us` after the main-frame start of the
   /// `send_index`-th transmission (0-based).
@@ -180,7 +180,7 @@ class FakeCoprocessor {
   /// Replay a recorded session: every co-processor message of the recording is emitted, in order,
   /// anchored to the recorded host command it followed and released at that command's actual
   /// arrival time plus the recorded gap (messages before the first command: `now` plus their gap).
-  /// A reply carries the `seq` of the command it answered, the event counter is the fake's own.
+  /// A reply carries the `seq` of the command it answered, the message counter is the fake's own.
   /// Every command the host sends is compared with the recording by type and body (never `seq`
   /// or CRC: a host that retries a different number of times shifts every later `seq`); a
   /// difference is kept in @ref playback_errors. Like a scenario, a session supplies every reply.
@@ -215,7 +215,7 @@ class FakeCoprocessor {
   [[nodiscard]] uint32_t errors_sent(esphome::home_io_control::bridle::ErrorCode code) const {
     return errors_sent_[static_cast<uint8_t>(code) & 0x0F];
   }
-  /// Whether a set_params landed during a transmission (it must have been answered `busy`).
+  /// Whether a set_params landed during a transmission (it must have been answered `radio_busy`).
   [[nodiscard]] uint32_t set_params_during_tx() const { return set_params_during_tx_; }
   /// The last params_ack's applied TX power for radio `radio`.
   [[nodiscard]] int8_t tx_power_dbm(uint8_t radio = 0) const { return radios_[radio].tx_power_dbm; }
@@ -266,7 +266,7 @@ class FakeCoprocessor {
   void ack_(uint8_t seq);
   /// The first failure of a staged `set_params`, or nothing when every TLV passes.
   struct ParamFailure {
-    esphome::home_io_control::bridle::ErrorCode code{esphome::home_io_control::bridle::ErrorCode::PARAM_RANGE};
+    esphome::home_io_control::bridle::ErrorCode code{esphome::home_io_control::bridle::ErrorCode::OUT_OF_RANGE};
     uint16_t detail{0};
   };
   void handle_tx_(const esphome::home_io_control::bridle::Tx &cmd, uint8_t seq);
@@ -320,7 +320,7 @@ class FakeCoprocessor {
   std::vector<Rejection> rejections_;
   std::optional<uint32_t> refused_rx_on_hz_;  ///< reject_every_rx_on_to()
   esphome::home_io_control::bridle::ErrorCode refused_rx_on_code_{
-      esphome::home_io_control::bridle::ErrorCode::PARAM_RANGE};
+      esphome::home_io_control::bridle::ErrorCode::OUT_OF_RANGE};
   std::deque<int16_t> channel_levels_;
   std::function<void(const std::vector<uint8_t> &, uint64_t, uint64_t)> tx_observer_;
   /// A reply anchored at a transmission that has not happened yet.

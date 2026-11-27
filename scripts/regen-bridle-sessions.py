@@ -41,13 +41,13 @@ SESSIONS = (
         "bridle_868_boot_configure_dual_band",
         "RadioBridle868.TheBootHandshakeWithADualBandCoprocessorConfiguresItsGfskRadio",
         "Boot handshake with the dual-band co-processor (802.15.4 as radio 0, gfsk_raw as radio 1) and the "
-        "configuration of the 868 MHz radio: profile, modem, sync word, rx_len, detector, sync timeout.",
+        "configuration of the 868 MHz radio: profile, modem, sync word, rx_capture_bytes, detector, sync timeout.",
     ),
     (
         "bridle_868_exchange_execute_challenge",
         "ExchangeOverBridle868.ExecuteWithChallengeIsAnsweredAndTheStatusReplyEndsIt",
         "An EXECUTE to an always-alive device over the 868 radio: the challenge, the answer to it and the "
-        "status reply, the replies reported rx_len bytes behind their sync word.",
+        "status reply, the replies reported rx_capture_bytes bytes behind their sync word.",
     ),
     (
         "bridle_868_exchange_long_preamble",

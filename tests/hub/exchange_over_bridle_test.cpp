@@ -285,7 +285,7 @@ TEST(ExchangeOverBridle, NoChannelCheckPrecedesTheChallengeAnswerWhileTheRequest
 }
 
 // A preamble the co-processor holds for its `sync_timeout_us` would keep an unforced retune waiting and the reading
-// behind it refused as `busy`; the channel check's forced retune drops it, so the request is checked and sent.
+// behind it refused as `radio_busy`; the channel check's forced retune drops it, so the request is checked and sent.
 TEST(ExchangeOverBridle, ARequestIsCheckedAndSentWhileTheCoprocessorHoldsAPreambleOnAnotherChannel) {
   Rig<OverBridle> rig;
   auto &bridge = static_cast<BridleStandIn &>(*rig.radio);
@@ -311,7 +311,7 @@ TEST(ExchangeOverBridle, ARequestIsNotSentOnAChannelWhoseRetuneTheCoprocessorRef
   bridge.driver().set_mode_rx();
   ASSERT_TRUE(bridge.driver().read_rssi().has_value()) << "the radio receives; its rx_on is through";
   bridge.coprocessor().set_channel_rssi_dbm(-50);  // the busy channel the radio stays on: its level is not CH2's
-  bridge.coprocessor().reject_every_rx_on_to(rig.driver->band().air_hz_of(FREQ_CH2), ErrorCode::PARAM_RANGE);
+  bridge.coprocessor().reject_every_rx_on_to(rig.driver->band().air_hz_of(FREQ_CH2), ErrorCode::OUT_OF_RANGE);
 
   const ExchangeEngine::ChannelTransmit opened = rig.engine.open_session(status_read(), 8, 0);
 
@@ -363,7 +363,7 @@ TEST(ExchangeOverBridle, AForcedSendDoesNotRankAChannelWhoseRetuneTheCoprocessor
   Rig<OverBridle> rig;
   rig.tuning.lbt_force_when_busy = true;
   BridleStandIn *bridge = start(rig);
-  bridge->coprocessor().reject_every_rx_on_to(rig.driver->band().air_hz_of(FREQ_CH1), ErrorCode::PARAM_RANGE);
+  bridge->coprocessor().reject_every_rx_on_to(rig.driver->band().air_hz_of(FREQ_CH1), ErrorCode::OUT_OF_RANGE);
   for (size_t reading = 0; reading < check_readings; reading++)
     bridge->coprocessor().queue_channel_level_dbm(-50);
   bridge->coprocessor().queue_channel_level_dbm(-50);   // the ranking's reading of CH2
@@ -399,7 +399,7 @@ TEST(ExchangeOverBridle, TheQuietLevelIsNotLearnedFromAReadingBehindARefusedHop)
       for (int hop = 1; hop < QUIET_LEVEL_READING_EVERY_N_HOPS - 1; hop++)
         idle_hop();
       if (refuse)
-        bridge.coprocessor().reject_next(MsgType::RX_ON, ErrorCode::PARAM_RANGE, 1, 0, REFUSAL_DELAY_US);
+        bridge.coprocessor().reject_next(MsgType::RX_ON, ErrorCode::OUT_OF_RANGE, 1, 0, REFUSAL_DELAY_US);
       idle_hop();  // the hop whose retune is refused
       idle_hop();  // the hop that takes the reading right behind it
     }
@@ -681,12 +681,12 @@ TEST(ExchangeOverBridle, TheTracePrintsNothingBetweenAChallengeAndItsAnswerAndAl
     (transmissions++ == 0 ? lines_at_the_request : lines_at_the_answer) = trace_lines_in(log);
     if (transmissions == 1) {
       const IoFrame challenge = exchange_test::build_challenge(test::DST_ID, test::OWN_ID, CHALLENGE);
-      rig.cp.inject_rx(2450000000u, Bridge2g4::reply_payload(frame_bytes(challenge)), CrcState::OK,
-                       end_us + Bridge2g4::REPLY_DELAY_US - FakeCoprocessor::now_us());
+      rig.cp.inject_rx_frame(2450000000u, Bridge2g4::reply_payload(frame_bytes(challenge)), FcsState::OK,
+                             end_us + Bridge2g4::REPLY_DELAY_US - FakeCoprocessor::now_us());
     } else {
       const IoFrame reply = exchange_test::build_status_response(test::DST_ID, test::OWN_ID);
-      rig.cp.inject_rx(2450000000u, Bridge2g4::reply_payload(frame_bytes(reply)), CrcState::OK,
-                       end_us + Bridge2g4::REPLY_DELAY_US - FakeCoprocessor::now_us());
+      rig.cp.inject_rx_frame(2450000000u, Bridge2g4::reply_payload(frame_bytes(reply)), FcsState::OK,
+                             end_us + Bridge2g4::REPLY_DELAY_US - FakeCoprocessor::now_us());
     }
   });
 
@@ -739,8 +739,8 @@ TEST(ExchangeOverBridle, AnExchangeWhoseRequestTheCoprocessorRefusesOnceKeepsEve
                                                : exchange_test::build_status_response(test::DST_ID, test::OWN_ID);
     // A co-processor reports each frame's start before the frame, on the channel the request went out on.
     const uint64_t delay_us = end_us + Bridge2g4::REPLY_DELAY_US - FakeCoprocessor::now_us();
-    rig.cp.inject_frame_start(rig.cp.freq_hz(), FrameStage::SYNC, delay_us);
-    rig.cp.inject_rx(rig.cp.freq_hz(), Bridge2g4::reply_payload(frame_bytes(frame)), CrcState::OK, delay_us);
+    rig.cp.inject_rx_start(rig.cp.freq_hz(), RxStage::SYNC, delay_us);
+    rig.cp.inject_rx_frame(rig.cp.freq_hz(), Bridge2g4::reply_payload(frame_bytes(frame)), FcsState::OK, delay_us);
   });
 
   IoFrame response{};

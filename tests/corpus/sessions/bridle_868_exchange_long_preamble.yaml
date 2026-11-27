@@ -1,10 +1,10 @@
-protocol: '0.8'
+protocol: '0.9'
 header:
   host_version: null
   firmware_version: fake-0.0
   board: fake-board
-  chip_id: nrf52840
-  proto: '0.8'
+  mcu: nrf52840
+  proto: '0.9'
   reset_cause: pin
   radios:
   - radio: 0
@@ -15,7 +15,7 @@ header:
     band_max_hz: 870000000
     tx_power_min_dbm: -9
     tx_power_max_dbm: 22
-    max_payload: 147
+    max_payload_bytes: 147
     max_preamble_bytes: 8191
     strobe_jitter_us: 0
     caps:
@@ -29,14 +29,14 @@ source:
 messages:
 - dir: coproc_to_host
   host_ms: 100020
-  hex: 8000000008010000000000010866616b652d302e30020a66616b652d626f61726403180000010200c05570338025db33f71693ff1f00000c00000004011005010115b0
+  hex: 8000000009010000000000010866616b652d302e30020a66616b652d626f61726403180000010200c05570338025db33f71693ff1f00000c000000040110050101a9c7
   msg_type: ready
   seq: 0
   fields:
     cmd_seq: 0
     proto_major: 0
-    proto_minor: 8
-    chip_id: nrf52840
+    proto_minor: 9
+    mcu: nrf52840
     caps: {}
     info:
     - id: fw_version
@@ -53,13 +53,13 @@ messages:
         band_max_hz: 870000000
         tx_power_min_dbm: -9
         tx_power_max_dbm: 22
-        max_payload: 147
+        max_payload_bytes: 147
         max_preamble_bytes: 8191
         strobe_jitter_us: 0
         caps:
           rx_scan: true
           cca: true
-    - id: rx_queue_depth
+    - id: event_queue_depth
       value: 16
     - id: reset_cause
       value: pin
@@ -73,8 +73,8 @@ messages:
     params:
     - id: event_mask
       value:
-        frame_start: true
-        crc_error_rx: true
+        rx_start: true
+        rx_fcs_bad: true
         rx_abort: true
         log: true
 - dir: coproc_to_host
@@ -88,8 +88,8 @@ messages:
     applied:
     - id: event_mask
       value:
-        frame_start: true
-        crc_error_rx: true
+        rx_start: true
+        rx_fcs_bad: true
         rx_abort: true
         log: true
 - dir: host_to_coproc
@@ -112,7 +112,7 @@ messages:
       value: gaussian_bt_1_0
     - id: sync_word
       value: 57fd99
-    - id: rx_len
+    - id: rx_capture_bytes
       value: 48
     - id: preamble_detect_bits
       value: 16
@@ -141,7 +141,7 @@ messages:
       value: gaussian_bt_1_0
     - id: sync_word
       value: 57fd99
-    - id: rx_len
+    - id: rx_capture_bytes
       value: 48
     - id: preamble_detect_bits
       value: 16
@@ -256,15 +256,15 @@ messages:
 - dir: coproc_to_host
   host_ms: 100557
   hex: c10900ff62fe05f01fcb33c4000030384014448966445554cd1e511225991155533429317f88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db00259a7b
-  msg_type: rx
+  msg_type: rx_frame
   seq: 9
   fields:
     radio: 0
-    t_us: 100557567
+    t_sync_us: 100557567
     freq_hz: 868950000
     rssi_dbm: -60
     lqi: 0
-    crc: not_checked
+    fcs: not_checked
     payload: 384014448966445554cd1e511225991155533429317f88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db0025
 - dir: host_to_coproc
   host_ms: 100557
@@ -292,13 +292,13 @@ messages:
 - dir: coproc_to_host
   host_ms: 100579
   hex: c10b00b0b6fe05f01fcb33c400003038c014448966445554cd104010040100401004e933ff88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db0025fb43
-  msg_type: rx
+  msg_type: rx_frame
   seq: 11
   fields:
     radio: 0
-    t_us: 100578992
+    t_sync_us: 100578992
     freq_hz: 868950000
     rssi_dbm: -60
     lqi: 0
-    crc: not_checked
+    fcs: not_checked
     payload: 38c014448966445554cd104010040100401004e933ff88add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db0025

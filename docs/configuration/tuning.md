@@ -647,7 +647,7 @@ A radio co-processor (`radio_type: bridle`) takes each reading on request, and i
 it is busy with its own transmission, it does not answer (the link then restarts), or it refused to tune to the channel.
 The hub then judges the channel neither free nor busy. It sends nothing in that attempt, logs
 `No reading of the channel (last on … Hz) for cmd=…: nothing sent` and goes on with the next attempt.
-The bridge's debug dump counts the readings it did not get (`busy`, `no reply`, `refused`)
+The bridge's debug dump counts the readings it did not get (`radio_busy`, `no reply`, `refused`)
 ([ADR 0134](../adr/0134-a-radio-may-have-no-reading-and-an-attempt-without-one-fails.md)).
 
 With `lbt_force_when_busy: true` the hub does not give up after that time: it measures all three

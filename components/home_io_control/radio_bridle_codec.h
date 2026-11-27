@@ -3,10 +3,10 @@
 /// @ingroup hioc_radio
 ///
 /// Bridle is the protocol between the hub and a radio co-processor
-/// ([specification](https://github.com/laberning/bridle/blob/bridle-v0.8.0/README.md)). This header is the byte-level
+/// ([specification](https://github.com/laberning/bridle/blob/bridle-v0.9.0/README.md)). This header is the byte-level
 /// half of it: it turns messages into frames and frames into messages, and knows nothing of io-homecontrol, of any
 /// radio or of the transport. Every code (message type, param id, error code, capability bit) comes from the generated
-/// `radio_bridle_enums.h` (the generated header of a Bridle release, namespace `::bridle`); the link CRC is
+/// `radio_bridle_protocol.h` (the generated header of a Bridle release, namespace `::bridle`); the link CRC is
 /// `crc_ccitt()`.
 ///
 /// Nothing here allocates. A decoded message refers to the buffer it was decoded from (payloads,
@@ -27,7 +27,7 @@
 #include <cstdint>
 #include <variant>
 
-#include "radio_bridle_enums.h"
+#include "radio_bridle_protocol.h"
 
 namespace esphome::home_io_control::bridle {
 
@@ -47,7 +47,7 @@ static constexpr size_t MAX_BODY_SIZE = MAX_MESSAGE_SIZE - MIN_MESSAGE_SIZE;
 static constexpr size_t MAX_WIRE_SIZE = 258;
 /// Radio index that addresses the device instead of one radio in `set_params`.
 static constexpr uint8_t DEVICE_SCOPE = 0xFF;
-/// Most frequencies one `rx_scan` may list (spec §3.1); a longer list is a `param_range` error.
+/// Most frequencies one `rx_scan` may list (spec §3.1); a longer list is an `out_of_range` error.
 static constexpr size_t MAX_SCAN_FREQS = 16;
 /// Longest strobe template (spec §5).
 static constexpr size_t MAX_STROBE_TEMPLATE = 32;
@@ -123,8 +123,8 @@ struct StrobeSpec {
   uint8_t counter_width{0};                       ///< Counter bytes, big-endian.
   uint32_t counter_unit_ns{0};                    ///< Counter step: the time to the main frame in these units.
   int16_t counter_adjust{0};                      ///< Added to the counter.
-  uint8_t len_template{0};                        ///< Template bytes, 1…`MAX_STROBE_TEMPLATE`.
-  uint8_t template_bytes[MAX_STROBE_TEMPLATE]{};  ///< The strobe frame before the counter is written.
+  uint8_t len_frame_template{0};                  ///< Template bytes, 1…`MAX_STROBE_TEMPLATE`.
+  uint8_t frame_template[MAX_STROBE_TEMPLATE]{};  ///< The strobe frame before the counter is written.
 };
 /// `tx` (0x06): send one payload, optionally after a strobe.
 struct Tx {
@@ -132,11 +132,11 @@ struct Tx {
   uint8_t radio{0};
   uint32_t freq_hz{0};
   bool then_rx{false};          ///< Return to receive after the main frame.
-  bool at_time{false};          ///< Start the main frame at `t_main_us`.
+  bool at_time{false};          ///< Start the main frame at `t_main_start_us`.
   bool cca{false};              ///< Check the channel first, against `cca_threshold_dbm`.
   bool has_strobe{false};       ///< `strobe` is present.
   uint16_t preamble_bytes{0};   ///< 0 = the profile's standard preamble.
-  uint32_t t_main_us{0};        ///< Co-processor time; only with `at_time`.
+  uint32_t t_main_start_us{0};  ///< Co-processor time; only with `at_time`.
   int8_t cca_threshold_dbm{0};  ///< Only with `cca`.
   StrobeSpec strobe{};          ///< Only with `has_strobe`.
   ByteSpan payload{};
@@ -166,9 +166,9 @@ struct Ready {
   uint8_t cmd_seq{0};  ///< 0 when unsolicited (after a boot).
   uint8_t proto_major{PROTO_MAJOR};
   uint8_t proto_minor{PROTO_MINOR};
-  uint16_t chip_id{0};  ///< A `ChipId` value (kept raw so an unknown chip still decodes).
-  uint32_t caps{0};     ///< `device_caps` bits.
-  ByteSpan info{};      ///< `id · len · value` entries.
+  uint16_t mcu{0};   ///< A `Chip` value (kept raw so an unknown chip still decodes).
+  uint32_t caps{0};  ///< `device_caps` bits.
+  ByteSpan info{};   ///< `id · len · value` entries.
 };
 /// `ack` (0x82): the answer to a command that has nothing to report.
 struct Ack {
@@ -182,23 +182,23 @@ struct ParamsAck {
   uint8_t radio{0};
   ByteSpan applied{};  ///< `id · len · value` entries.
 };
-/// `frame_start` (0xC0): a frame is arriving.
-struct FrameStart {
-  static constexpr MsgType TYPE = MsgType::FRAME_START;
+/// `rx_start` (0xC0): a frame is arriving.
+struct RxStart {
+  static constexpr MsgType TYPE = MsgType::RX_START;
   uint8_t radio{0};
   uint32_t t_us{0};
   uint32_t freq_hz{0};
-  FrameStage stage{FrameStage::SYNC};
+  RxStage stage{RxStage::SYNC};
 };
-/// `rx` (0xC1): a received frame.
-struct Rx {
-  static constexpr MsgType TYPE = MsgType::RX;
+/// `rx_frame` (0xC1): a received frame.
+struct RxFrame {
+  static constexpr MsgType TYPE = MsgType::RX_FRAME;
   uint8_t radio{0};
-  uint32_t t_us{0};
+  uint32_t t_sync_us{0};  ///< End of the frame's sync word or SFD, on the co-processor clock.
   uint32_t freq_hz{0};
   int8_t rssi_dbm{0};
   uint8_t lqi{0};
-  CrcState crc{CrcState::NOT_CHECKED};
+  FcsState fcs{FcsState::NOT_CHECKED};
   ByteSpan payload{};  ///< 802.15.4: the PSDU including the received FCS.
 };
 /// `rx_abort` (0xC2): a reception began but did not complete.
@@ -232,7 +232,7 @@ struct Stats {
   /// Index of each counter in `counters`, in wire order.
   enum Counter : uint8_t {
     RX_OK,
-    RX_CRC_ERR,
+    RX_FCS_BAD,
     RX_ABORT,
     RX_OVERFLOW,
     TX_OK,
@@ -262,7 +262,8 @@ struct Log {
   LogLevel level{LogLevel::INFO};
   ByteSpan text{};
 };
-/// `rx_overflow` (0xC3): received frames were dropped because the host did not drain.
+/// `rx_overflow` (0xC3): reception events (`rx_start`, `rx_frame`, `rx_abort`) were dropped because the host did not
+/// drain; `dropped` counts those no earlier `rx_overflow` reported.
 struct RxOverflow {
   static constexpr MsgType TYPE = MsgType::RX_OVERFLOW;
   uint16_t dropped{0};
@@ -277,11 +278,11 @@ struct Unknown {
 /// Every message body the codec handles.
 using Body =
     std::variant<Unknown, Hello, SetParams, RxOn, RxScan, Idle, Tx, GetRssi, GetStats, SoftReset, EnterBootloader,
-                 Ready, ParamsAck, Ack, FrameStart, Rx, RxAbort, TxDone, Rssi, Stats, Error, Log, RxOverflow>;
+                 Ready, ParamsAck, Ack, RxStart, RxFrame, RxAbort, TxDone, Rssi, Stats, Error, Log, RxOverflow>;
 
 /// One decoded message: the frame header's `seq` plus the typed body.
 struct Message {
-  uint8_t seq{0};  ///< Host: command id (never 0). Co-processor: event counter.
+  uint8_t seq{0};  ///< Host: command id (never 0). Co-processor: message counter.
   Body body;
 };
 
@@ -292,8 +293,8 @@ struct Message {
 
 /// Outcome of `decode_message`.
 enum class DecodeStatus : uint8_t {
-  OK,          ///< `out` holds the message (possibly an `Unknown` one).
-  BAD_LENGTH,  ///< The message is too short, or the body does not match its type's layout.
+  OK,         ///< `out` holds the message (possibly an `Unknown` one).
+  MALFORMED,  ///< The message is too short, or the body does not match its type's layout.
 };
 
 /// @brief Encode `body` as a message: `msg_type · seq · body · crc`.
@@ -312,7 +313,7 @@ size_t frame_message(const uint8_t *msg, size_t n, uint8_t *out, size_t cap);
 ///
 /// The spec's rule for a command whose body does not fit its layout applies to every message: a
 /// short body, a TLV that runs past the end, a wrong magic, or (while the protocol is 0.y) bytes
-/// left over are all `DecodeStatus::BAD_LENGTH`. An unknown type is not an error.
+/// left over are all `DecodeStatus::MALFORMED`. An unknown type is not an error.
 [[nodiscard]] DecodeStatus decode_message(const uint8_t *msg, size_t n, Message &out);
 
 /// Whether the trailing CRC-16/KERMIT of `msg` matches its other bytes.
@@ -322,17 +323,17 @@ size_t frame_message(const uint8_t *msg, size_t n, uint8_t *out, size_t cap);
 
 /// @brief Turns a byte stream into messages one byte at a time.
 ///
-/// Invalid frames (bad COBS, bad CRC, bad length) are dropped and counted, as the spec requires
+/// Invalid link frames (bad COBS, bad CRC, bad length) are dropped and counted, as the spec requires
 /// (`stats.link_err`); the deframer resynchronises on the next delimiter and never allocates.
 class Deframer {
  public:
   /// What one byte did.
   enum class Event : uint8_t {
-    NONE,     ///< The frame is still incomplete, or an empty frame ended.
+    NONE,     ///< The link frame is still incomplete, or an empty one ended.
     MESSAGE,  ///< A valid message is ready: see `message`.
-    DROPPED,  ///< An invalid frame ended and was counted.
+    DROPPED,  ///< An invalid link frame ended and was counted.
   };
-  /// Frames dropped so far, by reason.
+  /// Link frames dropped so far, by reason.
   struct Counters {
     uint32_t bad_cobs{0};
     uint32_t bad_crc{0};
@@ -365,13 +366,13 @@ class Deframer {
 /// One radio of the co-processor (`info_id::radio`).
 struct RadioDescriptor {
   uint8_t radio{0};
-  uint16_t chip{0};      ///< A `ChipId` value: the radio's own chip.
+  uint16_t chip{0};      ///< A `Chip` value: the radio's own chip.
   uint16_t profiles{0};  ///< `phy_profiles` bits.
   uint32_t band_min_hz{0};
   uint32_t band_max_hz{0};
   int8_t tx_power_min_dbm{0};
   int8_t tx_power_max_dbm{0};
-  uint8_t max_payload{0};
+  uint8_t max_payload_bytes{0};
   uint16_t max_preamble_bytes{0};  ///< Longest `tx.preamble_bytes` on a per-packet-preamble profile; 0 without.
   uint16_t strobe_jitter_us{0};    ///< Worst-case strobe slot error; 0 without cap `strobe`.
   uint32_t caps{0};                ///< `radio_caps` bits.
@@ -436,8 +437,8 @@ struct ReadyInfo {
   ByteSpan board{};  ///< Empty when the co-processor sent none.
   RadioDescriptor radios[MAX_RADIOS]{};
   uint8_t radio_count{0};
-  bool has_rx_queue_depth{false};
-  uint8_t rx_queue_depth{0};
+  bool has_event_queue_depth{false};
+  uint8_t event_queue_depth{0};
   ResetCause reset_cause{ResetCause::POWER_ON};
 };
 
@@ -457,7 +458,7 @@ enum class ReadyInfoStatus : uint8_t {
 [[nodiscard]] ReadyInfoStatus parse_ready_info(ByteSpan info, ReadyInfo &out);
 
 /// Whether a `ready` is the answer to a `hello` that took the host link over (`reset_cause` `link_takeover`, spec
-/// §2.1): the co-processor did not reboot, but its protocol state and event counter restarted.
+/// §2.1): the co-processor did not reboot, but its protocol state and message counter restarted.
 [[nodiscard]] bool is_link_takeover(const Ready &ready);
 
 // === The version rule (spec §10.2) ===

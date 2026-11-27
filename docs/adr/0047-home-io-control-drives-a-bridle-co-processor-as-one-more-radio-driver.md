@@ -6,8 +6,8 @@
 
 ## Context
 
-[Bridle ADR 0001](https://github.com/laberning/bridle/blob/bridle-v0.8.0/docs/adr/0001-one-protocol-for-every-band-radios-offer-phy-profiles.md) chose a radio
-co-processor behind a UART, spoken to with the [Bridle protocol](https://github.com/laberning/bridle/blob/bridle-v0.8.0/README.md). The hub side has to plug into
+[Bridle ADR 0001](https://github.com/laberning/bridle/blob/bridle-v0.9.0/docs/adr/0001-one-protocol-for-every-band-radios-offer-phy-profiles.md) chose a radio
+co-processor behind a UART, spoken to with the [Bridle protocol](https://github.com/laberning/bridle/blob/bridle-v0.9.0/README.md). The hub side has to plug into
 code that was written for chips on an SPI bus: the exchange engine, the pairing flow and the
 entity platforms talk to the radio only through `RadioDriver`, and the hub is an `spi::SPIDevice`
 whose schema always asked for an SPI bus.
@@ -53,7 +53,7 @@ Four things about a bridge differ from an SPI radio and decide the shape of the 
 - **One receive path.** One private drain reads the stream, deframes it and routes each message; a
   reply goes to the command awaiting it, a frame into a small FIFO, everything else into state.
   Every getter and wait loop drains first. When our own `tx_done` is routed, the FIFO is cleared:
-  what arrived before it arrived before or during the transmission ([specification §6](https://github.com/laberning/bridle/blob/bridle-v0.8.0/README.md#6-ordering-rule)).
+  what arrived before it arrived before or during the transmission ([specification §6](https://github.com/laberning/bridle/blob/bridle-v0.9.0/README.md#6-ordering-rule)).
 - **The band's values are the band's.** The 2.4 GHz band is `IO_2G4_BAND`: the channels at 2425, 2450
   and 2475 MHz, every channel a wake-up channel, short reply windows and gap, low-power by default and a
   busy limit of -75 dBm while no quiet level is known. The limit is the most permissive level IEEE
@@ -83,7 +83,7 @@ Four things about a bridge differ from an SPI radio and decide the shape of the 
   the ESP32. Only an `init()` failure latches the driver failed.
 - **Compiled only when configured.** Every Bridle source sits under `IOHOME_BRIDLE`, which
   `to_code()` defines for `radio_type: bridle`; the hub's `setup()` is the one place that names the
-  driver. The codes come from `radio_bridle_enums.h`, the generated
+  driver. The codes come from `radio_bridle_protocol.h`, the generated
   header of a Bridle release, committed at the top of the component directory (ESPHome copies only the
   files directly in a component's directory) and replaced only by `scripts/bridle-update.sh`, which
   checks it against the release's `SHA256SUMS`; `BRIDLE_VERSION` names the release and `make bridle-check`
@@ -104,7 +104,7 @@ Four things about a bridge differ from an SPI radio and decide the shape of the 
   co-processor holds until the receiver listens on the commanded frequency ([ADR 0134](0134-a-radio-may-have-no-reading-and-an-attempt-without-one-fails.md)),
   so the bridge's `cca_settle_us()` is 0 on both bands. The driver waits for the reply as long as for any
   command (`ACK_TIMEOUT_MS`, link supervision: the co-processor answers a reading within a few ms), and gives no
-  level when the co-processor answers `busy` or any other error, when no reply comes (the link resyncs, as for any
+  level when the co-processor answers `radio_busy` or any other error, when no reply comes (the link resyncs, as for any
   command without a reply), while its own scan runs (a reading during a scan
   belongs to no channel), or while the retune before the reading stands refused (the radio stayed on the old
   channel). It tells an idle radio to receive before it reads. A refused command has changed nothing
@@ -116,8 +116,8 @@ Four things about a bridge differ from an SPI radio and decide the shape of the 
   commands nobody waits for (`rx_on`, `rx_scan`, `idle`), matches each `ack` or `error` against its head,
   resyncs the link on a lost or overtaking reply, and does not retry a refused `rx_scan` or `rx_on` for a
   few seconds. `BridlePhy::radio_fits()` decides in one place whether a co-processor's radio can carry a
-  band ([Bridle ADR 0002](https://github.com/laberning/bridle/blob/bridle-v0.8.0/docs/adr/0002-every-command-gets-exactly-one-reply.md),
-  [ADR 0003](https://github.com/laberning/bridle/blob/bridle-v0.8.0/docs/adr/0003-a-profile-states-what-every-radio-of-it-does.md)).
+  band ([Bridle ADR 0002](https://github.com/laberning/bridle/blob/bridle-v0.9.0/docs/adr/0002-every-command-gets-exactly-one-reply.md),
+  [ADR 0003](https://github.com/laberning/bridle/blob/bridle-v0.9.0/docs/adr/0003-a-profile-states-what-every-radio-of-it-does.md)).
 - **`tx_power` is per radio.** The SPI radios keep the range 0…22 and the default 17. A bridge takes
   any dBm value the protocol allows and, when it is unset, asks its radio for its own maximum; the
   co-processor clamps and echoes what it applied.

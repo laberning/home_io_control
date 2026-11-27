@@ -54,13 +54,13 @@ size_t Io2g4Phy::wrap(const uint8_t *frame, uint8_t len, uint8_t *out, size_t ca
   return total;
 }
 
-UnwrapResult Io2g4Phy::unwrap(const uint8_t *payload, size_t len, CrcState crc, uint8_t *out, size_t cap) const {
+UnwrapResult Io2g4Phy::unwrap(const uint8_t *payload, size_t len, FcsState fcs, uint8_t *out, size_t cap) const {
   UnwrapResult result;
   if (len < IO2G4_MIN_PSDU_SIZE) {
     result.status = UnwrapResult::Status::TOO_SHORT;
     return result;
   }
-  if (crc == CrcState::BAD) {
+  if (fcs == FcsState::BAD) {
     result.status = UnwrapResult::Status::BAD_CRC;
     return result;
   }
@@ -93,8 +93,8 @@ TxShape Io2g4Phy::tx_shape(TxWake wake, uint16_t preamble_len) const {
   strobe.counter_width = 2;
   strobe.counter_unit_ns = IO2G4_STROBE_PERIOD_NS;
   strobe.counter_adjust = -1;  // the frame k slots before the main frame counts k - 1 down to 0
-  strobe.len_template = sizeof(IO2G4_STROBE_TEMPLATE);
-  std::memcpy(strobe.template_bytes, IO2G4_STROBE_TEMPLATE, sizeof(IO2G4_STROBE_TEMPLATE));
+  strobe.len_frame_template = sizeof(IO2G4_STROBE_TEMPLATE);
+  std::memcpy(strobe.frame_template, IO2G4_STROBE_TEMPLATE, sizeof(IO2G4_STROBE_TEMPLATE));
   return shape;
 }
 

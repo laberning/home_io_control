@@ -123,7 +123,7 @@ class TestableRadioBridle : public esphome::home_io_control::RadioBridle {
   [[nodiscard]] bool have_rx_short() const { return have_rx_short_; }
   [[nodiscard]] uint32_t rx_short() const { return rx_short_; }
   [[nodiscard]] uint32_t stale_replies() const { return stale_replies_; }
-  /// Readings the co-processor did not give: answered `busy`, no reply in time, answered another `error`.
+  /// Readings the co-processor did not give: answered `radio_busy`, no reply in time, answered another `error`.
   [[nodiscard]] uint32_t rssi_busy() const { return rssi_busy_; }
   [[nodiscard]] uint32_t rssi_no_reply() const { return rssi_no_reply_; }
   [[nodiscard]] uint32_t rssi_refused() const { return rssi_refused_; }

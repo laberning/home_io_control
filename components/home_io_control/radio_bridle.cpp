@@ -125,7 +125,7 @@ bool RadioBridle::host_backlog_() const {
 }
 
 void RadioBridle::note_event_counter_(const Message &m) {
-  // The event counter is the second byte of every co-processor message (spec §2.2). A boot
+  // The message counter is the second byte of every co-processor message (spec §2.2). A boot
   // `ready` is counter 0; any gap means events were lost.
   const auto *ready = std::get_if<Ready>(&m.body);
   // The `ready` that answers a taking `hello` restarts the counter at 0 as a boot does (spec §2.1); a later `ready`
@@ -134,7 +134,7 @@ void RadioBridle::note_event_counter_(const Message &m) {
     this->expected_counter_known_ = true;
   } else if (this->expected_counter_known_ && m.seq != this->expected_counter_) {
     this->counter_gaps_++;
-    HELD_LOGW("event counter jumped from %u to %u: events were lost", this->expected_counter_, m.seq);
+    HELD_LOGW("message counter jumped from %u to %u: events were lost", this->expected_counter_, m.seq);
     // Repeated gaps mean the link is losing events, which a resync cures (spec §7).
     uint32_t const now = millis();
     if (this->gap_count_ == GAP_LIMIT) {
@@ -253,9 +253,9 @@ void RadioBridle::on_awaited_reply_(const Message &m, const uint8_t *msg, size_t
 }
 
 void RadioBridle::route_event_(const Body &body) {
-  if (const auto *rx = std::get_if<Rx>(&body)) {
-    this->on_rx_(*rx);
-  } else if (const auto *fs = std::get_if<FrameStart>(&body)) {
+  if (const auto *rx = std::get_if<RxFrame>(&body)) {
+    this->on_rx_frame_(*rx);
+  } else if (const auto *fs = std::get_if<RxStart>(&body)) {
     if (fs->radio == this->radio_) {
       this->frame_arriving_ = true;
       this->arriving_stage_ = fs->stage;
@@ -528,7 +528,7 @@ bool RadioBridle::accept_ready_(const Ready &ready, bool latch_failure) {
              "radio %u: chip 0x%04X, profiles 0x%04X, %" PRIu32 "-%" PRIu32
              " Hz, %d..%d dBm, payload %u, preamble up to %u, caps 0x%08" PRIX32,
              d.radio, d.chip, d.profiles, d.band_min_hz, d.band_max_hz, d.tx_power_min_dbm, d.tx_power_max_dbm,
-             d.max_payload, d.max_preamble_bytes, d.caps);
+             d.max_payload_bytes, d.max_preamble_bytes, d.caps);
     if (chosen == nullptr && this->phy_.radio_fits(d))
       chosen = &d;
   }
@@ -552,7 +552,7 @@ bool RadioBridle::accept_ready_(const Ready &ready, bool latch_failure) {
   this->radio_chosen_ = true;
   this->radio_ = chosen->radio;
   this->radio_caps_ = chosen->caps;
-  this->max_payload_ = chosen->max_payload;
+  this->max_payload_ = chosen->max_payload_bytes;
   this->applied_tx_power_dbm_ = tx_power_dbm_.value_or(chosen->tx_power_max_dbm);
   ESP_LOGI(TAG, "using radio %u of %s, firmware %s", this->radio_, this->board_, this->fw_version_);
   return true;
@@ -562,11 +562,11 @@ uint8_t RadioBridle::send_config_(bool device) {
   uint8_t buf[CONFIG_TLV_CAP];
   TlvWriter tlvs(buf, sizeof(buf));
   if (device) {
-    // All bits are 0 after every boot; each event enabled here has a use: frame_start drives the
-    // reception state, CRC-error rx fills the capture's crc_error, rx_abort ends a reception early,
+    // All bits are 0 after every boot; each event enabled here has a use: rx_start drives the
+    // reception state, an rx_frame with a bad FCS fills the capture's crc_error, rx_abort ends a reception early,
     // log shows the co-processor's warnings and errors.
     tlvs.add_u8(static_cast<uint8_t>(ParamId::EVENT_MASK),
-                event_mask::FRAME_START | event_mask::CRC_ERROR_RX | event_mask::RX_ABORT | event_mask::LOG);
+                event_mask::RX_START | event_mask::RX_FCS_BAD | event_mask::RX_ABORT | event_mask::LOG);
   } else {
     // phy_profile first: it resets the radio's profile params to their defaults.
     tlvs.add_u8(static_cast<uint8_t>(ParamId::PHY_PROFILE), static_cast<uint8_t>(this->phy_.profile()));
@@ -628,9 +628,9 @@ void RadioBridle::apply_tuning(const TuningConfig &tuning) {
 
 bool RadioBridle::config_reply_ok_(bool device) {
   if (this->await_errored_) {
-    // For param_range and unsupported `detail` is the TLV id that failed (spec §2.2); nothing was applied.
+    // For out_of_range and unsupported `detail` is the TLV id that failed (spec §2.2); nothing was applied.
     ErrorCode const code = this->last_error_code_;
-    if (code == ErrorCode::PARAM_RANGE || code == ErrorCode::UNSUPPORTED) {
+    if (code == ErrorCode::OUT_OF_RANGE || code == ErrorCode::UNSUPPORTED) {
       ESP_LOGE(TAG, "the %s configuration was refused: error %u names TLV 0x%02X", device ? "device" : "radio",
                static_cast<unsigned>(code), static_cast<unsigned>(this->last_error_detail_) & 0xFFU);
     } else {
@@ -676,7 +676,7 @@ uint32_t RadioBridle::tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) cons
   TxShape const shape = this->phy_.tx_shape(cfg.wake, cfg.preamble_len);
   size_t const wrapped = this->phy_.wrapped_size(len);
   // The command itself takes UART time before the radio starts: a strobe adds its own fields.
-  size_t const command_bytes = 20 + wrapped + (shape.has_strobe ? 22 + shape.strobe.len_template : 0);
+  size_t const command_bytes = 20 + wrapped + (shape.has_strobe ? 22 + shape.strobe.len_frame_template : 0);
   return this->phy_.tx_air_time_us(shape, wrapped) + (static_cast<uint32_t>(command_bytes) * this->uart_byte_us_);
 }
 
@@ -762,7 +762,7 @@ TxResult RadioBridle::transmit_(const uint8_t *data, uint8_t len, const RadioTxC
 
 // === Receive ===
 
-void RadioBridle::on_rx_(const Rx &rx) {
+void RadioBridle::on_rx_frame_(const RxFrame &rx) {
   if (rx.radio != this->radio_)
     return;
   this->frame_arriving_ = false;
@@ -775,7 +775,7 @@ void RadioBridle::on_rx_(const Rx &rx) {
   // co-processor drops them already, this covers one it let through) never reaches the FIFO: a burst of them must not
   // push a real frame out.
   uint8_t scratch[RADIO_PACKET_BUFFER_SIZE];
-  if (this->phy_.unwrap(rx.payload.data, rx.payload.size, rx.crc, scratch, sizeof(scratch)).status ==
+  if (this->phy_.unwrap(rx.payload.data, rx.payload.size, rx.fcs, scratch, sizeof(scratch)).status ==
       UnwrapResult::Status::TOO_SHORT) {
     this->short_frames_++;
     return;
@@ -789,7 +789,7 @@ void RadioBridle::on_rx_(const Rx &rx) {
   RxEntry &e = this->fifo_[(this->fifo_head_ + this->fifo_count_) % RX_FIFO_DEPTH];
   e.freq_hz = rx.freq_hz;
   e.rssi_dbm = rx.rssi_dbm;
-  e.crc = rx.crc;
+  e.fcs = rx.fcs;
   e.len = static_cast<uint8_t>(rx.payload.size);
   if (rx.payload.size > 0)
     std::memcpy(e.data, rx.payload.data, rx.payload.size);
@@ -800,7 +800,7 @@ bool RadioBridle::decode_entry_(const RxEntry &entry, RadioRxPacket &packet) {
   uint32_t const logical = this->phy_.channel_hz(entry.freq_hz);
   uint32_t const freq = logical != 0 ? logical : entry.freq_hz;
   uint8_t frame[RADIO_PACKET_BUFFER_SIZE];
-  UnwrapResult const result = this->phy_.unwrap(entry.data, entry.len, entry.crc, frame, sizeof(frame));
+  UnwrapResult const result = this->phy_.unwrap(entry.data, entry.len, entry.fcs, frame, sizeof(frame));
   // The packet carries the logical channel the hub works with; the capture, which only logs read, keeps
   // the frequency the frame was received on, so a 2.4 GHz frame never logs as 868 MHz.
   auto capture = [&](const uint8_t *io_frame, uint8_t io_len) {
@@ -835,7 +835,7 @@ bool RadioBridle::decode_entry_(const RxEntry &entry, RadioRxPacket &packet) {
       this->oversize_dropped_++;
       return false;
     case UnwrapResult::Status::TOO_SHORT:
-      return false;  // on_rx_() keeps these out of the FIFO; only a defensive branch remains
+      return false;  // on_rx_frame_() keeps these out of the FIFO; only a defensive branch remains
   }
   return false;
 }
@@ -906,9 +906,9 @@ std::optional<int16_t> RadioBridle::read_rssi() {
     return std::nullopt;
   }
   if (wait == Wait::ERROR) {
-    // `busy` is the radio's own transmission, its turn back to receive, or a retune waiting behind a frame in
+    // `radio_busy` is the radio's own transmission, its turn back to receive, or a retune waiting behind a frame in
     // progress; a fault has already reset the link. None of them is a reading, and none is asked again.
-    (this->last_error_code_ == ErrorCode::BUSY ? this->rssi_busy_ : this->rssi_refused_)++;
+    (this->last_error_code_ == ErrorCode::RADIO_BUSY ? this->rssi_busy_ : this->rssi_refused_)++;
     return std::nullopt;
   }
   // The one place of the rule: a retune the co-processor refused changes nothing (spec §2.2), so the reading that
@@ -928,12 +928,12 @@ std::optional<int16_t> RadioBridle::read_rssi() {
 
 bool RadioBridle::is_sync_detected() {
   this->poll_link_();
-  return this->frame_arriving_ && this->arriving_stage_ == FrameStage::SYNC;
+  return this->frame_arriving_ && this->arriving_stage_ == RxStage::SYNC;
 }
 
 bool RadioBridle::is_preamble_detected() {
   this->poll_link_();
-  return this->frame_arriving_ && this->arriving_stage_ == FrameStage::PREAMBLE;
+  return this->frame_arriving_ && this->arriving_stage_ == RxStage::PREAMBLE;
 }
 
 bool RadioBridle::reception_in_progress() {
@@ -986,7 +986,7 @@ void RadioBridle::set_mode_standby() {
   this->send_pending_(Idle{this->radio_}, PendingKind::IDLE);
   this->rx_on_ = false;
   this->scanning_ = false;
-  // `idle` drops a frame being received without an rx_abort, so no frame_start is left open.
+  // `idle` drops a frame being received without an rx_abort, so no rx_start is left open.
   this->frame_arriving_ = false;
   this->clear_reception_in_progress_();
 }
@@ -1287,8 +1287,8 @@ void RadioBridle::dump_debug() {
   ESP_LOGCONFIG(TAG, "    Preamble up to %u bytes, strobe jitter %u us", this->radio_desc_.max_preamble_bytes,
                 this->radio_desc_.strobe_jitter_us);
   ESP_LOGCONFIG(TAG, "    TX power applied: %d dBm", this->applied_tx_power_dbm_);
-  if (this->ready_info_.has_rx_queue_depth)
-    ESP_LOGCONFIG(TAG, "    Co-processor RX queue: %u events", this->ready_info_.rx_queue_depth);
+  if (this->ready_info_.has_event_queue_depth)
+    ESP_LOGCONFIG(TAG, "    Co-processor RX queue: %u events", this->ready_info_.event_queue_depth);
   ESP_LOGCONFIG(TAG, "    Reset cause: %u", static_cast<unsigned>(this->ready_info_.reset_cause));
   ESP_LOGCONFIG(TAG, "    Link: %s, resyncs: %" PRIu32, link_name(this->link_), this->resyncs_);
   ESP_LOGCONFIG(TAG, "    Drains cut short at their time budget: %" PRIu32, this->drains_cut_);
@@ -1301,16 +1301,16 @@ void RadioBridle::dump_debug() {
   ESP_LOGCONFIG(TAG, "    Link errors: %" PRIu32 " (bad COBS %" PRIu32 ", CRC %" PRIu32 ", length %" PRIu32 ")",
                 this->deframer_.counters().total(), this->deframer_.counters().bad_cobs,
                 this->deframer_.counters().bad_crc, this->deframer_.counters().bad_length);
-  ESP_LOGCONFIG(TAG, "    Event counter gaps: %" PRIu32 ", co-processor overflow reports: %" PRIu32,
+  ESP_LOGCONFIG(TAG, "    Message counter gaps: %" PRIu32 ", co-processor overflow reports: %" PRIu32,
                 this->counter_gaps_, this->rx_overflow_reports_);
   ESP_LOGCONFIG(TAG,
                 "    Frames dropped: before tx_done %" PRIu32 ", FIFO full %" PRIu32 ", oversize %" PRIu32
                 ", header mismatch %" PRIu32 ", bad CRC %" PRIu32 ", too short %" PRIu32,
                 this->dropped_before_tx_done_, this->fifo_overflows_, this->oversize_dropped_, this->header_mismatches_,
                 this->bad_crc_frames_, this->short_frames_);
-  ESP_LOGCONFIG(TAG,
-                "    Readings the co-processor did not give: busy %" PRIu32 ", no reply %" PRIu32 ", refused %" PRIu32,
-                this->rssi_busy_, this->rssi_no_reply_, this->rssi_refused_);
+  ESP_LOGCONFIG(
+      TAG, "    Readings the co-processor did not give: radio_busy %" PRIu32 ", no reply %" PRIu32 ", refused %" PRIu32,
+      this->rssi_busy_, this->rssi_no_reply_, this->rssi_refused_);
   ESP_LOGCONFIG(TAG,
                 "    Late strobe frames: %" PRIu32 ", stale replies: %" PRIu32
                 ", errors to unawaited commands: %" PRIu32 ", log events: %" PRIu32,

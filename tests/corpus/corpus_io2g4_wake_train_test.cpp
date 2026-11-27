@@ -88,7 +88,7 @@ TEST_P(CorpusIo2g4WakeTrain, TheShapeReproducesTheCapturedTrain) {
         (IO2G4_PHY_OVERHEAD_BYTES + IO2G4_PSDU_HEADER_SIZE + corpus_test::wire_len(cf) + IO2G4_FCS_SIZE) *
         IO2G4_BYTE_US;
     const uint32_t wake_air_us =
-        (IO2G4_PHY_OVERHEAD_BYTES + shape.strobe.len_template + IO2G4_FCS_SIZE) * IO2G4_BYTE_US;
+        (IO2G4_PHY_OVERHEAD_BYTES + shape.strobe.len_frame_template + IO2G4_FCS_SIZE) * IO2G4_BYTE_US;
     const int64_t measured_gap_us = static_cast<int64_t>(cf.t_us) - cf.wake_last_t_us;
     const int64_t airtime_difference_us =
         capture->stamp_at_sfd ? 0 : static_cast<int64_t>(main_air_us) - static_cast<int64_t>(wake_air_us);

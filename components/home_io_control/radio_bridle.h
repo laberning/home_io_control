@@ -20,7 +20,7 @@
 ///
 /// Receiving. One private drain (`drain_`) reads the stream chunk by chunk, deframes it and
 /// routes each message: a reply to the command awaiting it, a received frame into a small FIFO,
-/// `frame_start`/`rx_abort` into the reception state, `log` into the log. Every line the driver writes
+/// `rx_start`/`rx_abort` into the reception state, `log` into the log. Every line the driver writes
 /// after its start-up, a trace line and the frame log's TX and RX lines (`log_frame()`, as the SPI drivers write
 /// them) included, goes through the frame log's hold (`frame_log_line()`), so nothing
 /// is printed while the hub waits for a reply it provoked (ADR 0111). Every getter
@@ -32,7 +32,7 @@
 /// deadline), and the link supervision's reply timeouts and the event-counter resync stand down while
 /// the last drain was cut short, since a backlog on the host is not a fault of the link.
 ///
-/// Ordering (spec §6). When `tx_done` of our own `tx` is routed, the FIFO is emptied: every `rx`
+/// Ordering (spec §6). When `tx_done` of our own `tx` is routed, the FIFO is emptied: every `rx_frame`
 /// before it arrived before or during the transmission, which a half-duplex radio would have
 /// lost, so a late reply to an earlier try can never be taken for the current one.
 
@@ -156,17 +156,17 @@ class RadioBridle : public RadioDriver {
   bool check_for_packet(RadioRxPacket &packet) override;
   /// `get_rssi`: a fresh reading of the frequency the receiver is on (specification §3.1). An idle radio is
   /// told to receive first. Nothing when the link is down, a scan runs (a reading during a scan cannot be attributed
-  /// to a channel), the co-processor answers `busy` (its own transmission, or a retune waiting behind a frame), or the
-  /// reply does not come within ACK_TIMEOUT_MS (a command without a reply: the link is resynced, as for every other
-  /// command), or the newest retune it depends on was refused (the radio then stays where it was, and the level read
-  /// is of that channel, not of the one asked for); a `radio_fault` resets the link as it does wherever it comes. The
-  /// hub does not ask again: the attempt that wanted the reading fails (ADR 0134).
+  /// to a channel), the co-processor answers `radio_busy` (its own transmission, or a retune waiting behind a frame),
+  /// or the reply does not come within ACK_TIMEOUT_MS (a command without a reply: the link is resynced, as for every
+  /// other command), or the newest retune it depends on was refused (the radio then stays where it was, and the level
+  /// read is of that channel, not of the one asked for); a `radio_fault` resets the link as it does wherever it comes.
+  /// The hub does not ask again: the attempt that wanted the reading fails (ADR 0134).
   std::optional<int16_t> read_rssi() override;
   /// True unless the newest command of this driver already is a forced `rx_on` to @p freq_hz that the radio
   /// receives on: the recorded frequency says nothing about where the receiver is, because a scan hides its channel
   /// and an unforced retune to this very frequency may still wait behind a frame on the old one (spec §2.2), where a
-  /// reading would be refused as `busy`. A forced `rx_on` replaces that waiting retune, so it is sent once per channel
-  /// check, before its first reading, and again after any hop, scan, `idle` or send in between (ADR 0134); the
+  /// reading would be refused as `radio_busy`. A forced `rx_on` replaces that waiting retune, so it is sent once per
+  /// channel check, before its first reading, and again after any hop, scan, `idle` or send in between (ADR 0134); the
   /// command ids are compared, and a command sent since clears the check's id, so a wrapped id never stands in for it.
   [[nodiscard]] bool reading_needs_retune(uint32_t freq_hz) const override {
     bool const checking_here = this->reading_cmd_ != 0 && this->reading_cmd_ == this->newest_receive_cmd_ &&
@@ -185,7 +185,7 @@ class RadioBridle : public RadioDriver {
   /// Retunes with a forced `rx_on` (spec §3.1), sent even when the recorded frequency is @p freq_hz: the
   /// co-processor retunes at once, drops a frame in progress on another frequency (a preamble held for
   /// `sync_timeout_us` included) as `rx_abort(forced_retune)` and replaces an earlier retune that still waits, so
-  /// the reading that follows is not refused as `busy`. Every other retune of this driver waits for the frame.
+  /// the reading that follows is not refused as `radio_busy`. Every other retune of this driver waits for the frame.
   void retune_for_reading(uint32_t freq_hz) override;
   /// `rx_on` on the current frequency; ends a scan.
   void set_mode_rx() override;
@@ -207,7 +207,7 @@ class RadioBridle : public RadioDriver {
   /// Keeps the tuning the profile reads. When it changes a param of the radio's profile (the receiver
   /// bandwidth of a `gfsk_raw` radio) and the link is up, the radio-scope params go out again; the hub
   /// calls this between exchanges, so the command never lands inside this driver's own transmission
-  /// (which the co-processor would answer `busy`).
+  /// (which the co-processor would answer `radio_busy`).
   void apply_tuning(const TuningConfig &tuning) override;
   /// Whether the radio can send the wake-up @p tuning asks for: on a band whose wake-up is a long preamble
   /// (`low_power_wake_ms`), it must fit the radio's `max_preamble_bytes`. A wake-up is never shortened to fit; a
@@ -244,7 +244,7 @@ class RadioBridle : public RadioDriver {
   struct RxEntry {
     uint32_t freq_hz{0};  ///< Frequency on air.
     int8_t rssi_dbm{0};
-    bridle::CrcState crc{bridle::CrcState::NOT_CHECKED};
+    bridle::FcsState fcs{bridle::FcsState::NOT_CHECKED};
     uint8_t len{0};
     uint8_t data[MAX_RX_PSDU]{};
   };
@@ -286,7 +286,7 @@ class RadioBridle : public RadioDriver {
   /// passed and either the last drain emptied the stream or `DRAIN_TIMEOUT_GRACE_MS` has also passed.
   [[nodiscard]] bool wait_expired_(uint32_t start_ms, uint32_t timeout_ms) const;
   /// Whether messages are queuing up on the host: the last drain was cut short, or the running one has
-  /// spent its budget. A gap in the event counter then comes from the host falling behind.
+  /// spent its budget. A gap in the message counter then comes from the host falling behind.
   [[nodiscard]] bool host_backlog_() const;
   /// drain_() plus link supervision. Every public entry the hub calls on an idle or waiting pass
   /// uses this, so the periodic work of the link (heartbeat, resync, the down retry) needs no timer
@@ -371,7 +371,7 @@ class RadioBridle : public RadioDriver {
 
   // === Receive path ===
 
-  void on_rx_(const bridle::Rx &rx);
+  void on_rx_frame_(const bridle::RxFrame &rx);
   bool pop_packet_(RadioRxPacket &packet);
   bool decode_entry_(const RxEntry &entry, RadioRxPacket &packet);
   void ensure_rx_();
@@ -423,7 +423,7 @@ class RadioBridle : public RadioDriver {
   size_t fifo_head_{0};
   size_t fifo_count_{0};
   bool frame_arriving_{false};
-  bridle::FrameStage arriving_stage_{bridle::FrameStage::SYNC};
+  bridle::RxStage arriving_stage_{bridle::RxStage::SYNC};
   bool rx_on_{false};
   bool scanning_{false};
 
@@ -485,7 +485,7 @@ class RadioBridle : public RadioDriver {
   uint32_t bad_crc_frames_{0};
   uint32_t short_frames_{0};
   uint32_t stale_replies_{0};
-  uint32_t rssi_busy_{0};      ///< `get_rssi` answered `busy`: no reading, the attempt that asked fails.
+  uint32_t rssi_busy_{0};      ///< `get_rssi` answered `radio_busy`: no reading, the attempt that asked fails.
   uint32_t rssi_no_reply_{0};  ///< `get_rssi` that got no reply within ACK_TIMEOUT_MS.
   uint32_t rssi_refused_{0};   ///< `get_rssi` answered with another `error` (a fault resets the link as well), or its
                                ///< level was dropped because the retune before it was refused.

@@ -1,10 +1,10 @@
-protocol: '0.8'
+protocol: '0.9'
 header:
   host_version: null
   firmware_version: fake-0.0
   board: fake-board
-  chip_id: nrf52840
-  proto: '0.8'
+  mcu: nrf52840
+  proto: '0.9'
   reset_cause: pin
   radios:
   - radio: 0
@@ -15,12 +15,12 @@ header:
     band_max_hz: 2483500000
     tx_power_min_dbm: -40
     tx_power_max_dbm: 8
-    max_payload: 125
+    max_payload_bytes: 125
     max_preamble_bytes: 0
     strobe_jitter_us: 2
     caps:
       strobe: true
-      scheduled_tx: true
+      at_time: true
       rx_scan: true
       cca: true
   - radio: 1
@@ -31,7 +31,7 @@ header:
     band_max_hz: 870000000
     tx_power_min_dbm: -9
     tx_power_max_dbm: 22
-    max_payload: 147
+    max_payload_bytes: 147
     max_preamble_bytes: 8191
     strobe_jitter_us: 0
     caps:
@@ -41,18 +41,19 @@ source:
   origin: synthetic-bootstrap
   recorded_by: host test RadioBridle868.TheBootHandshakeWithADualBandCoprocessorConfiguresItsGfskRadio
   description: 'Boot handshake with the dual-band co-processor (802.15.4 as radio 0, gfsk_raw as radio
-    1) and the configuration of the 868 MHz radio: profile, modem, sync word, rx_len, detector, sync timeout.'
+    1) and the configuration of the 868 MHz radio: profile, modem, sync word, rx_capture_bytes, detector,
+    sync timeout.'
 messages:
 - dir: coproc_to_host
   host_ms: 100020
-  hex: 8000000008010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f00000003180100010200c05570338025db33f71693ff1f00000c000000040110050101e2ff
+  hex: 8000000009010000000000010866616b652d302e30020a66616b652d626f6172640318000100010000180d8fe0330794d8087d000002000f00000003180100010200c05570338025db33f71693ff1f00000c000000040110050101671b
   msg_type: ready
   seq: 0
   fields:
     cmd_seq: 0
     proto_major: 0
-    proto_minor: 8
-    chip_id: nrf52840
+    proto_minor: 9
+    mcu: nrf52840
     caps: {}
     info:
     - id: fw_version
@@ -69,12 +70,12 @@ messages:
         band_max_hz: 2483500000
         tx_power_min_dbm: -40
         tx_power_max_dbm: 8
-        max_payload: 125
+        max_payload_bytes: 125
         max_preamble_bytes: 0
         strobe_jitter_us: 2
         caps:
           strobe: true
-          scheduled_tx: true
+          at_time: true
           rx_scan: true
           cca: true
     - id: radio
@@ -87,13 +88,13 @@ messages:
         band_max_hz: 870000000
         tx_power_min_dbm: -9
         tx_power_max_dbm: 22
-        max_payload: 147
+        max_payload_bytes: 147
         max_preamble_bytes: 8191
         strobe_jitter_us: 0
         caps:
           rx_scan: true
           cca: true
-    - id: rx_queue_depth
+    - id: event_queue_depth
       value: 16
     - id: reset_cause
       value: pin
@@ -107,8 +108,8 @@ messages:
     params:
     - id: event_mask
       value:
-        frame_start: true
-        crc_error_rx: true
+        rx_start: true
+        rx_fcs_bad: true
         rx_abort: true
         log: true
 - dir: coproc_to_host
@@ -122,8 +123,8 @@ messages:
     applied:
     - id: event_mask
       value:
-        frame_start: true
-        crc_error_rx: true
+        rx_start: true
+        rx_fcs_bad: true
         rx_abort: true
         log: true
 - dir: host_to_coproc
@@ -146,7 +147,7 @@ messages:
       value: gaussian_bt_1_0
     - id: sync_word
       value: 57fd99
-    - id: rx_len
+    - id: rx_capture_bytes
       value: 48
     - id: preamble_detect_bits
       value: 16
@@ -175,7 +176,7 @@ messages:
       value: gaussian_bt_1_0
     - id: sync_word
       value: 57fd99
-    - id: rx_len
+    - id: rx_capture_bytes
       value: 48
     - id: preamble_detect_bits
       value: 16

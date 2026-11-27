@@ -102,8 +102,8 @@ class BridlePhy {
   /// Payload length `wrap` produces for a `frame_len`-byte io frame.
   [[nodiscard]] virtual size_t wrapped_size(uint8_t frame_len) const = 0;
   /// Undress a received payload into an io frame, checking what the radio did not.
-  /// @param crc What the radio said about its checksum.
-  [[nodiscard]] virtual UnwrapResult unwrap(const uint8_t *payload, size_t len, CrcState crc, uint8_t *out,
+  /// @param fcs What the radio said about the frame check sequence.
+  [[nodiscard]] virtual UnwrapResult unwrap(const uint8_t *payload, size_t len, FcsState fcs, uint8_t *out,
                                             size_t cap) const = 0;
   /// Preamble and strobe that give `wake` the reach it asks for.
   /// @param preamble_len The preamble the hub chose, for profiles whose wake-up is a preamble.
@@ -115,8 +115,8 @@ class BridlePhy {
 
   /// The scan the co-processor runs while the hub is idle.
   [[nodiscard]] virtual ScanSpec idle_scan() const = 0;
-  /// Which `frame_start` stage means "a frame is arriving" on this profile.
-  [[nodiscard]] virtual FrameStage frame_arriving_stage() const = 0;
+  /// Which `rx_start` stage means "a frame is arriving" on this profile.
+  [[nodiscard]] virtual RxStage frame_arriving_stage() const = 0;
 
   // === What the driver answers the hub with ===
 
@@ -134,7 +134,7 @@ class BridlePhy {
   /// frame with the profile's 3-byte header.
   [[nodiscard]] bool offers_profile_and_payload_(const RadioDescriptor &radio) const {
     uint32_t const profile_bit = 1U << static_cast<unsigned>(this->profile());
-    return (radio.profiles & profile_bit) != 0 && radio.max_payload >= 3 + FRAME_MAX_DECLARED_SIZE;
+    return (radio.profiles & profile_bit) != 0 && radio.max_payload_bytes >= 3 + FRAME_MAX_DECLARED_SIZE;
   }
 };
 

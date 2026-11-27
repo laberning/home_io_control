@@ -1122,9 +1122,9 @@ def _bridle_trace_of(sniffer_log: str, extra: "list[tuple[int, str, str]]" = ())
     events = [(int(line.split()[0]), "ok", "".join(line.split(":")[1].split())) for line in sniffer_log.splitlines()
               if line[:1].isdigit()] + list(extra)
     for seq, (t_us, crc, payload) in enumerate(events, start=1):
-        fields = {"radio": 0, "t_us": t_us, "freq_hz": 2_450_000_000, "rssi_dbm": -60, "lqi": 200, "crc": crc,
+        fields = {"radio": 0, "t_sync_us": t_us, "freq_hz": 2_450_000_000, "rssi_dbm": -60, "lqi": 200, "fcs": crc,
                   "payload": payload}
-        message = bridle_module.frame(bridle_module.MSG_TYPE["rx"], seq, bridle_module.encode_body("rx", fields))[0]
+        message = bridle_module.frame(bridle_module.MSG_TYPE["rx_frame"], seq, bridle_module.encode_body("rx_frame", fields))[0]
         lines.append(f"[bridle] < {1000 + seq} {message.hex()}")
     return "\n".join(lines) + "\n"
 
@@ -1172,7 +1172,7 @@ def _bridle_trace_with_a_transmission(strobe_late: int = 0) -> str:
     `strobe_late` late strobe frames), and one `rx` reply."""
     io_frame = bytes.fromhex("4B 20 51 6B 10 C0 FF EE 03 03 00 00")
     strobe = {"count": 3, "period_ns": 1_000_000, "main_gap_ns": 1_036_000, "counter_offset": 1, "counter_width": 2,
-              "counter_unit_ns": 1_000_000, "counter_adjust": -1, "template": "000000"}
+              "counter_unit_ns": 1_000_000, "counter_adjust": -1, "frame_template": "000000"}
     tx = {"radio": 0, "freq_hz": 2_450_000_000, "then_rx": True, "strobe": strobe,
           "payload": (protolib.IO_2G4_PSDU_HEADER + io_frame).hex()}
     done = {"cmd_seq": 6, "radio": 0, "t_main_start_us": 1_000_000, "t_main_end_us": 1_000_900, "strobe_sent": 3,
@@ -1180,14 +1180,14 @@ def _bridle_trace_with_a_transmission(strobe_late: int = 0) -> str:
     reply_body = bytes.fromhex("96 00 C0 FF EE 51 6B 10 04 05 60 5E 00 5E 1F 00 01 4D 84 A6 01 00 00")
     psdu = protolib.IO_2G4_PSDU_HEADER + reply_body
     psdu += protolib.crc_ccitt(psdu).to_bytes(2, "little")
-    rx = {"radio": 0, "t_us": 1_003_300, "freq_hz": 2_450_000_000, "rssi_dbm": -60, "lqi": 200, "crc": "ok",
+    rx = {"radio": 0, "t_sync_us": 1_003_300, "freq_hz": 2_450_000_000, "rssi_dbm": -60, "lqi": 200, "fcs": "ok",
           "payload": psdu.hex()}
     frame = bridle_module.frame
     return "\n".join([
         "[bridle] > 1000 " + frame(bridle_module.MSG_TYPE["hello"], 0, b"")[0].hex(),
         "[bridle] > 2000 " + frame(bridle_module.MSG_TYPE["tx"], 6, bridle_module.encode_body("tx", tx))[0].hex(),
         "[bridle] < 3000 " + frame(bridle_module.MSG_TYPE["tx_done"], 4, bridle_module.encode_body("tx_done", done))[0].hex(),
-        "[bridle] < 4000 " + frame(bridle_module.MSG_TYPE["rx"], 5, bridle_module.encode_body("rx", rx))[0].hex(),
+        "[bridle] < 4000 " + frame(bridle_module.MSG_TYPE["rx_frame"], 5, bridle_module.encode_body("rx_frame", rx))[0].hex(),
     ]) + "\n"
 
 

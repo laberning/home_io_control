@@ -6,11 +6,11 @@
 
 ## Context
 
-[Bridle ADR 0001](https://github.com/laberning/bridle/blob/bridle-v0.8.0/docs/adr/0001-one-protocol-for-every-band-radios-offer-phy-profiles.md) made the band a PHY
+[Bridle ADR 0001](https://github.com/laberning/bridle/blob/bridle-v0.9.0/docs/adr/0001-one-protocol-for-every-band-radios-offer-phy-profiles.md) made the band a PHY
 profile and [ADR 0047](0047-home-io-control-drives-a-bridle-co-processor-as-one-more-radio-driver.md)
 put it behind `BridlePhy`. The second profile, `gfsk_raw`, carries 868 MHz io-homecontrol on an
-SX1262 behind a co-processor ([Bridle ADR 0003](https://github.com/laberning/bridle/blob/bridle-v0.8.0/docs/adr/0003-a-profile-states-what-every-radio-of-it-does.md)). A `gfsk_raw` radio has no framing and no CRC: it sends a
-preamble, a sync word and the bytes it is given, and receives exactly `rx_len` bytes behind the
+SX1262 behind a co-processor ([Bridle ADR 0003](https://github.com/laberning/bridle/blob/bridle-v0.9.0/docs/adr/0003-a-profile-states-what-every-radio-of-it-does.md)). A `gfsk_raw` radio has no framing and no CRC: it sends a
+preamble, a sync word and the bytes it is given, and receives exactly `rx_capture_bytes` bytes behind the
 sync word. The io frame coding is therefore the host's to do.
 
 ## Options considered
@@ -26,7 +26,7 @@ sync word. The io frame coding is therefore the host's to do.
 - **The coding stays on the host.** `Io868GfskPhy` appends the io CRC and UART-codes the frame with
   the same routines the software PHY of the SX1262 and LR1121 drivers uses, so a frame is on air
   what theirs is. The co-processor sees only bytes.
-- **Fixed-length reception.** The radio captures `rx_len` = 48 bytes behind the sync word
+- **Fixed-length reception.** The radio captures `rx_capture_bytes` = 48 bytes behind the sync word
   `57 FD 99`; `unwrap()` finds a CRC-valid frame in them at any bit alignment. Noise is `BAD_CRC`.
 - **The band is the 868 MHz band.** `Io868GfskPhy` returns the hub's default band (`IO_868_BAND`,
   [ADR 0132](0132-a-radio-describes-its-band-and-the-hubs-rules-read-it.md)): channel 2 for wake-up requests,

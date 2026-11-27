@@ -131,7 +131,7 @@ TEST(RadioBridleCodec, EveryInvalidVectorIsDroppedAndCountedByItsReason) {
 
 TEST(RadioBridleCodec, VectorFieldsMatchTheSpec) {
   {
-    const Message m = decode_vector(vector_named("tx_io_wake_strobe"));
+    const Message m = decode_vector(vector_named("tx_io2g4_wake_strobe"));
     const Tx &tx = as<Tx>(m);
     EXPECT_EQ(tx.freq_hz, 2450000000u);
     EXPECT_TRUE(tx.then_rx);
@@ -145,7 +145,7 @@ TEST(RadioBridleCodec, VectorFieldsMatchTheSpec) {
     EXPECT_EQ(tx.strobe.counter_width, 2);
     EXPECT_EQ(tx.strobe.counter_unit_ns, 1000000u);
     EXPECT_EQ(tx.strobe.counter_adjust, -1);
-    ASSERT_EQ(tx.strobe.len_template, 3);
+    ASSERT_EQ(tx.strobe.len_frame_template, 3);
     EXPECT_EQ(tx.payload.size, 14u);
   }
   {
@@ -159,11 +159,11 @@ TEST(RadioBridleCodec, VectorFieldsMatchTheSpec) {
     const Message m = decode_vector(vector_named("tx_at_time"));
     const Tx &tx = as<Tx>(m);
     EXPECT_TRUE(tx.at_time);
-    EXPECT_EQ(tx.t_main_us, 123456789u);
+    EXPECT_EQ(tx.t_main_start_us, 123456789u);
     EXPECT_EQ(tx.freq_hz, 2425000000u);
   }
   {
-    const Message m = decode_vector(vector_named("rx_scan_io_idle"));
+    const Message m = decode_vector(vector_named("rx_scan_io2g4_idle"));
     const RxScan &scan = as<RxScan>(m);
     EXPECT_EQ(scan.dwell_us, 1500);
     EXPECT_EQ(scan.hold_us, 8000);
@@ -172,12 +172,12 @@ TEST(RadioBridleCodec, VectorFieldsMatchTheSpec) {
     EXPECT_EQ(scan.freqs_hz[2], 2475000000u);
   }
   {
-    const Message m = decode_vector(vector_named("rx_crc_ok"));
-    const Rx &rx = as<Rx>(m);
-    EXPECT_EQ(rx.t_us, 1001u);
+    const Message m = decode_vector(vector_named("rx_frame_fcs_ok"));
+    const RxFrame &rx = as<RxFrame>(m);
+    EXPECT_EQ(rx.t_sync_us, 1001u);
     EXPECT_EQ(rx.rssi_dbm, -67);
     EXPECT_EQ(rx.lqi, 200);
-    EXPECT_EQ(rx.crc, CrcState::OK);
+    EXPECT_EQ(rx.fcs, FcsState::OK);
     EXPECT_EQ(rx.payload.size, 16u);
   }
   {
@@ -211,7 +211,7 @@ TEST(RadioBridleCodec, ReadyVectorCarriesTheDescriptorTheSpecShows) {
   EXPECT_EQ(ready.cmd_seq, 0);
   EXPECT_EQ(ready.proto_major, PROTO_MAJOR);
   EXPECT_EQ(ready.proto_minor, PROTO_MINOR);
-  EXPECT_EQ(ready.chip_id, static_cast<uint16_t>(ChipId::NRF52840));
+  EXPECT_EQ(ready.mcu, static_cast<uint16_t>(Chip::NRF52840));
   EXPECT_NE(ready.caps & device_caps::BOOTLOADER, 0u);
 
   ReadyInfo info;
@@ -220,19 +220,19 @@ TEST(RadioBridleCodec, ReadyVectorCarriesTheDescriptorTheSpecShows) {
   EXPECT_EQ(std::string(reinterpret_cast<const char *>(info.board.data), info.board.size), "itsybitsy-nrf52840");
   ASSERT_EQ(info.radio_count, 1);
   const RadioDescriptor &radio = info.radios[0];
-  EXPECT_EQ(radio.chip, static_cast<uint16_t>(ChipId::NRF52840));
+  EXPECT_EQ(radio.chip, static_cast<uint16_t>(Chip::NRF52840));
   EXPECT_EQ(radio.profiles, phy_profiles::IEEE802154_OQPSK_250K);
   EXPECT_EQ(radio.band_min_hz, 2400000000u);
   EXPECT_EQ(radio.band_max_hz, 2483500000u);
   EXPECT_EQ(radio.tx_power_min_dbm, -40);
   EXPECT_EQ(radio.tx_power_max_dbm, 8);
-  EXPECT_EQ(radio.max_payload, 125);
+  EXPECT_EQ(radio.max_payload_bytes, 125);
   EXPECT_NE(radio.caps & radio_caps::STROBE, 0u);
   EXPECT_NE(radio.caps & radio_caps::CCA, 0u);
   EXPECT_EQ(radio.strobe_jitter_us, 2);
   EXPECT_EQ(radio.max_preamble_bytes, 0);
-  EXPECT_TRUE(info.has_rx_queue_depth);
-  EXPECT_EQ(info.rx_queue_depth, 16);
+  EXPECT_TRUE(info.has_event_queue_depth);
+  EXPECT_EQ(info.event_queue_depth, 16);
   EXPECT_EQ(info.reset_cause, ResetCause::PIN);
 }
 
@@ -244,7 +244,7 @@ TEST(RadioBridleCodec, DualBandReadyListsBothRadios) {
   EXPECT_EQ(info.radios[0].radio, 0);
   EXPECT_EQ(info.radios[1].radio, 1);
   EXPECT_NE(info.radios[1].profiles & phy_profiles::GFSK_RAW, 0);
-  EXPECT_EQ(info.radios[1].chip, static_cast<uint16_t>(ChipId::SX1262));
+  EXPECT_EQ(info.radios[1].chip, static_cast<uint16_t>(Chip::SX1262));
   EXPECT_EQ(info.radios[1].max_preamble_bytes, 8191);
 }
 
@@ -369,15 +369,15 @@ TEST(RadioBridleCodec, DeframerSurvivesAnOversizedRun) {
   EXPECT_EQ(deframe(d, hello.wire, hello.wire_len), Deframer::Event::MESSAGE);
 }
 
-// === Layout rejections (spec §2.2, error(bad_length)) ===
+// === Layout rejections (spec §2.2, error(malformed)) ===
 
-TEST(RadioBridleCodec, ShortBodiesAreBadLength) {
+TEST(RadioBridleCodec, ShortBodiesAreMalformed) {
   const std::vector<std::pair<MsgType, size_t>> minimum = {
-      {MsgType::SET_PARAMS, 1}, {MsgType::RX_ON, 6},        {MsgType::ACK, 1},     {MsgType::IDLE, 1},
-      {MsgType::GET_RSSI, 1},   {MsgType::GET_STATS, 1},    {MsgType::RX_SCAN, 6}, {MsgType::READY, 9},
-      {MsgType::PARAMS_ACK, 2}, {MsgType::FRAME_START, 10}, {MsgType::RX, 13},     {MsgType::RX_ABORT, 10},
-      {MsgType::TX_DONE, 14},   {MsgType::RSSI, 3},         {MsgType::STATS, 1},   {MsgType::ERROR, 4},
-      {MsgType::LOG, 1},        {MsgType::RX_OVERFLOW, 2},  {MsgType::TX, 9},      {MsgType::ENTER_BOOTLOADER, 4}};
+      {MsgType::SET_PARAMS, 1}, {MsgType::RX_ON, 6},       {MsgType::ACK, 1},       {MsgType::IDLE, 1},
+      {MsgType::GET_RSSI, 1},   {MsgType::GET_STATS, 1},   {MsgType::RX_SCAN, 6},   {MsgType::READY, 9},
+      {MsgType::PARAMS_ACK, 2}, {MsgType::RX_START, 10},   {MsgType::RX_FRAME, 13}, {MsgType::RX_ABORT, 10},
+      {MsgType::TX_DONE, 14},   {MsgType::RSSI, 3},        {MsgType::STATS, 1},     {MsgType::ERROR, 4},
+      {MsgType::LOG, 1},        {MsgType::RX_OVERFLOW, 2}, {MsgType::TX, 9},        {MsgType::ENTER_BOOTLOADER, 4}};
   for (const auto &[type, size] : minimum) {
     std::vector<uint8_t> body(size, 0);
     if (type == MsgType::ENTER_BOOTLOADER)
@@ -385,15 +385,14 @@ TEST(RadioBridleCodec, ShortBodiesAreBadLength) {
     EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(type), body), DecodeStatus::OK)
         << "type 0x" << std::hex << static_cast<int>(type) << " at its minimum size";
     body.pop_back();
-    EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(type), body), DecodeStatus::BAD_LENGTH)
+    EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(type), body), DecodeStatus::MALFORMED)
         << "type 0x" << std::hex << static_cast<int>(type) << " one byte short";
   }
 }
 
-TEST(RadioBridleCodec, RxOnTwoBytesShortIsBadLength) {
-  // Conformance check C17's example.
-  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::RX_ON), {0x00, 0x01, 0x02, 0x03}),
-            DecodeStatus::BAD_LENGTH);
+TEST(RadioBridleCodec, RxOnTwoBytesShortIsMalformed) {
+  // Conformance check C9's example.
+  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::RX_ON), {0x00, 0x01, 0x02, 0x03}), DecodeStatus::MALFORMED);
 }
 
 TEST(RadioBridleCodec, TheRetiredGetInfoTypeIsAnUnknownMessage) {
@@ -425,32 +424,32 @@ TEST(RadioBridleCodec, MessageTypesCarryTheirDirectionAndRepliesNameTheirCommand
   EXPECT_EQ(reply_type_of(static_cast<uint8_t>(MsgType::RX_SCAN)), static_cast<uint8_t>(MsgType::ACK));
 }
 
-TEST(RadioBridleCodec, ExtraBytesAreBadLengthWhileTheProtocolIsInDevelopment) {
-  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::HELLO), {0x00}), DecodeStatus::BAD_LENGTH);
-  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::RX_ON), {0, 0, 0, 0, 0, 0, 0}), DecodeStatus::BAD_LENGTH);
-  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::RX_OVERFLOW), {0, 0, 0}), DecodeStatus::BAD_LENGTH);
+TEST(RadioBridleCodec, ExtraBytesAreMalformedWhileTheProtocolIsInDevelopment) {
+  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::HELLO), {0x00}), DecodeStatus::MALFORMED);
+  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::RX_ON), {0, 0, 0, 0, 0, 0, 0}), DecodeStatus::MALFORMED);
+  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::RX_OVERFLOW), {0, 0, 0}), DecodeStatus::MALFORMED);
 }
 
-TEST(RadioBridleCodec, WrongBootloaderMagicIsBadLength) {
+TEST(RadioBridleCodec, WrongBootloaderMagicIsMalformed) {
   std::vector<uint8_t> body(ENTER_BOOTLOADER_MAGIC, ENTER_BOOTLOADER_MAGIC + sizeof(ENTER_BOOTLOADER_MAGIC));
   EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::ENTER_BOOTLOADER), body), DecodeStatus::OK);
   body[3] ^= 0x01;
-  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::ENTER_BOOTLOADER), body), DecodeStatus::BAD_LENGTH);
+  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::ENTER_BOOTLOADER), body), DecodeStatus::MALFORMED);
 }
 
-TEST(RadioBridleCodec, TlvRunningPastTheBodyIsBadLength) {
+TEST(RadioBridleCodec, TlvRunningPastTheBodyIsMalformed) {
   // set_params: radio 0, then a TLV that promises 5 bytes and has 1.
   EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::SET_PARAMS), {0x00, 0x03, 0x05, 0x01}),
-            DecodeStatus::BAD_LENGTH);
+            DecodeStatus::MALFORMED);
   // params_ack: the same defect.
   EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::PARAMS_ACK), {0x01, 0x00, 0x03, 0x05, 0x01}),
-            DecodeStatus::BAD_LENGTH);
+            DecodeStatus::MALFORMED);
 }
 
-TEST(RadioBridleCodec, ATxWhosePayloadRunsPastTheBodyIsBadLength) {
+TEST(RadioBridleCodec, ATxWhosePayloadRunsPastTheBodyIsMalformed) {
   // radio, freq, flags, preamble, len_payload = 5 but only 1 byte follows.
   EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::TX), {0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 1}),
-            DecodeStatus::BAD_LENGTH);
+            DecodeStatus::MALFORMED);
 }
 
 TEST(RadioBridleCodec, RxScanWithMoreFrequenciesThanTheLimitKeepsTheTrueCount) {
@@ -459,13 +458,13 @@ TEST(RadioBridleCodec, RxScanWithMoreFrequenciesThanTheLimitKeepsTheTrueCount) {
   Message m;
   std::vector<uint8_t> msg = message_with(static_cast<uint8_t>(MsgType::RX_SCAN), body);
   ASSERT_EQ(decode_message(msg.data(), msg.size(), m), DecodeStatus::OK);
-  EXPECT_EQ(as<RxScan>(m).num_freqs, 17) << "the receiver answers param_range, not bad_length";
+  EXPECT_EQ(as<RxScan>(m).num_freqs, 17) << "the receiver answers out_of_range, not malformed";
   uint8_t out[MAX_MESSAGE_SIZE];
   EXPECT_EQ(encode_message(1, as<RxScan>(m), out, sizeof(out)), 0u) << "the codec never sends more than the limit";
 }
 
-TEST(RadioBridleCodec, StatsWithAPartialCounterIsBadLength) {
-  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::STATS), {1, 0, 0, 0, 0, 9}), DecodeStatus::BAD_LENGTH);
+TEST(RadioBridleCodec, StatsWithAPartialCounterIsMalformed) {
+  EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::STATS), {1, 0, 0, 0, 0, 9}), DecodeStatus::MALFORMED);
   EXPECT_EQ(decode_hand_built(static_cast<uint8_t>(MsgType::STATS), {1}), DecodeStatus::OK);
 }
 
@@ -478,10 +477,10 @@ TEST(RadioBridleCodec, StatsBeyondTheKnownCountersAreIgnored) {
   EXPECT_EQ(as<Stats>(m).present, Stats::COUNT);
 }
 
-TEST(RadioBridleCodec, MessageShorterThanHeaderAndCrcIsBadLength) {
+TEST(RadioBridleCodec, MessageShorterThanHeaderAndCrcIsMalformed) {
   Message m;
   const uint8_t tiny[] = {0x01, 0x01, 0x00};
-  EXPECT_EQ(decode_message(tiny, sizeof(tiny), m), DecodeStatus::BAD_LENGTH);
+  EXPECT_EQ(decode_message(tiny, sizeof(tiny), m), DecodeStatus::MALFORMED);
 }
 
 // === Unknown types ===
@@ -574,13 +573,13 @@ struct ReadyBuilder {
   RadioDescriptor radio{};
   ReadyBuilder() {
     radio.radio = 0;
-    radio.chip = static_cast<uint16_t>(ChipId::NRF52840);
+    radio.chip = static_cast<uint16_t>(Chip::NRF52840);
     radio.profiles = phy_profiles::IEEE802154_OQPSK_250K;
     radio.band_min_hz = 2400000000u;
     radio.band_max_hz = 2483500000u;
     radio.tx_power_min_dbm = -40;
     radio.tx_power_max_dbm = 8;
-    radio.max_payload = 125;
+    radio.max_payload_bytes = 125;
     radio.caps = radio_caps::RX_SCAN;
   }
   ReadyInfoStatus parse(ReadyInfo &info) { return parse_ready_info(w.span(), info); }
@@ -618,7 +617,7 @@ TEST(RadioBridleCodec, ReadyInfoCarriesTheRadiosOwnJitterAndPreambleLimitAndSkip
       .add_u8(static_cast<uint8_t>(InfoId::RESET_CAUSE), static_cast<uint8_t>(ResetCause::WATCHDOG));
   ReadyInfo info;
   ASSERT_EQ(b.parse(info), ReadyInfoStatus::OK);
-  EXPECT_EQ(info.radios[0].chip, static_cast<uint16_t>(ChipId::NRF52840));
+  EXPECT_EQ(info.radios[0].chip, static_cast<uint16_t>(Chip::NRF52840));
   EXPECT_EQ(info.reset_cause, ResetCause::WATCHDOG);
 }
 
@@ -715,7 +714,7 @@ TEST(RadioBridleCodec, AStrobeTemplateOverTheLimitDecodesButIsNeverSent) {
   Message m;
   std::vector<uint8_t> msg = message_with(static_cast<uint8_t>(MsgType::TX), body);
   ASSERT_EQ(decode_message(msg.data(), msg.size(), m), DecodeStatus::OK) << "a value error, not a layout error";
-  EXPECT_EQ(as<Tx>(m).strobe.len_template, 33);
+  EXPECT_EQ(as<Tx>(m).strobe.len_frame_template, 33);
   uint8_t out[MAX_MESSAGE_SIZE];
   EXPECT_EQ(encode_message(1, as<Tx>(m), out, sizeof(out)), 0u);
 }

@@ -66,7 +66,7 @@ class Frames(unittest.TestCase):
         self.assertEqual(io2g4.execute_data(0xC800), bytes.fromhex("0163C800" "80000000"))
 
     def test_the_long_train_is_the_specs_and_the_legacy_one_is_the_old_values(self):
-        vector = conformance._vector("tx_io_wake_strobe")["strobe"]
+        vector = conformance._vector("tx_io2g4_wake_strobe")["strobe"]
         self.assertEqual(io2g4.wake_strobe(legacy=False), vector)
         self.assertEqual((vector["count"], vector["period_ns"], vector["main_gap_ns"]), (510, 1_000_000, 1_036_000))
         legacy = io2g4.wake_strobe(legacy=True)
@@ -78,7 +78,7 @@ class Frames(unittest.TestCase):
 
 class Received(unittest.TestCase):
     def _rx(self, payload: bytes, crc: str = "ok", t_us: int = 1000) -> dict:
-        return {"radio": 0, "t_us": t_us, "freq_hz": bridle.CH20, "rssi_dbm": -60, "lqi": 0, "crc": crc,
+        return {"radio": 0, "t_sync_us": t_us, "freq_hz": bridle.CH20, "rssi_dbm": -60, "lqi": 0, "fcs": crc,
                 "payload": payload.hex()}
 
     def _on_air(self, frame: bytes) -> bytes:
@@ -109,9 +109,9 @@ class Received(unittest.TestCase):
     def test_events_counts_the_damaged_frames_it_passes(self):
         frame = io2g4.build_frame(0x04, CONTROLLER, DEVICE, bytes(8))
         good = self._on_air(frame)
-        messages = [conformance.Message("rx", 1, self._rx(good, "bad"), 0.0),
+        messages = [conformance.Message("rx_frame", 1, self._rx(good, "bad"), 0.0),
                     conformance.Message("log", 2, {}, 0.0),
-                    conformance.Message("rx", 3, self._rx(good), 0.0)]
+                    conformance.Message("rx_frame", 3, self._rx(good), 0.0)]
         events = io2g4.Events(SimpleNamespace(clock=lambda: 0.0, receive=lambda timeout: None, last_command_at=0.0), messages)
         self.assertEqual(events.frame(0.05, lambda f: True).raw, frame)
         self.assertEqual(events.bad_fcs, 1)
@@ -184,7 +184,7 @@ def stand_in(world, key=KEY, node=DEVICE, cls=None, random_bytes=lambda n: CHALL
     peer = conformance.Peer(world.ref)
     ready = benchkit.boot_ready(peer)
     radio = benchkit.radio_of(ready)
-    benchkit.set_up(peer, radio, 0x56, bridle.CH20, listen=True, event_mask={"crc_error_rx": True})
+    benchkit.set_up(peer, radio, 0x56, bridle.CH20, listen=True, event_mask={"rx_fcs_bad": True})
     out = io.StringIO()
     device = (cls or io2g4.Responder)(peer, radio, bridle.CH20, node, key, out, random_bytes, answer_window_ms=window_ms)
 
@@ -253,11 +253,11 @@ class FakeLink:
 
 
 def rx_message(freq_hz, frame):
-    """An `rx` event carrying the io `frame` (as build_frame() returns it) on `freq_hz`."""
-    payload = io2g4.psdu_of(frame) + b"\x00\x00"  # the FCS; `crc` below says it was good
-    fields = {"radio": 0, "t_us": 1000, "freq_hz": freq_hz, "rssi_dbm": -60, "lqi": 0, "crc": "ok",
+    """An `rx_frame` event carrying the io `frame` (as build_frame() returns it) on `freq_hz`."""
+    payload = io2g4.psdu_of(frame) + b"\x00\x00"  # the FCS; `fcs` below says it was good
+    fields = {"radio": 0, "t_sync_us": 1000, "freq_hz": freq_hz, "rssi_dbm": -60, "lqi": 0, "fcs": "ok",
               "payload": payload.hex()}
-    return conformance.Message("rx", 0, fields, 0.0)
+    return conformance.Message("rx_frame", 0, fields, 0.0)
 
 
 class Scan(unittest.TestCase):
@@ -692,7 +692,7 @@ class AnswerDelay(unittest.TestCase):
             world, device, (code, out, _, _) = self._run_with(str(delay_ms))
             self.assertEqual(code, io2g4.EXIT_OK, out)
             tx = answer_tx(world)[0]
-            self.assertIn("t_main_us", tx)
+            self.assertIn("t_main_start_us", tx)
             self.assertNotIn("strobe", tx)
             (gap,) = gaps_us(device.out_text())
             self.assertAlmostEqual(gap, delay_ms * 1000, delta=50)
@@ -705,7 +705,7 @@ class AnswerDelay(unittest.TestCase):
         for delay_ms in ("0", "2"):
             world, device, (code, out, _, _) = self._run_with(delay_ms)
             self.assertEqual(code, io2g4.EXIT_OK, out)
-            self.assertNotIn("t_main_us", answer_tx(world)[0])
+            self.assertNotIn("t_main_start_us", answer_tx(world)[0])
             self.assertRegex(out, rf"try 1/1: --answer-delay-ms {delay_ms} is BELOW what this link can time "
                                   rf"\(it cannot start an answer sooner than about [\d.]+ ms after the challenge ended\): "
                                   rf"the answer WAS SENT AT ONCE, not after {delay_ms} ms")
@@ -718,7 +718,7 @@ class AnswerDelay(unittest.TestCase):
         world = fake_world.World()
         stand_in(world)
         _run(world, *self.ARGS, key_file_text=KEY.hex())
-        self.assertNotIn("t_main_us", answer_tx(world)[0])
+        self.assertNotIn("t_main_start_us", answer_tx(world)[0])
 
     def test_the_time_asked_for_follows_the_challenge_on_the_co_processors_clock_across_the_wrap(self):
         challenge = io2g4.Frame(bytes(9), 100, -50, 20, heard_s=1.0)
@@ -816,7 +816,7 @@ class LowPowerAndWake(unittest.TestCase):
             self.assertIn("heard 0x3d from C0FFEE: CTRL1 0x00, after 0 wake frames", device.out_text())
 
     def test_the_short_train_is_the_specs_vector(self):
-        vector = conformance._vector("tx_io_short_wake_strobe")["strobe"]
+        vector = conformance._vector("tx_io2g4_short_wake_strobe")["strobe"]
         self.assertEqual(io2g4.wake_strobe(False, short=True), vector)
         self.assertEqual((vector["count"], vector["period_ns"], vector["main_gap_ns"]), (8, 1_000_000, 1_036_000))
 

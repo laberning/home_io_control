@@ -11,10 +11,10 @@ channel by readings: up to five before a request, one reading at or above the bu
 busy, and one reading at every tenth idle hop teaches the hub the board's quiet level. It takes for granted
 that every reading is a level. The three SPI radios always have one: the chip's register holds it.
 
-A co-processor behind a [Bridle](https://github.com/laberning/bridle/blob/bridle-v0.8.0/README.md) link may have
+A co-processor behind a [Bridle](https://github.com/laberning/bridle/blob/bridle-v0.9.0/README.md) link may have
 none. The Bridle 0.8 specification gives a `get_rssi` one meaning on every profile: a fresh reading of the
 frequency the receiver listens on, taken after the command arrives, with the receiver listening (§3.1). No level
-stands for "unknown" any more. When the co-processor cannot read, it answers `error(busy)` (its own
+stands for "unknown" any more. When the co-processor cannot read, it answers `error(radio_busy)` (its own
 transmission or its turn back to receive, or a retune waiting behind a frame in progress, §2.2) or
 `error(radio_fault)`, or the reply does not come. The reply bound is stated per profile, in µs from the command's last
 byte in to the reply's first byte queued: 650 for 802.15.4 and 1100 for `gfsk_raw` (§4). Link transit and the
@@ -30,14 +30,14 @@ it do before. Reading it as busy would keep the radio off the air for a fault th
 - **A reading is optional.** `RadioDriver::read_rssi()` and `RadioDriver::measure_channel_level()` return
   `std::optional<int16_t>`: a level in dBm, or nothing when the radio could not take one. The SPI radios
   always return a level. A bridge returns nothing when its link is down, while it scans, when the
-  co-processor answers `busy` or any other `error`, and when no reply comes within the wait for it.
+  co-processor answers `radio_busy` or any other `error`, and when no reply comes within the wait for it.
 - **An attempt without a reading fails.** When a reading of the channel check is missing, the engine ends the
   attempt as `NO_READING`: nothing is sent, the attempt counts in `no_reading_attempts` and in neither
   `channel_busy_attempts` nor the busy checks, no back-off is spent, and silence after it is no evidence about
   the receiver (the same as an attempt that ended busy). The plan's next attempt follows. The rule is the
   engine's, once, for every radio.
-- **A `busy` answer is a reading the hub did not get.** The attempt fails; the hub does not ask again within the
-  attempt. The driver counts it (`busy`, `no reply` and `refused` in the debug dump), so how often it happens
+- **A `radio_busy` answer is a reading the hub did not get.** The attempt fails; the hub does not ask again within the
+  attempt. The driver counts it (`radio_busy`, `no reply` and `refused` in the debug dump), so how often it happens
   can be read from a running hub.
 - **Quiet-level learning skips a missing reading.** A fault of the co-processor never moves the learned limit.
 - **A forced send ranks only the channels that have a reading** (`lbt_force_when_busy`). When none of the
@@ -72,7 +72,7 @@ it do before. Reading it as busy would keep the radio off the air for a fault th
 - **The wait for a reply is link supervision: the command reply timeout.** A `get_rssi` waits as long as every
   other command does (`ACK_TIMEOUT_MS`, 500 ms), because that exceeds what a reading can take by two orders of
   magnitude: the co-processor answers within its reading deadline (1100 µs on `gfsk_raw`, 650 µs on 802.15.4, the
-  `RSSI_REPLY_US` of the specification's profile tables, §4), the command and its reply take 16 bytes on the wire
+  `GET_RSSI_REPLY_US` of the specification's profile tables, §4), the command and its reply take 16 bytes on the wire
   (160 µs at 1 Mbaud), and the hub's own latency is measured in the hub's clock. On 868 MHz, over 5059 readings, the
   hub-side share is at most 4.5 ms with the 1100 µs bound and 4.7 ms with the co-processor's measured maximum of
   859 µs, and the round trip at most 5.7 ms. On 2.4 GHz, over 2086 readings, the hub-side share is at most 4.1 ms
@@ -94,7 +94,7 @@ it do before. Reading it as busy would keep the radio off the air for a fault th
 
 - A co-processor that cannot read costs requests their attempts. It never causes a send into a channel nobody
   measured or a false "channel busy".
-- A `busy` answer to a reading is possible only during or right after the bridge's own transmission (or its
+- A `radio_busy` answer to a reading is possible only during or right after the bridge's own transmission (or its
   turn back to receive): the forced retune before a channel check's first reading, sent again after any hop,
   scan, `idle` or send in between, leaves no retune waiting behind a frame, a preamble held for `sync_timeout_us`
   included, whatever frequency the driver had recorded. A check on a channel the receiver is already on costs one
@@ -117,7 +117,7 @@ it do before. Reading it as busy would keep the radio off the air for a fault th
 - **Treat a missing reading as busy.** Rejected: a fault of the co-processor would keep the radio off the air and
   say that the air is busy.
 - **Retune a channel check without force, as every other retune.** Rejected: a preamble held for
-  `sync_timeout_us` keeps the retune waiting, the reading is refused as `busy` and the attempt is lost, where the
+  `sync_timeout_us` keeps the retune waiting, the reading is refused as `radio_busy` and the attempt is lost, where the
   SPI radios would have read the new channel at once.
-- **Ask again within the attempt after `busy`.** Not decided here; it can be added without changing the rule for
+- **Ask again within the attempt after `radio_busy`.** Not decided here; it can be added without changing the rule for
   an attempt without a reading.

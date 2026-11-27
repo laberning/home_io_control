@@ -3,7 +3,7 @@
 /// @ingroup hioc_radio
 ///
 /// A Bridle `gfsk_raw` radio has no framing: it sends a preamble, a sync word and the bytes it is given,
-/// and receives exactly `rx_len` bytes behind the sync word. 868 MHz io-homecontrol is that waveform
+/// and receives exactly `rx_capture_bytes` bytes behind the sync word. 868 MHz io-homecontrol is that waveform
 /// with the host's own coding on top: every byte of the frame and of its CRC in a 10-bit UART cell,
 /// behind the sync word `57 FD 99`. This is the same coding the software PHY (`radio_soft_phy.h`)
 /// applies for the SX1262 and LR1121 drivers, so a frame from this profile is on air what theirs is.
@@ -37,7 +37,7 @@ static constexpr uint32_t IO868_FDEV_HZ = 19200;
 static constexpr uint8_t IO868_SYNC_WORD[IO868_SYNC_WORD_BYTES] = {0x57, 0xFD, 0x99};
 /// Raw bytes the radio captures behind the sync word: the software PHY's probe length, 48 bytes
 /// (a 12-byte frame and its CRC take 20; the longest frame, 49 bytes of coded cells, still fits).
-static constexpr uint8_t IO868_RX_LEN = 48;
+static constexpr uint8_t IO868_RX_CAPTURE_BYTES = 48;
 /// Preamble bits the radio needs before it looks for the sync word. 16, as the LR1121 driver uses (validated
 /// against real devices): at 8 an SX1262 on a quiet bench reported about 3.8 false preambles a second and a
 /// receiver in a false preamble missed frames; at 16 it reported none in 30 s and received every test frame.
@@ -71,7 +71,7 @@ class Io868GfskPhy : public BridlePhy {
   [[nodiscard]] PhyProfile profile() const override { return PhyProfile::GFSK_RAW; }
   /// The modem of vector `set_params_io868`: bit rate, deviation, the receiver bandwidth of
   /// `tuning.sx1262_rx_bandwidth` (the far end is an SX1262 whose bandwidth matters the same way),
-  /// Gaussian BT 1.0, the sync word, `rx_len`, the detector, the sync timeout.
+  /// Gaussian BT 1.0, the sync word, `rx_capture_bytes`, the detector, the sync timeout.
   void write_params(TlvWriter &params, const TuningConfig &tuning) const override;
   /// A `gfsk_raw` radio covering 868.25 to 869.85 MHz with cap `rx_scan` (the idle scan a host cannot drive
   /// itself) and a preamble of at least `IO868_MIN_PREAMBLE_CAPACITY_BYTES` bytes (what the specification requires for
@@ -87,9 +87,9 @@ class Io868GfskPhy : public BridlePhy {
   [[nodiscard]] size_t wrapped_size(uint8_t frame_len) const override {
     return soft_phy_raw_bytes_for_frame(frame_len);
   }
-  /// Finds a CRC-valid io frame in the `rx_len` raw bytes at any bit alignment. Noise, or a frame of a
+  /// Finds a CRC-valid io frame in the `rx_capture_bytes` raw bytes at any bit alignment. Noise, or a frame of a
   /// command the hub does not know, is `BAD_CRC`; the radio itself checks nothing.
-  [[nodiscard]] UnwrapResult unwrap(const uint8_t *payload, size_t len, CrcState crc, uint8_t *out,
+  [[nodiscard]] UnwrapResult unwrap(const uint8_t *payload, size_t len, FcsState fcs, uint8_t *out,
                                     size_t cap) const override;
   /// The preamble the hub chose, and no strobe: a wake-up on this band is a long preamble.
   [[nodiscard]] TxShape tx_shape(TxWake wake, uint16_t preamble_len) const override;
@@ -99,7 +99,7 @@ class Io868GfskPhy : public BridlePhy {
   /// The three channels, `HOP_TIME_US` each, no hold: a frame holds the scan by itself.
   [[nodiscard]] ScanSpec idle_scan() const override;
   /// The radio reports a preamble before its sync word, so a frame is arriving from the preamble on.
-  [[nodiscard]] FrameStage frame_arriving_stage() const override { return FrameStage::PREAMBLE; }
+  [[nodiscard]] RxStage frame_arriving_stage() const override { return RxStage::PREAMBLE; }
 
   [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.sx1262_discovery_hop_slice_ms;

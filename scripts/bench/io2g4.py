@@ -28,7 +28,7 @@ The commands send three kinds of frame between them, and nothing else: no pairin
   delay (`--tries`, default 3, as the hub); an ERROR from the device ends the run. The options below vary,
   one at a time, what the Home IO Control hub does differently from a VELUX controller on air:
   `--answer-delay-ms D` starts the answer D ms after the challenge ended, timed by the co-processor
-  (`tx.t_main_us`; a D the PC cannot reach in time is sent at once, and the output says so);
+  (`tx.t_main_start_us`; a D the PC cannot reach in time is sent at once, and the output says so);
   `--lp-on-response` sets CTRL1 LOW_POWER on the answer (VELUX sends it clear); `--wake short` puts the
   8-frame train in front of the request instead of the 510-frame one.
 - `respond` stands in for a device on a second board: it answers a status read with a 0x04, challenges an
@@ -105,7 +105,7 @@ HUB_STATUS_KIND = 0x60  # byte 1 of the status reply of the 2.4 GHz blinds, rest
 HUB_STATUS_RESTING_REMAINING_S = 1  # what a blind at rest reports as remaining travel
 DEFAULT_TRAVEL_S = 72.0  # the full travel of the blind the replies were measured on, open to closed
 DEFAULT_RESPONDER_POSITION = 50.0
-WAKE_FRAME_BYTES = 3  # the strobe template of the wake train (spec vector `tx_io_wake_strobe`)
+WAKE_FRAME_BYTES = 3  # the strobe template of the wake train (spec vector `tx_io2g4_wake_strobe`)
 # The long wake train before the status read, as the spec's vector gives it, and the values the spec had
 # before it was measured, for an A/B against a device: `poll --legacy-timing`.
 LEGACY_STROBE_VALUES = {"count": 512, "period_ns": 976563, "main_gap_ns": 1344000, "counter_unit_ns": 976563}
@@ -118,7 +118,7 @@ RESPONDER_WINDOW_S = 0.1  # how long a responder waits for the 0x3D it asked for
 # The hub's gap between the tries of one command (proto_timing.h EXCHANGE_RETRY_DELAY_MS; a test pins the value).
 RETRY_DELAY_S = 0.25
 DEFAULT_TRIES = 3  # as the hub's exchange engine
-# `tx.t_main_us` (spec §5) must start the main frame at least 1 ms after the command arrives; the link adds up to
+# `tx.t_main_start_us` (spec §5) must start the main frame at least 1 ms after the command arrives; the link adds up to
 # 1 ms per direction (spec §2.1). An answer asked for sooner than that after the challenge cannot be timed.
 AT_TIME_MIN_US = 1000
 LINK_LATENCY_US = 1000
@@ -233,13 +233,13 @@ class Frame:
 
     @classmethod
     def from_rx(cls, fields: Mapping, heard_s: float = 0.0) -> "Frame | None":
-        """The io frame of an `rx` event; None for a frame with a bad FCS, a wake frame or anything else."""
+        """The io frame of an `rx_frame` event; None for a frame with a bad FCS, a wake frame or anything else."""
         payload = bytes.fromhex(fields["payload"])
         header, body = protolib.IO_2G4_PSDU_HEADER, payload[len(protolib.IO_2G4_PSDU_HEADER):-air.FCS_BYTES]
-        if fields["crc"] != "ok" or not payload.startswith(header) or len(body) < protolib.FRAME_MIN_SIZE \
+        if fields["fcs"] != "ok" or not payload.startswith(header) or len(body) < protolib.FRAME_MIN_SIZE \
                 or protolib.ctrl0_implied_length(body[0]) != len(body):
             return None
-        return cls(body, fields["t_us"], fields["rssi_dbm"], len(payload), heard_s)
+        return cls(body, fields["t_sync_us"], fields["rssi_dbm"], len(payload), heard_s)
 
     @property
     def dst(self) -> bytes:
@@ -295,9 +295,9 @@ class Events:
         """The next io frame for which `wanted(frame)` holds, waiting at most `timeout_s`."""
         deadline = self.peer.clock() + timeout_s
         while (message := self.next(max(deadline - self.peer.clock(), 0))) is not None:
-            if message.name != "rx":
+            if message.name != "rx_frame":
                 continue
-            self.bad_fcs += message.fields["crc"] == "bad"
+            self.bad_fcs += message.fields["fcs"] == "bad"
             frame = Frame.from_rx(message.fields, message.at)
             if frame is not None and wanted(frame):
                 return frame
@@ -312,24 +312,24 @@ class Events:
 
 
 def tx_fields(radio: dict, freq_hz: int, frame: bytes, strobe: dict | None = None,
-              t_main_us: int | None = None) -> dict:
+              t_main_start_us: int | None = None) -> dict:
     """The `tx` command that sends `frame` (behind `strobe`, if given, starting at the co-processor time
-    `t_main_us`, if given) and keeps receiving afterwards."""
+    `t_main_start_us`, if given) and keeps receiving afterwards."""
     fields = {"radio": radio["radio"], "freq_hz": freq_hz, "then_rx": True, "payload": psdu_of(frame).hex()}
     if strobe is not None:
         fields["strobe"] = strobe
-    if t_main_us is not None:
-        fields["t_main_us"] = t_main_us
+    if t_main_start_us is not None:
+        fields["t_main_start_us"] = t_main_start_us
     return fields
 
 
 def transmit(peer: conformance.Peer, radio: dict, freq_hz: int, frame: bytes, strobe: dict | None = None,
-             t_main_us: int | None = None) -> tuple[conformance.Message, Events]:
-    """Send `frame` (behind `strobe`, if given, at `t_main_us`, if given) with `then_rx`, and wait for its `tx_done`.
+             t_main_start_us: int | None = None) -> tuple[conformance.Message, Events]:
+    """Send `frame` (behind `strobe`, if given, at `t_main_start_us`, if given) with `then_rx`, and wait for its `tx_done`.
 
     Returns the `tx_done` and the events that arrived before it. Raises BenchError when the co-processor
     refuses the transmission or does not finish it."""
-    seq = peer.send("tx", tx_fields(radio, freq_hz, frame, strobe, t_main_us))
+    seq = peer.send("tx", tx_fields(radio, freq_hz, frame, strobe, t_main_start_us))
     deadline, before = peer.clock() + TX_TIMEOUT_S, []
     while (message := peer.receive(max(deadline - peer.clock(), 0))) is not None:
         if message.fields.get("cmd_seq") != seq:
@@ -343,16 +343,16 @@ def transmit(peer: conformance.Peer, radio: dict, freq_hz: int, frame: bytes, st
 
 
 def wake_strobe(legacy: bool, short: bool = False) -> dict:
-    """The strobe of the long wake train: the spec's vector `tx_io_wake_strobe`, or with `legacy` the values
-    the spec had before they were measured; with `short`, the 8-frame train of `tx_io_short_wake_strobe`."""
+    """The strobe of the long wake train: the spec's vector `tx_io2g4_wake_strobe`, or with `legacy` the values
+    the spec had before they were measured; with `short`, the 8-frame train of `tx_io2g4_short_wake_strobe`."""
     if short:
-        return dict(conformance._vector("tx_io_short_wake_strobe")["strobe"])
-    strobe = conformance._vector("tx_io_wake_strobe")["strobe"]
+        return dict(conformance._vector("tx_io2g4_short_wake_strobe")["strobe"])
+    strobe = conformance._vector("tx_io2g4_wake_strobe")["strobe"]
     return {**strobe, **LEGACY_STROBE_VALUES} if legacy else dict(strobe)
 
 
 def answer_time(delay_ms: float, challenge: Frame, now_s: float) -> tuple[int | None, str]:
-    """The co-processor time `tx.t_main_us` that starts an answer `delay_ms` after `challenge` ended, and "".
+    """The co-processor time `tx.t_main_start_us` that starts an answer `delay_ms` after `challenge` ended, and "".
 
     The PC knows the challenge's end on the co-processor's clock, but not when its next command will arrive
     there: the event reached the PC up to one link latency after the end, the command takes one more, and the
@@ -446,16 +446,16 @@ def execute_once(peer: conformance.Peer, radio: dict, args: argparse.Namespace, 
         return EXIT_NO_ANSWER, False
     answer = challenge_response(args.dst, args.src, request, challenge.data[:protolib.HMAC_SIZE], key,
                                 low_power=args.lp_on_response)
-    t_main_us = None
+    t_main_start_us = None
     if args.answer_delay_ms is not None:
-        t_main_us, note = answer_time(args.answer_delay_ms, challenge, peer.clock())
+        t_main_start_us, note = answer_time(args.answer_delay_ms, challenge, peer.clock())
         if note:
             print(f"{label}: {note}", file=out)
-    answered, after = transmit(peer, radio, args.freq, answer, t_main_us=t_main_us)
+    answered, after = transmit(peer, radio, args.freq, answer, t_main_start_us=t_main_start_us)
     delay_us = gap_us(answered.fields["t_main_start_us"], challenge.end_us)
     if args.answer_delay_ms is None:
         asked = ""
-    elif t_main_us is None:
+    elif t_main_start_us is None:
         asked = f"; asked for {args.answer_delay_ms:g} ms, sent at once (below the floor of this link)"
     else:
         asked = f"; asked for {args.answer_delay_ms:g} ms"
@@ -477,12 +477,12 @@ def execute_once(peer: conformance.Peer, radio: dict, args: argparse.Namespace, 
 # === respond ===
 
 def is_wake_frame(fields: Mapping) -> bool:
-    """Whether an `rx` event is a wake-train frame: a good frame of the strobe template's size (3 bytes and the
+    """Whether an `rx_frame` event is a wake-train frame: a good frame of the strobe template's size (3 bytes and the
     FCS), which is shorter than any io frame."""
-    return fields["crc"] == "ok" and len(bytes.fromhex(fields["payload"])) == WAKE_FRAME_BYTES + air.FCS_BYTES
+    return fields["fcs"] == "ok" and len(bytes.fromhex(fields["payload"])) == WAKE_FRAME_BYTES + air.FCS_BYTES
 
 
-# The idle scan a 2.4 GHz host runs (spec vector `rx_scan_io_idle`): all three channels, 1.5 ms each, held 8 ms on
+# The idle scan a 2.4 GHz host runs (spec vector `rx_scan_io2g4_idle`): all three channels, 1.5 ms each, held 8 ms on
 # a frame start.
 SCAN_FREQS_HZ = (bridle.CH15, bridle.CH20, bridle.CH25)
 SCAN_DWELL_US, SCAN_HOLD_US = 1500, 8000
@@ -542,7 +542,7 @@ class Responder:
                 latency = gap_us(message.fields["t_main_start_us"], self.status_seq.pop(message.fields["cmd_seq"]))
                 print(f"status reply latency, end of the request -> start of the reply: {latency} us", file=self.out)
                 continue
-            if message.name != "rx":
+            if message.name != "rx_frame":
                 continue
             self.wakes += is_wake_frame(message.fields)
             frame = Frame.from_rx(message.fields, message.at)
@@ -767,7 +767,7 @@ def run_command(peer: conformance.Peer, args: argparse.Namespace, key: bytes | N
     radio = benchkit.radio_of(ready)
     listening = args.command == "respond"
     benchkit.set_up(peer, radio, args.sfd, args.freq, listen=listening,
-                    event_mask={"crc_error_rx": True, "frame_start": listening})
+                    event_mask={"rx_fcs_bad": True, "rx_start": listening})
     if args.tx_power_dbm is not None:
         set_tx_power(peer, radio, args.tx_power_dbm, out)
     if args.command == "poll":

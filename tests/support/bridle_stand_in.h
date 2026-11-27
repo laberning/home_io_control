@@ -5,10 +5,10 @@
 ///
 /// The hub sees a real RadioBridle; the peer is a scripted co-processor of one band: 2.4 GHz
 /// (`BridleStandIn`) or 868 MHz on a `gfsk_raw` radio (`BridleStandIn868`). A queued frame is an
-/// `rx` event: the peer's answer to the hub's next transmission, released when that transmission
-/// has ended plus the turnaround of a real device (spec C6: a reply 300 µs after the main frame).
+/// `rx_frame` event: the peer's answer to the hub's next transmission, released when that transmission
+/// has ended plus the turnaround of a real device (spec Q5: a reply 300 µs after the main frame).
 /// On 868 MHz the event comes later still: a `gfsk_raw` radio reports a frame only once it has
-/// captured `rx_len` bytes behind the sync word (10 ms at 38.4 kb/s), whatever the frame's length.
+/// captured `rx_capture_bytes` bytes behind the sync word (10 ms at 38.4 kb/s), whatever the frame's length.
 /// Needs an active ManualClock, like everything with a clock of its own.
 
 #include <deque>
@@ -33,7 +33,7 @@ struct Bridge2g4 {
     psdu.insert(psdu.end(), frame.begin(), frame.end());
     return psdu;
   }
-  /// The `rx` payload for a reply: header, the io frame, the FCS the radio appends.
+  /// The `rx_frame` payload for a reply: header, the io frame, the FCS the radio appends.
   static std::vector<uint8_t> reply_payload(const std::vector<uint8_t> &frame) {
     std::vector<uint8_t> psdu = request_payload(frame);
     uint16_t const fcs = esphome::home_io_control::crc_ccitt(psdu.data(), static_cast<uint8_t>(psdu.size()));
@@ -41,8 +41,8 @@ struct Bridge2g4 {
     psdu.push_back(static_cast<uint8_t>(fcs >> 8));
     return psdu;
   }
-  static constexpr esphome::home_io_control::bridle::CrcState REPLY_CRC =
-      esphome::home_io_control::bridle::CrcState::OK;
+  static constexpr esphome::home_io_control::bridle::FcsState REPLY_CRC =
+      esphome::home_io_control::bridle::FcsState::OK;
   /// From the end of the hub's frame to the moment the co-processor reports the reply.
   static constexpr uint64_t REPLY_DELAY_US = 300;
   /// Added to a reply scripted at a time of its own: nothing, the radio reports a frame when its last bit is in.
@@ -57,7 +57,7 @@ struct Bridge868 {
     FakeCoprocessor::Config c;
     c.radios = {FakeCoprocessor::reference_gfsk_radio(0)};
     c.anchor_replies_at_tx_end = true;  // the corpus stamps an 868 MHz frame once its transmission is over
-    c.chip_id = static_cast<uint16_t>(esphome::home_io_control::bridle::ChipId::NRF52840);
+    c.mcu = static_cast<uint16_t>(esphome::home_io_control::bridle::Chip::NRF52840);
     return c;
   }
   /// The payload of the `tx` the hub sends for an io frame: the frame and its CRC, UART-coded.
@@ -66,33 +66,33 @@ struct Bridge868 {
     size_t const n = phy().wrap(frame.data(), static_cast<uint8_t>(frame.size()), out, sizeof(out));
     return {out, out + n};
   }
-  /// The `rx` payload for a reply: exactly `rx_len` bytes behind the sync word, the coded frame first and then
-  /// what else the radio hears (deterministic noise that is no frame).
+  /// The `rx_frame` payload for a reply: exactly `rx_capture_bytes` bytes behind the sync word, the coded frame first
+  /// and then what else the radio hears (deterministic noise that is no frame).
   static std::vector<uint8_t> reply_payload(const std::vector<uint8_t> &frame) {
     std::vector<uint8_t> raw = request_payload(frame);
-    for (size_t i = raw.size(); i < esphome::home_io_control::bridle::IO868_RX_LEN; i++)
+    for (size_t i = raw.size(); i < esphome::home_io_control::bridle::IO868_RX_CAPTURE_BYTES; i++)
       raw.push_back(static_cast<uint8_t>(0x5A + 37 * i));
     return raw;
   }
-  static constexpr esphome::home_io_control::bridle::CrcState REPLY_CRC =
-      esphome::home_io_control::bridle::CrcState::NOT_CHECKED;
+  static constexpr esphome::home_io_control::bridle::FcsState REPLY_CRC =
+      esphome::home_io_control::bridle::FcsState::NOT_CHECKED;
   /// The reply starts 300 µs after the hub's frame, takes its preamble and sync word to reach its first byte, and is
-  /// reported once `rx_len` bytes have arrived behind the sync word.
+  /// reported once `rx_capture_bytes` bytes have arrived behind the sync word.
   static constexpr uint64_t REPLY_DELAY_US =
       300 +
       esphome::home_io_control::soft_phy_air_time_us(esphome::home_io_control::SHORT_PREAMBLE +
                                                      esphome::home_io_control::IO868_SYNC_WORD_BYTES) +
-      esphome::home_io_control::soft_phy_air_time_us(esphome::home_io_control::bridle::IO868_RX_LEN);
-  /// A reply scripted at the time its frame was captured (a corpus capture) is reported `rx_len` bytes after
+      esphome::home_io_control::soft_phy_air_time_us(esphome::home_io_control::bridle::IO868_RX_CAPTURE_BYTES);
+  /// A reply scripted at the time its frame was captured (a corpus capture) is reported `rx_capture_bytes` bytes after
   /// the sync word, which is later than the frame ended for any frame shorter than that.
   static constexpr uint64_t TIMED_REPORT_DELAY_US =
-      esphome::home_io_control::soft_phy_air_time_us(esphome::home_io_control::bridle::IO868_RX_LEN);
+      esphome::home_io_control::soft_phy_air_time_us(esphome::home_io_control::bridle::IO868_RX_CAPTURE_BYTES);
 };
 
 template<class Band> class BasicBridleStandIn : public RadioStandIn {
  public:
-  /// A device answers ~300 µs after the frame it answers ends (spec C6), later where the radio reports a
-  /// frame only after capturing `rx_len` bytes: `Band::REPLY_DELAY_US` is what the stand-in uses.
+  /// A device answers ~300 µs after the frame it answers ends (spec Q5), later where the radio reports a
+  /// frame only after capturing `rx_capture_bytes` bytes: `Band::REPLY_DELAY_US` is what the stand-in uses.
   static constexpr uint64_t REPLY_TURNAROUND_US = Band::REPLY_DELAY_US;
 
   /// @param trace_to_file Write the driver's trace when HIOC_BRIDLE_TRACE_DIR is set. A test that
@@ -169,7 +169,7 @@ template<class Band> class BasicBridleStandIn : public RadioStandIn {
     if (!reply.has_value())
       return;
     uint64_t const now = FakeCoprocessor::now_us();
-    cp_.inject_rx(air_freq_(*reply), psdu_of_(*reply), Band::REPLY_CRC, end_us + REPLY_TURNAROUND_US - now);
+    cp_.inject_rx_frame(air_freq_(*reply), psdu_of_(*reply), Band::REPLY_CRC, end_us + REPLY_TURNAROUND_US - now);
   }
 
   FakeByteStream stream_;

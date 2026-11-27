@@ -96,12 +96,12 @@ CLANG_FORMAT ?= clang-format
 # targets leave them out.
 format:
 	@echo "Formatting C++ source files with clang-format..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -not -name radio_bridle_enums.h -not -path 'tests/bridle/*' \
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -not -name radio_bridle_protocol.h -not -path 'tests/bridle/*' \
 		-exec $(CLANG_FORMAT) -i {} +
 
 format-check:
 	@echo "Checking C++ formatting with clang-format (--dry-run)..."
-	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -not -name radio_bridle_enums.h -not -path 'tests/bridle/*' \
+	find components tests -type f \( -name '*.cpp' -o -name '*.h' \) -not -name radio_bridle_protocol.h -not -path 'tests/bridle/*' \
 		-exec $(CLANG_FORMAT) --dry-run --Werror {} +
 
 # YAML linting (safe selection, excludes generated .esphome)
@@ -406,7 +406,7 @@ UNIT_TEST_DEFINES := -DUSE_API_USER_DEFINED_ACTIONS \
 			 -DIOHOME_HELD_LOG_LINES=$(HOST_HELD_LOG_LINES) \
 			 -DUSE_WIFI
 
-# Bridle: the generated headers of one Bridle release are committed (components/home_io_control/radio_bridle_enums.h,
+# Bridle: the generated headers of one Bridle release are committed (components/home_io_control/radio_bridle_protocol.h,
 # tests/bridle/) and named by BRIDLE_VERSION; scripts/bridle-update.sh is the only thing that writes them. The Python
 # tools (session linter, header generator for the recorded sessions) come from the release's wheel, pinned in
 # scripts/requirements-dev.txt, into a venv under build/tools/. While the release is not on GitHub, or the repository

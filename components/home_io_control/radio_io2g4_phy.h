@@ -39,7 +39,7 @@ static constexpr size_t IO2G4_FCS_SIZE = 2;
 /// frame (the 5-byte frames of a wake-up strobe) is never an io frame: `unwrap()` calls it `TOO_SHORT`,
 /// and the co-processor is asked (`rx_min_psdu`) not to report it at all.
 static constexpr size_t IO2G4_MIN_PSDU_SIZE = IO2G4_PSDU_HEADER_SIZE + FRAME_MIN_SIZE + IO2G4_FCS_SIZE;
-/// Largest `rx_min_psdu` the co-processor accepts: the PHR's range (a longer value is `param_range`).
+/// Largest `rx_min_psdu` the co-processor accepts: the PHR's range (a longer value is `out_of_range`).
 static constexpr size_t IO2G4_MAX_RX_MIN_PSDU = 127;
 static_assert(IO2G4_MIN_PSDU_SIZE <= IO2G4_MAX_RX_MIN_PSDU, "rx_min_psdu is at most 127");
 
@@ -155,7 +155,7 @@ class Io2g4Phy : public BridlePhy {
   [[nodiscard]] size_t wrapped_size(uint8_t frame_len) const override { return IO2G4_PSDU_HEADER_SIZE + frame_len; }
   /// Checks the header and strips it and the FCS. A payload whose radio FCS check failed is
   /// `BAD_CRC`; a header mismatch returns the 3 bytes so the driver can log a manufacturer variant.
-  [[nodiscard]] UnwrapResult unwrap(const uint8_t *payload, size_t len, CrcState crc, uint8_t *out,
+  [[nodiscard]] UnwrapResult unwrap(const uint8_t *payload, size_t len, FcsState fcs, uint8_t *out,
                                     size_t cap) const override;
   /// `NONE`: no strobe. `SHORT`: 8 frames. `LONG`: 510 frames. The preamble stays the standard
   /// one, so `preamble_len` plays no part.
@@ -163,7 +163,7 @@ class Io2g4Phy : public BridlePhy {
   [[nodiscard]] uint32_t tx_air_time_us(const TxShape &shape, size_t wrapped_len) const override;
 
   [[nodiscard]] ScanSpec idle_scan() const override;
-  [[nodiscard]] FrameStage frame_arriving_stage() const override { return FrameStage::SYNC; }
+  [[nodiscard]] RxStage frame_arriving_stage() const override { return RxStage::SYNC; }
 
   /// `tuning.io2g4_hop_dwell_ms`.
   [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override { return tuning.io2g4_hop_dwell_ms; }
