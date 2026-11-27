@@ -13,6 +13,7 @@
 
 #include <string>
 
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/select/select.h"
 #include "esphome/components/switch/switch.h"
@@ -119,6 +120,22 @@ class IOHomeCoverTravelSpeedSelect : public select::Select, public Component, pu
   /// @brief Apply the selected travel speed to the bound device.
   /// @param value "default", "silent" or "fast" (travel_speed_name()).
   void control(const std::string &value) override;
+};
+
+/// @brief A cover's manual (M) lock, as its motor last answered a command at automation priority.
+///
+/// Generated only when the cover declares `manual_mode: true`. It is on after the motor refused a level-7 command
+/// (set_position_automatic) with PRIORITY_LOCKED or a linked A/M switch was heard flipping to M, and off after the
+/// motor took a level-7 command or the switch flipped to A; until then it has no state. It sends nothing itself.
+class IOHomeCoverManualModeBinarySensor : public binary_sensor::BinarySensor,
+                                          public Component,
+                                          public DeviceBoundCompanion {
+ public:
+  void setup() override;
+
+  void dump_config() override;
+
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 };
 
 }  // namespace home_io_control

@@ -27,6 +27,7 @@ static constexpr uint8_t BINARY_ENTITY_OFF_POSITION = 100;
 /// @brief Discriminator for entries in the pending-operation deque.
 enum class PendingOperationType : uint8_t {
   SET_POSITION,            ///< set_device_position call (position 0–100 or special values).
+  SET_POSITION_AUTOMATIC,  ///< set_device_position_automatic call: a position move at automation priority (level 7).
   SET_TILT,                ///< set_device_tilt call (tilt percentage 0–100).
   SET_POSITION_AND_TILT,   ///< Combined set_device_position_and_tilt call.
   DEVICE_COMMAND,          ///< Named device command (STOP, FAVORITE, VENT).
@@ -102,6 +103,10 @@ class OperationQueue {
 
   /// Enqueue SET_POSITION_AND_TILT directly (no coalescing needed).
   void enqueue_set_position_and_tilt(const std::string &device_id, uint8_t position, uint8_t tilt_percent);
+
+  /// @brief Queue a position move at automation priority. Never merged with a tilt move: the merged
+  /// frame would go out at the normal priority.
+  void enqueue_set_position_automatic(const std::string &device_id, uint8_t position);
 
   // --- Named cover command ---
   void enqueue_device_command(const std::string &device_id, CoverCommand cmd);

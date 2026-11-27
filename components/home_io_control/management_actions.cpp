@@ -57,6 +57,9 @@ constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_SEQUENCE = "oneway_set_sequen
 constexpr const char *MANAGEMENT_ACTION_HEATING_CONTROL = "heating_control";
 constexpr const char *MANAGEMENT_ACTION_PAIR_DEVICE = "pair_device";
 constexpr const char *MANAGEMENT_ACTION_PULL_KEY = "pull_key";
+constexpr const char *MANAGEMENT_ACTION_SET_POSITION_AUTOMATIC = "set_position_automatic";
+/// Highest `position` of set_position_automatic: Home Assistant's fully open.
+constexpr uint8_t AUTOMATIC_POSITION_MAX = 100;
 /// Until when the retired `heating_control` function names work (ADR 0109).
 constexpr const char *HEATING_DEPRECATION_END = "January 2027";
 constexpr const char *MANAGEMENT_RESULT_EVENT = "esphome.home_io_control_action_result";
@@ -383,6 +386,12 @@ void ManagementActions::register_actions() {
        {"controller_id"},
        false,  // a real user feature, gated by documentation not by diagnostic_probes:
        [this](const api::ExecuteServiceRequest &r) { this->api_pull_key(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_SET_POSITION_AUTOMATIC,
+       {"device_id", "position"},
+       false,  // a real user feature: the move an automation sends, which a cover locked on manual refuses
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_set_position_automatic(r.args[0].string_.str(), r.args[1].string_.str());
+       }},
       {MANAGEMENT_ACTION_PROBE_DEVICE,
        {"device_id", "probe", "index"},
        true,
@@ -597,6 +606,36 @@ ManagementActionResult ManagementActions::run_identify_(const char *action, cons
   // response command to check against, and no readback exists to set `verified`.
   result.success = true;
   result.message = wink_time == IDENTIFY_WINK_STOP ? "identify stopped" : "identify acknowledged by device";
+  return result;
+}
+
+void ManagementActions::api_set_position_automatic(const std::string &device_id, const std::string &position) {
+  publish_result(set_position_automatic(device_id, position));
+}
+
+ManagementActionResult ManagementActions::set_position_automatic(const std::string &device_id,
+                                                                 const std::string &position) {
+  ManagementActionResult result;
+  auto *dev = resolve_device_(MANAGEMENT_ACTION_SET_POSITION_AUTOMATIC, device_id, result);
+  if (dev == nullptr)
+    return result;
+  // Rejected loudly, never defaulted: a position that silently became 0 would close the cover.
+  uint8_t percent_open = 0;
+  if (!parse_whole_number_argument(position, AUTOMATIC_POSITION_MAX, percent_open)) {
+    result.message = "position must be a whole number between 0 (closed) and 100 (open)";
+    return result;
+  }
+  // Home Assistant's convention, as cover.set_cover_position takes it: 100 is open. The device's own scale and
+  // its inversion are the cover entity's conversion.
+  const uint8_t io_position = detail::io_from_fraction(
+      static_cast<float>(percent_open) / static_cast<float>(AUTOMATIC_POSITION_MAX), dev->inverted);
+  if (!hub_->queue_set_device_position_automatic(result.device_id, io_position)) {
+    result.message = "device does not accept cover commands";
+    return result;
+  }
+  result.success = true;
+  result.message = "automatic position queued (a cover locked on manual refuses it; the answer arrives via the "
+                   "cover state and the Active Issue sensor)";
   return result;
 }
 

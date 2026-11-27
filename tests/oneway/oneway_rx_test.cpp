@@ -713,3 +713,21 @@ TEST(OnewayRx, TwoQuickPressesOfTheSameButtonFireTwoEventsAndTwoFollowUps) {
       << "the second press must have moved the poll out; a dropped press leaves it at the first";
   EXPECT_EQ(esphome::test_scheduler::run_until(t0 + SECOND_PRESS_MS + delay), 1u);
 }
+
+TEST(OnewayRx, ModeSwitch_FlipSetsTheLinkedCoversManualModeAtOnce) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.add_device("30E1F2");
+  comp.add_linked_remote(node_id_to_string(REMOTE_ID), "30E1F2");
+  comp.add_device("445566");  // Not linked to the switch: its mode stays unknown.
+
+  comp.process_received_packet_(make_rx_packet(make_1w_mode_switch(0x00)));
+  EXPECT_EQ(comp.get_device("30E1F2")->manual_mode, ManualMode::MANUAL);
+  EXPECT_EQ(comp.get_device("445566")->manual_mode, ManualMode::UNKNOWN);
+
+  IoFrame to_auto = make_1w_mode_switch(0x55);
+  to_auto.data[10] = 0x0B;  // The next press carries the next rolling sequence, or the duplicate filter drops it.
+  comp.process_received_packet_(make_rx_packet(to_auto));
+  EXPECT_EQ(comp.get_device("30E1F2")->manual_mode, ManualMode::AUTO);
+}

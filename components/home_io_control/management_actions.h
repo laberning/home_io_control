@@ -104,6 +104,19 @@ class ManagementActions {
   ///         naming the range.
   ManagementActionResult identify_device_for(const std::string &device_id, const std::string &seconds);
 
+  /// @brief Native API wrapper for set_position_automatic(); publishes the result event.
+  void api_set_position_automatic(const std::string &device_id, const std::string &position);
+
+  /// @brief Queue a position move at automation priority (level 7).
+  ///
+  /// The move an automation sends: a motor whose wired A/M switch is on M refuses it with PRIORITY_LOCKED, the
+  /// Active Issue sensor shows that, and a `Manual Mode` sensor turns on. The cover entity's own moves keep the
+  /// normal priority and still go through, as a manufacturer app's "send anyway" does.
+  /// @param device_id Target cover's node ID.
+  /// @param position Percent open as Home Assistant counts it, "0" (closed) to "100" (open).
+  /// @return The action result.
+  ManagementActionResult set_position_automatic(const std::string &device_id, const std::string &position);
+
   /// Native API callback: force-open a device and publish the result as a HA event.
   void api_force_open_device(const std::string &device_id);
 

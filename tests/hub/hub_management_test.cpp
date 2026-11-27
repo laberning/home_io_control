@@ -464,7 +464,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersOnlyElevenServicesByDefault) {
+TEST(HubManagement, RegisterManagementActionsRegistersOnlyTwelveServicesByDefault) {
   // diagnostic_probes_enabled_ defaults to false (no set_diagnostic_probes_enabled() call), so
   // probe_device/probe_sweep must not appear in the action list at all -- this is what keeps a
   // default build's Home Assistant action list clean, not just what refuses at call time.
@@ -477,7 +477,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyElevenServicesByDefaul
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 11u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 12u);
   for (const auto &service : esphome::api::global_api_server->user_services_) {
     const auto name = service->encode_list_service_response().name.str();
     EXPECT_NE(name, "probe_device");
@@ -573,9 +573,15 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyElevenServicesByDefaul
   ASSERT_EQ(pull_key_response.args.size(), 1u);
   EXPECT_EQ(pull_key_response.args[0].name.str(), "controller_id");
   EXPECT_EQ(pull_key_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto automatic_response = esphome::api::global_api_server->user_services_[11]->encode_list_service_response();
+  EXPECT_EQ(automatic_response.name.str(), "set_position_automatic");
+  ASSERT_EQ(automatic_response.args.size(), 2u);
+  EXPECT_EQ(automatic_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(automatic_response.args[1].name.str(), "position");
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllThirteenServicesWhenDiagnosticProbesEnabled) {
+TEST(HubManagement, RegisterManagementActionsRegistersAllFourteenServicesWhenDiagnosticProbesEnabled) {
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -586,10 +592,10 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllThirteenServicesWhenDia
   component.set_diagnostic_probes_enabled(true);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 13u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 14u);
 
   const auto probe_device_response =
-      esphome::api::global_api_server->user_services_[11]->encode_list_service_response();
+      esphome::api::global_api_server->user_services_[12]->encode_list_service_response();
   EXPECT_EQ(probe_device_response.name.str(), "probe_device");
   EXPECT_EQ(probe_device_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_device_response.args.size(), 3u);
@@ -600,7 +606,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllThirteenServicesWhenDia
   EXPECT_EQ(probe_device_response.args[2].name.str(), "index");
   EXPECT_EQ(probe_device_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[12]->encode_list_service_response();
+  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[13]->encode_list_service_response();
   EXPECT_EQ(probe_sweep_response.name.str(), "probe_sweep");
   EXPECT_EQ(probe_sweep_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_sweep_response.args.size(), 4u);
@@ -800,7 +806,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 11u);
+  ASSERT_EQ(api_server.user_services_.size(), 12u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
@@ -1793,7 +1799,7 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 11u);
+  ASSERT_EQ(api_server.user_services_.size(), 12u);
 
   const auto response = api_server.user_services_[4]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "scan_paired_devices");
@@ -1861,7 +1867,7 @@ TEST(HubManagement, OneWaySetPositionActionIsRegisteredWithBothArguments) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 11u);
+  ASSERT_EQ(api_server.user_services_.size(), 12u);
 
   const auto response = api_server.user_services_[5]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "oneway_set_position");
@@ -2230,4 +2236,90 @@ TEST(HubManagement, TheCommandAfterOneWaySetSequenceCarriesTheNewNumber) {
   EXPECT_EQ(static_cast<uint16_t>((frame.data[6] << 8) | frame.data[7]), 4242);
   EXPECT_EQ(next_sequence(component), 4243);
   esphome::test_preferences::wipe();
+}
+
+// --- set_position_automatic and the manual mode check ---
+
+namespace {
+/// The status a resting Somfy motor answered the hub's automation-level STOP with (21:56:58, Smoove Uno io on A).
+IoFrame make_resting_status_reply(const uint8_t dst[3]) {
+  const uint8_t device[3] = {0xAB, 0xC1, 0x23};
+  return test::make_device_reply(dst, CMD_PRIVATE_RESP,
+                                 {0x05, 0x80, 0xD2, 0x00, 0xF7, 0xFF, 0x00, 0x00, 0x90, 0xDF, 0xDD, 0x01, 0x00, 0x00},
+                                 device);
+}
+
+/// The ACEI byte of the first frame the radio sent.
+uint8_t first_sent_acei(const MockRadio &radio) {
+  IoFrame frame{};
+  const auto &bytes = radio.get_sent_data().at(0);
+  EXPECT_TRUE(parse(bytes.data(), static_cast<uint8_t>(bytes.size()), frame));
+  return frame.data[1];
+}
+}  // namespace
+
+TEST(HubManagement, SetPositionAutomaticQueuesTheHomeAssistantPositionOnTheIoScale) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.management_actions_.set_position_automatic("ABC123", "30");
+  ASSERT_TRUE(result.success) << result.message;
+  ASSERT_EQ(component.op_queue_.size(), 1u);
+  EXPECT_EQ(component.op_queue_.front().type, PendingOperationType::SET_POSITION_AUTOMATIC);
+  EXPECT_EQ(component.op_queue_.front().position, 70) << "30 % open is IO position 70 (0 = open)";
+}
+
+TEST(HubManagement, SetPositionAutomaticRejectsABadPositionAndANonCover) {
+  for (const char *position : {"", "101", "-1", "abc", "50.5"}) {
+    SCOPED_TRACE(position);
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    const auto result = component.management_actions_.set_position_automatic("ABC123", position);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.message, "position must be a whole number between 0 (closed) and 100 (open)");
+    EXPECT_TRUE(component.op_queue_.empty());
+  }
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  test::set_kind(*component.get_device("ABC123"), DeviceType::LIGHT);
+  const auto result = component.management_actions_.set_position_automatic("ABC123", "50");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device does not accept cover commands");
+  EXPECT_TRUE(component.op_queue_.empty());
+}
+
+TEST(HubManagement, AutomaticPositionRefusedWithPriorityLockedTurnsManualModeOn) {
+  // The wired A/M switch on M: the motor answered FE 38 (21:57:30).
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_PRIORITY_LOCKED)));
+
+  EXPECT_FALSE(component.set_device_position_automatic("ABC123", 100));
+  EXPECT_EQ(first_sent_acei(radio), AUTOMATIC_EXECUTE_ACEI);
+  EXPECT_EQ(component.get_device("ABC123")->manual_mode, ManualMode::MANUAL);
+}
+
+TEST(HubManagement, AutomaticPositionTakenTurnsManualModeOff) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.get_device("ABC123")->manual_mode = ManualMode::MANUAL;
+  radio.queue_rx(frame_to_packet(make_resting_status_reply(component.node_id_)));
+
+  EXPECT_TRUE(component.set_device_position_automatic("ABC123", 0));
+  EXPECT_EQ(component.get_device("ABC123")->manual_mode, ManualMode::AUTO);
+}
+
+TEST(HubManagement, AutomaticPositionRefusedForAnotherReasonKeepsManualMode) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  EXPECT_FALSE(component.set_device_position_automatic("ABC123", 0));
+  EXPECT_EQ(component.get_device("ABC123")->manual_mode, ManualMode::UNKNOWN);
 }

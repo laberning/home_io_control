@@ -887,3 +887,37 @@ TEST(ProtoCommands, SilentDoesNotLeakIntoStopVentOrForceOpen) {
   ASSERT_TRUE(create_force_open(forced, test::OWN_ID, test::DST_ID, true, 0));
   EXPECT_EQ(forced.data[6], 0x06) << "force-open stays on the normal travel profile";
 }
+
+// --- Commands at automation priority (the A/M lock of a wired Smoove Uno io) ---
+
+TEST(ProtoCommands, AutomaticPositionKeepsBothFrameShapesAndChangesOnlyTheAcei) {
+  IoFrame normal{};
+  IoFrame automatic{};
+  ASSERT_TRUE(create_execute_position(normal, test::OWN_ID, test::DST_ID, false, 40, false));
+  ASSERT_TRUE(create_execute_position_automatic(automatic, test::OWN_ID, test::DST_ID, false, 40, true, false));
+  ASSERT_EQ(automatic.data_len, normal.data_len) << "the 8-byte form with the speed block";
+  EXPECT_EQ(automatic.data[1], 0xE7);
+  for (uint8_t i = 0; i < normal.data_len; i++) {
+    if (i != 1) {
+      EXPECT_EQ(automatic.data[i], normal.data[i]) << "byte " << static_cast<int>(i);
+    }
+  }
+
+  IoFrame short_form{};
+  ASSERT_TRUE(create_execute_position_automatic(short_form, test::OWN_ID, test::DST_ID, false, 100, false, false));
+  const uint8_t expected[] = {0x01, 0xE7, 0xC8, 0x00, 0x00, 0x00};
+  ASSERT_EQ(short_form.data_len, sizeof(expected));
+  EXPECT_EQ(std::memcmp(short_form.data, expected, sizeof(expected)), 0);
+  EXPECT_FALSE(create_execute_position_automatic(short_form, test::OWN_ID, test::DST_ID, false, 101, false, false));
+}
+
+TEST(ProtoCommands, StopAtPriorityRefusesTheProtectionLevels) {
+  IoFrame frame{};
+  EXPECT_FALSE(create_execute_stop_at_priority(frame, test::OWN_ID, test::DST_ID, false, 0));
+  EXPECT_FALSE(create_execute_stop_at_priority(frame, test::OWN_ID, test::DST_ID, false, 1));
+  EXPECT_FALSE(create_execute_stop_at_priority(frame, test::OWN_ID, test::DST_ID, false, 8));
+  ASSERT_TRUE(create_execute_stop_at_priority(frame, test::OWN_ID, test::DST_ID, false, 7));
+  const uint8_t expected[] = {0x01, 0xE7, 0xD2, 0x00, 0x00, 0x00};
+  ASSERT_EQ(frame.data_len, sizeof(expected));
+  EXPECT_EQ(std::memcmp(frame.data, expected, sizeof(expected)), 0);
+}

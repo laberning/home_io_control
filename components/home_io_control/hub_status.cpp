@@ -577,7 +577,28 @@ std::vector<std::string> IOHomeControlComponent::resolve_1w_target_devices_(cons
 void IOHomeControlComponent::follow_linked_remote_press_(const OneWayFrameInfo &info, const std::string &src_id) {
   // Id-linked devices plus, for a typed broadcast, class-linked devices — deduplicated so a
   // device linked both ways is only touched once per press.
-  this->follow_press_on_devices_(info, this->resolve_1w_target_devices_(info, src_id));
+  const std::vector<std::string> devices = this->resolve_1w_target_devices_(info, src_id);
+  this->follow_press_on_devices_(info, devices);
+  this->apply_mode_switch_(info, devices);
+}
+
+void IOHomeControlComponent::apply_mode_switch_(const OneWayFrameInfo &info, const std::vector<std::string> &devices) {
+  // A flip of an A/M switch's slider: the motors it is paired to lock (M) or unlock (A) right now, so the linked
+  // covers' manual mode follows at once instead of at their next check. A state byte not seen before changes nothing.
+  if (info.mode_switch != OneWayModeSwitch::AUTO && info.mode_switch != OneWayModeSwitch::MANUAL)
+    return;
+  const ManualMode mode = info.mode_switch == OneWayModeSwitch::MANUAL ? ManualMode::MANUAL : ManualMode::AUTO;
+  for (const auto &device_id : devices) {
+    IoDevice *dev = this->registry_.get(device_id);
+    if (dev == nullptr || !detail::known_device_matches_entity_class(*dev, DeviceCapabilityClass::COVER))
+      continue;
+    if (dev->manual_mode != mode) {
+      ESP_LOGI(detail::TAG, "Device %s: manual mode %s (A/M switch %s)", device_id.c_str(),
+               mode == ManualMode::MANUAL ? "on" : "off", node_id_to_string(info.src).c_str());
+    }
+    dev->manual_mode = mode;
+    this->notify_device_update_(device_id);
+  }
 }
 
 void IOHomeControlComponent::follow_press_on_devices_(const OneWayFrameInfo &info,

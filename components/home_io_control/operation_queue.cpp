@@ -69,6 +69,10 @@ void OperationQueue::enqueue_set_position_and_tilt(const std::string &device_id,
   push_control_({PendingOperationType::SET_POSITION_AND_TILT, device_id, position, tilt_percent});
 }
 
+void OperationQueue::enqueue_set_position_automatic(const std::string &device_id, uint8_t position) {
+  push_control_({PendingOperationType::SET_POSITION_AUTOMATIC, device_id, position});
+}
+
 void OperationQueue::enqueue_device_command(const std::string &device_id, CoverCommand cmd) {
   PendingOperation op{};
   op.type = PendingOperationType::DEVICE_COMMAND;

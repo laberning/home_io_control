@@ -342,6 +342,13 @@ struct DeviceReadingValues {
   Mask reported_{0};
 };
 
+/// @brief What a cover's motor last said about its manual (M) lock, learned from a command at automation priority.
+///
+/// A Somfy motor following an A/M switch (a wired Smoove Uno io or a Smoove 1 A/M io) refuses a level-7 command with
+/// PRIORITY_LOCKED while the switch is on M and takes it on A; its status reply is the same in both. UNKNOWN until
+/// such a command was answered or a linked switch was heard flipping.
+enum class ManualMode : uint8_t { UNKNOWN, AUTO, MANUAL };
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -389,35 +396,38 @@ struct IoDevice {
   uint32_t last_result_at_ms{0};   ///< millis() timestamp of last_result_code, 0 when none recorded.
   bool speed_block_warned{false};  ///< The hub has logged, in this boot, that this device answered the speed
                                    ///< block with "parameter unknown". Run-time only, never persisted.
-  uint32_t reported_result_codes{0};          ///< The result codes other than the speed block's that this device has
-                                              ///< answered an EXECUTE with in this boot, one
-                                              ///< decisions::result_code_bit() each: the first warns, a repeat logs at
-                                              ///< DEBUG. Run-time only, never persisted.
-  uint8_t last_commander[NODE_ID_SIZE]{};     ///< Node ID of the controller that last commanded this device, as
-                                              ///< reported verbatim by the device in its own status payload. All
-                                              ///< zeroes until a status reply carrying the record has been decoded
-                                              ///< (see decode_last_command_record() in proto_codecs.h).
-  uint8_t last_command_originator{0};         ///< That command's Command Originator byte (ORIGINATOR_* in
-                                              ///< proto_constants.h). Only meaningful when `has_last_command`.
-  bool has_last_command{false};               ///< True once a status reply carried a well-formed last-command record.
-  bool limited_by_rain{false};                ///< Derived from observed status replies, never from a prediction
-                                              ///< (decisions::is_rain_limited(); ADR 0030 keeps predictions apart):
-                                              ///< the last move was ordered by the rain sensor, or a position
-                                              ///< command was clamped while rain protection was recently active.
-                                              ///< Separate from `last_result_code`, which only an explicit
-                                              ///< CMD_ERROR_RESP sets.
-  uint32_t last_rain_evidence_ms{0};          ///< millis() of the last status reply that named the rain sensor as the
-                                              ///< last commander; 0 = never. Memory for the clamp rule, aged out
-                                              ///< by RAIN_EVIDENCE_HOLD_MS.
-  uint32_t last_status{0};                    ///< millis() timestamp of last received status.
-  int16_t last_rssi_dbm{RSSI_UNKNOWN_DBM};    ///< Most recent raw RSSI sample (dBm), or RSSI_UNKNOWN_DBM.
-  int16_t rssi_ema_scaled{RSSI_UNKNOWN_DBM};  ///< Smoothed RSSI as fixed point in 1/RSSI_EMA_SCALE dBm — read
-                                              ///< through device_rssi_ema_dbm(), updated by
-                                              ///< detail::update_link_health() in entity_helpers.h. Fixed point
-                                              ///< (rather than whole dBm) keeps sub-dBm EMA contributions from
-                                              ///< vanishing to integer truncation, so the average converges on a
-                                              ///< stable signal instead of stalling up to RSSI_EMA_SCALE−1 dBm
-                                              ///< away. RSSI_UNKNOWN_DBM before the first sample.
+  uint32_t reported_result_codes{0};  ///< The result codes other than the speed block's that this device has
+                                      ///< answered an EXECUTE with in this boot, one
+                                      ///< decisions::result_code_bit() each: the first warns, a repeat logs at
+                                      ///< DEBUG. Run-time only, never persisted.
+  ManualMode manual_mode{ManualMode::UNKNOWN};  ///< The motor's last answer to a command at automation priority:
+                                                ///< refused with PRIORITY_LOCKED (MANUAL) or taken (AUTO). Run-time
+                                                ///< only, never persisted.
+  uint8_t last_commander[NODE_ID_SIZE]{};       ///< Node ID of the controller that last commanded this device, as
+                                                ///< reported verbatim by the device in its own status payload. All
+                                                ///< zeroes until a status reply carrying the record has been decoded
+                                                ///< (see decode_last_command_record() in proto_codecs.h).
+  uint8_t last_command_originator{0};           ///< That command's Command Originator byte (ORIGINATOR_* in
+                                                ///< proto_constants.h). Only meaningful when `has_last_command`.
+  bool has_last_command{false};                 ///< True once a status reply carried a well-formed last-command record.
+  bool limited_by_rain{false};                  ///< Derived from observed status replies, never from a prediction
+                                                ///< (decisions::is_rain_limited(); ADR 0030 keeps predictions apart):
+                                                ///< the last move was ordered by the rain sensor, or a position
+                                                ///< command was clamped while rain protection was recently active.
+                                                ///< Separate from `last_result_code`, which only an explicit
+                                                ///< CMD_ERROR_RESP sets.
+  uint32_t last_rain_evidence_ms{0};            ///< millis() of the last status reply that named the rain sensor as the
+                                                ///< last commander; 0 = never. Memory for the clamp rule, aged out
+                                                ///< by RAIN_EVIDENCE_HOLD_MS.
+  uint32_t last_status{0};                      ///< millis() timestamp of last received status.
+  int16_t last_rssi_dbm{RSSI_UNKNOWN_DBM};      ///< Most recent raw RSSI sample (dBm), or RSSI_UNKNOWN_DBM.
+  int16_t rssi_ema_scaled{RSSI_UNKNOWN_DBM};    ///< Smoothed RSSI as fixed point in 1/RSSI_EMA_SCALE dBm — read
+                                                ///< through device_rssi_ema_dbm(), updated by
+                                                ///< detail::update_link_health() in entity_helpers.h. Fixed point
+                                                ///< (rather than whole dBm) keeps sub-dBm EMA contributions from
+                                                ///< vanishing to integer truncation, so the average converges on a
+                                                ///< stable signal instead of stalling up to RSSI_EMA_SCALE−1 dBm
+                                                ///< away. RSSI_UNKNOWN_DBM before the first sample.
   uint32_t last_seen_ms{0};  ///< millis() of the last frame received from this device (any command), 0 = never.
   uint32_t last_overheard_named_ms{
       0};  ///< millis() of the last INFO line saying this device answered another controller, 0 = never

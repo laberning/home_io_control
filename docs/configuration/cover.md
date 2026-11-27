@@ -37,6 +37,7 @@ accepted and the cover is created; the warning asks you to
 - `rain_sensor_poll_interval` (Optional): Ask the device how far its own rain protection lets it open, once per interval, and report the answer as a binary sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Declaring it generates a `<Cover Name> Rain sensor` binary sensor. Validated on VELUX windows with a wired rain sensor. On a device from another manufacturer the reading is experimental: a Somfy Sunea awning answers the request and reads dry, but no capture shows a Somfy device under a rain or wind lock, so a wet reading from it is unconfirmed. Read [Polling for rain](cover.md#polling-for-rain) before choosing an interval, because every poll uses transmit time that the hub shares with everything else it sends.
 - `sun_level_poll_interval` (Optional): Ask the device for the value of its built-in sun sensor once per interval, and publish it as a `<Cover Name> Sun level` sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level) before choosing an interval.
 - `battery_level_poll_interval` (Optional): Ask the device for its battery level in percent once per interval, and publish it as a `<Cover Name> Battery level` sensor. The minimum is `1min` and there is no default. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level).
+- `manual_mode` (Optional, default: `false`): Generates a `<Cover Name> Manual Mode` binary sensor for a motor that follows an A/M switch. It sends nothing over the radio: the sensor follows the answers to [`set_position_automatic`](actions.md#set_position_automatic) and the heard flips of a switch in `linked_remotes`. See [Manual mode](cover.md#manual-mode).
 - `status_refresh_interval` (Optional): Read the device's status whenever it has reported none for this long, so a change the hub did not hear shows up within the interval. The minimum is `1min` and there is no default: omit the key and the hub reads a cover at rest only when something prompts it. It creates no entity. See [Refreshing the status at rest](cover.md#refreshing-the-status-at-rest).
 - `battery` (Optional, default: `false`): Report the battery level a battery or solar device includes in its status replies. Generates a `<Cover Name> Battery Low` binary sensor and a `<Cover Name> Battery` text sensor. It sends nothing extra over the radio. See [Battery level](cover.md#battery-level).
 - All standard options from the ESPHome cover base schema also apply, including `id`, `device_class` (see [Home Assistant device class](cover.md#home-assistant-device-class)), `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
@@ -79,6 +80,7 @@ Beyond the diagnostic companions every platform generates, covers add up to elev
   declared.
 - **`<Cover Name> Travel Speed`** — a select with the options `default`, `silent` and `fast`,
   generated only when `travel_speed:` is declared. See [Travel speed](cover.md#travel-speed).
+- **`<Cover Name> Manual Mode`** — a binary sensor, generated only with `manual_mode: true`. See [Manual mode](cover.md#manual-mode).
 - **`<Cover Name> Rain sensor`** — a binary sensor with device class `moisture`, generated only
   when `rain_sensor_poll_interval:` is declared. See [Polling for rain](cover.md#polling-for-rain).
 - **`<Cover Name> Battery Low`** and **`<Cover Name> Battery`** — a binary sensor and a text
@@ -534,3 +536,34 @@ example with the identity's STOP button
   Command report
 - [Linked remotes and sender events](remotes.md) — wiring a physical remote to this cover
 - [ESPHome Cover Component](https://esphome.io/components/cover/)
+
+## Manual mode
+
+A Somfy motor locks itself while an A/M switch it follows is on M, both a Smoove Uno io wired to it and a wireless
+Smoove 1 A/M io: it refuses a command at automation priority (ACEI level 7) with `PRIORITY_LOCKED` (`FE 38`) and
+still takes the hub's normal commands at level 3. Its status reply is the same on A and on M, so the hub learns the
+lock only from the motor's answer to a level-7 command, or, for a wireless switch, from hearing its flip.
+
+```yaml
+cover:
+  - platform: home_io_control
+    name: "Office Blind"
+    io_device_id: "7A38D1"
+    manual_mode: true
+```
+
+- **Automations should move the cover with [`set_position_automatic`](actions.md#set_position_automatic)**, not
+  `cover.set_cover_position`: the motor then refuses them itself while the switch is on M. A move from the dashboard
+  keeps level 3 and still goes through, like a manufacturer app's "send anyway".
+- **The `<Cover Name> Manual Mode` sensor** turns on when the motor refuses a `set_position_automatic` move with
+  `PRIORITY_LOCKED` and off when it takes one. For a wireless Smoove 1 A/M io listed in the cover's `linked_remotes`
+  it also follows each heard flip at once (see [Auto/manual switches](remotes.md#automanual-switches)). It has no
+  state until the first answer or flip, and it sends nothing itself.
+- **A wired Smoove Uno io puts no frame on the air**, so for its cover only the answers to `set_position_automatic`
+  move the sensor. A flip of a wireless switch that the hub did not hear is corrected by the next
+  `set_position_automatic` answer.
+- **To check one cover by hand**, the [`execute_priority` probe](../diagnostic-probes.md) sends a STOP at level 7;
+  on M the motor answers `FE 38`.
+
+Evidence: `tests/corpus/captures/exchange/somfy_smoove_am_exchange_priority_lock_sx1262.yaml`, the hub's STOP to a
+motor behind a Smoove Uno io: on A level 7 taken; on M level 7 refused with `FE 38`, level 2 taken.

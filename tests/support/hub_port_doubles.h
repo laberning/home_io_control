@@ -110,6 +110,10 @@ class DevicePortDouble : public HubDevicePort {
   void queue_set_device_position(const std::string &device_id, uint8_t position) override {
     this->queued_.push_back({PendingOperationType::SET_POSITION, device_id, position});
   }
+  bool queue_set_device_position_automatic(const std::string &device_id, uint8_t position) override {
+    this->queued_.push_back({PendingOperationType::SET_POSITION_AUTOMATIC, device_id, position});
+    return true;
+  }
   void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override {
     this->queued_.push_back({PendingOperationType::SET_TILT, device_id, tilt_percent});
   }

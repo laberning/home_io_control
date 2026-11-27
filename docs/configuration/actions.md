@@ -13,6 +13,7 @@ optional one-tap button.
 | [`identify_device`](#identify_device) | Makes a device physically identify itself (jog/flash) for its own default time so you can tell which physical motor a device ID belongs to. | No — no readback exists for a jog |
 | [`identify_device_for`](#identify_device_for) ⚠️ *experimental* | Identifies for a number of seconds you choose, or stops a running identify with `0` (the stop is confirmed on a VELUX roof-window actuator). | No — no readback exists for a jog |
 | [`force_open_device`](#force_open_device) ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. | No — the outcome is asynchronous |
+| [`set_position_automatic`](#set_position_automatic) | Moves a cover at automation priority, which a motor locked on manual (a wired A/M switch on M) refuses. | No — the outcome is asynchronous |
 | [`scan_paired_devices`](../pairing.md) | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. Also reachable as a one-tap button via `scan_paired_devices_button: true`. | No — nothing here is read back either |
 | [`oneway_set_position`](#oneway_set_position) | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. | No — 1W has no reply at all |
 | [`oneway_set_sequence`](#oneway_set_sequence) | Sets the rolling number a 1W controller identity's next command carries, so a device that stopped reacting works again without a reflash. Takes `controller_id`, `sequence` and `allow_lower`. Sends nothing. | No — 1W has no reply at all |
@@ -145,6 +146,28 @@ Queued through the same dispatch path as the cover entity and its buttons (capab
 action: esphome.hioc_heltec_v2_force_open_device
 data:
   device_id: "FEEB1E"
+```
+
+## `set_position_automatic`
+
+Fields: `device_id` (required), `position` (required, a whole number from `0` = closed to `100` = open, as
+`cover.set_cover_position` counts it).
+
+The move an automation sends. It goes out at automation priority (ACEI level 7, byte `0xE7`, as a TaHoma sends its
+own commands); the cover entity's moves keep the normal level 3. A Somfy motor following an A/M switch (a wired Smoove Uno io or a Smoove 1 A/M io)
+refuses a level-7 command with `PRIORITY_LOCKED` (`FE 38`) while the switch is on M and takes it on A, so a sun or
+time automation that uses this action leaves a cover alone while someone has it on manual, and a move from the
+dashboard still goes through, like a manufacturer app's "send anyway".
+
+A refusal shows on the cover's Active Issue sensor as `PRIORITY_LOCKED` and turns its
+[Manual Mode sensor](cover.md#manual-mode) on; a taken command turns it off. A cover with no lock takes the command
+like any other move. As with every cover command, the result event only confirms the command was **queued**.
+
+```yaml
+action: esphome.hioc_heltec_v2_set_position_automatic
+data:
+  device_id: "7A38D1"
+  position: "0"
 ```
 
 ## `oneway_set_position`

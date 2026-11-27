@@ -382,6 +382,31 @@ bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t
                                       static_cast<uint8_t>(POSITION_WIRE_SCALE * position), 0x00);
 }
 
+/// Build a STOP execute frame (0x00) at a chosen ACEI priority level. See proto_commands.h.
+bool create_execute_stop_at_priority(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                     uint8_t level) {
+  if (level < PRIORITY_PROBE_MIN_LEVEL || level > ACEI_LEVEL_AUTO_DEFAULT)
+    return false;
+  // The low bits are the ones a TaHoma puts on its own commands to a cover (0x47 at level 2, 0xE7 at level 7),
+  // so only the level differs from what the cover sees from its own gateway.
+  const auto acei = static_cast<uint8_t>((level << ACEI_LEVEL_SHIFT) | PRIORITY_PROBE_ACEI_LOW_BITS);
+  return build_main_parameter_execute(f, own, dst, low_power, acei, POS_STOP, 0x00);
+}
+
+/// Build a position execute frame (0x00) at automation priority. See proto_commands.h.
+bool create_execute_position_automatic(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
+                                       uint8_t position, bool speed_block, bool silent) {
+  if (position > POSITION_PERCENT_MAX)
+    return false;
+  if (!speed_block) {
+    return build_main_parameter_execute(f, own, dst, low_power, AUTOMATIC_EXECUTE_ACEI,
+                                        static_cast<uint8_t>(POSITION_WIRE_SCALE * position), 0x00);
+  }
+  init_request(f, own, dst, low_power);
+  const auto payload = make_position_payload(AUTOMATIC_EXECUTE_ACEI, position, silent);
+  return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
+}
+
 /// Build a temperature / alias execute frame (0x00), main parameter only. See proto_commands.h.
 bool create_execute_heating_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                                            uint16_t main_parameter) {

@@ -61,6 +61,8 @@ constexpr const char *PROBE_NAME_REGISTER_00 =
     "register_00";  ///< Read of register 0x00<index> over CMD_WRITE_PRIVATE (read direction only).
 constexpr const char *PROBE_NAME_REGISTER_01 =
     "register_01";  ///< Read of register 0x01<index> over CMD_WRITE_PRIVATE (read direction only).
+constexpr const char *PROBE_NAME_EXECUTE_PRIORITY =
+    "execute_priority";  ///< create_execute_stop_at_priority(); index = ACEI priority level 2 to 7.
 /// Bytes of a register request that a `0x21` answer repeats: `0C 60 <hi> <lo>`.
 constexpr uint8_t PROBE_REGISTER_HEADER_LENGTH = 4;
 constexpr uint8_t PROBE_REGISTER_HIGH_00 = 0x00;  ///< High register byte of `register_00`; family untested.
@@ -198,6 +200,14 @@ bool build_probe_register_01(IoFrame &f, const uint8_t *own, const uint8_t *dst,
   return build_probe_register_read(f, own, dst, PROBE_REGISTER_HIGH_01, index, low_power);
 }
 
+/// A STOP at the ACEI level given as the index; levels 0 and 1 are refused by execute_priority_level_valid().
+bool build_probe_execute_priority(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_execute_stop_at_priority(f, own, dst, low_power, index);
+}
+
+/// The `execute_priority` index is a level the builder frames: never a protection level (0, 1).
+bool execute_priority_level_valid(uint8_t level) { return level >= PRIORITY_PROBE_MIN_LEVEL; }
+
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
 ///
 /// A row names the fields it sets; every field after `sweepable` defaults to the plain case (an
@@ -287,6 +297,14 @@ constexpr ProbeDescriptor PROBE_TABLE[] = {
     // heaters and domestic hot water devices only. Read-only, so they sweep like the other single-frame probes.
     {.name = PROBE_NAME_REGISTER_00, .builder = build_probe_register_00, .sweepable = true, .register_read = true},
     {.name = PROBE_NAME_REGISTER_01, .builder = build_probe_register_01, .sweepable = true, .register_read = true},
+    // A STOP at a chosen priority level: a command, so never swept. On a resting cover it moves nothing; what it
+    // learns is whether the device takes a command at that level (a wired A/M switch on M refuses level 7).
+    {.name = PROBE_NAME_EXECUTE_PRIORITY,
+     .builder = build_probe_execute_priority,
+     .sweepable = false,
+     .index_help = "ACEI priority level 2 (user_high) to 7 (auto_default); 0 and 1 are protection levels",
+     .max_index = ACEI_LEVEL_AUTO_DEFAULT,
+     .index_valid = execute_priority_level_valid},
 };
 constexpr uint8_t PROBE_TABLE_SIZE = std::size(PROBE_TABLE);
 
