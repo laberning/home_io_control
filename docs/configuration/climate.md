@@ -407,7 +407,10 @@ climate:
   after you start or end a run from Home Assistant it has no value until the next poll, about 45 seconds
   later, so the time left of an earlier run never shows as the new one's. The dryer reports the two in separate registers, so the hub reads the one that matches
   its temporary state, only while a run is on: an idle dryer costs no extra read. The sensor follows
-  the poll, so the time left moves in steps of the `status_poll_interval`.
+  the poll, so the time left moves in steps of the `status_poll_interval`. With the default of 5 minutes
+  it can look stuck, so set `status_poll_interval: 60s` on a towel dryer whose time left you watch.
+  The shorter poll also helps a dryer with a weak signal: after a failed read, the next poll a minute
+  later brings the value back.
 - **`boost_duration:`** shows the boost duration set on the panel. A change on the panel shows one to
   three minutes later.
 - **`drying_duration:`** shows the duration of the last drying run that was started. The dryer updates
@@ -425,6 +428,8 @@ climate:
 > Experimental. The registers were read on Atlantic Adelis units during a boost and a drying run, and the
 > time left matched the display ([issue #202](https://github.com/laberning/home_io_control/issues/202),
 > corpus captures `atlantic_adelis_probe_boost_remaining` and `atlantic_adelis_probe_register_01_sweep_drying`).
+> On two Sauter Alutu dryers the time left counts down during a boost and a drying run with a 60 s poll
+> ([issue #262](https://github.com/laberning/home_io_control/issues/262)).
 > Please report whether the sensors match your dryer's display.
 
 ## Setpoint range of a radiator or towel dryer
